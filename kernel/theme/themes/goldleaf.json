@@ -1,0 +1,61 @@
+// goldleaf. Original. Black and gold, spent sparingly.
+//
+// Gold everywhere looks cheap, so gold is spent in exactly three places: the
+// accent, the focused border, and the active tab. Everything else is a warm
+// neutral pulled off the same hue axis at very low saturation, which is what
+// keeps the gold reading as metal rather than as yellow.
+//
+// warn cannot also be gold or the bar's low-heap warning becomes invisible
+// against the accent it sits next to, so warn takes an amber-orange one step
+// round the wheel. The ground is a true near-black (#0a0a09) because gold
+// needs the darkest possible field to look like anything at all.
+//
+// This is the one theme on an 8x13 face rather than the 6x8 workhorse. It is
+// the spacious theme - 4px gaps, a 14px bar - and a bigger face belongs with
+// that. It costs bar segments: at 320px the status bar can no longer spell out
+// "brain qwen3.5:2b" and shrinks it to "b" to keep the heap reading. That is
+// the trade, and it is the right one for a theme nobody picks for density.
+{
+  "name": "goldleaf",
+  "font": "med",
+
+  "metrics": { "gap": 4, "border": 1, "bar_h": 14, "tab_h": 12, "radius": 1 },
+
+  "colors": {
+    "bg":               "#0a0a09",
+    "surface":          "#131210",
+    "overlay":          "#1b1917",
+    "text":             "#ece7dc",
+    "muted":            "#8a8478",
+    "accent":           "#d4af37",
+    "accent_alt":       "#f0d67a",
+    "ok":               "#9aab6a",
+    "warn":             "#e0873f",
+    "err":              "#c25444",
+    "border_focused":   "#d4af37",
+    "border_unfocused": "#2e2b26",
+    "bar_bg":           "#050504",
+    "bar_fg":           "#c9ac5e",
+    "tab_active":       "#d4af37",
+    "tab_inactive":     "#6a6355"
+  },
+
+  "ansi": {
+    "black":          "#0a0a09",
+    "red":            "#b8543f",
+    "green":          "#8f9e5f",
+    "yellow":         "#d4af37",
+    "blue":           "#6f88a0",
+    "magenta":        "#a1749a",
+    "cyan":           "#6f9e97",
+    "white":          "#cdc6b6",
+    "bright_black":   "#423d34",
+    "bright_red":     "#d67055",
+    "bright_green":   "#a8b877",
+    "bright_yellow":  "#f0d67a",
+    "bright_blue":    "#8ba4bd",
+    "bright_magenta": "#bf90b6",
+    "bright_cyan":    "#8bbab2",
+    "bright_white":   "#ece7dc"
+  }
+}

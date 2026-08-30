@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<title>ESP-OS</title>
+<!-- empty data icon: stops the browser asking the board for /favicon.ico -->
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<svg class="defs" aria-hidden="true"><defs>
+<symbol id="i-dir" viewBox="0 0 16 16"><path d="M1.5 3.5h4l1.5 2h7.5v8h-13z" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+<symbol id="i-file" viewBox="0 0 16 16"><path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.5 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+<symbol id="i-disk" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.5 2.5v4h7v-4" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+<symbol id="i-dl" viewBox="0 0 16 16"><path d="M8 2v8m0 0 3-3m-3 3-3-3M2.5 13.5h11" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+<symbol id="i-ren" viewBox="0 0 16 16"><path d="M2.5 11.5 11 3l2 2-8.5 8.5H2.5z" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+<symbol id="i-del" viewBox="0 0 16 16"><path d="M3.5 4.5h9m-8 0 .8 9h5.4l.8-9M6.5 4.5v-2h3v2" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+</defs></svg>
+
+<header class="bar">
+  <div class="bar-id">
+    <span class="dot" id="linkdot" title="link"></span>
+    <span class="bname" id="boardname">esp-os</span>
+  </div>
+  <div class="bar-stats" id="barstats"></div>
+</header>
+
+<div class="offline" id="offline" hidden>
+  <span id="offlinetext">board not answering</span>
+  <button type="button" id="retrynow">retry</button>
+</div>
+
+<nav class="tabs" id="tabs" role="tablist">
+  <button class="tab on" role="tab" data-tab="files"    aria-selected="true">Files</button>
+  <button class="tab"    role="tab" data-tab="settings" aria-selected="false">Settings</button>
+  <button class="tab"    role="tab" data-tab="buddy"    aria-selected="false">Buddy</button>
+  <button class="tab"    role="tab" data-tab="console"  aria-selected="false">Console</button>
+</nav>
+
+<main>
+
+<!-- ---------------------------------------------------------------- files -->
+<section class="panel on" id="p-files" role="tabpanel">
+  <div class="toolbar">
+    <button type="button" id="f-up">Up</button>
+    <button type="button" id="f-refresh">Refresh</button>
+    <button type="button" id="f-mkdir">New folder</button>
+    <button type="button" id="f-pick" class="primary">Upload</button>
+    <input type="file" id="f-file" multiple hidden>
+  </div>
+
+  <div class="crumbs" id="f-crumbs"></div>
+
+  <div class="usage" id="f-usage" hidden>
+    <div class="usage-bar"><i id="f-usagefill"></i></div>
+    <span class="usage-txt" id="f-usagetxt"></span>
+  </div>
+
+  <div class="drop" id="f-drop">
+    <table class="list"><tbody id="f-list"></tbody></table>
+    <p class="note" id="f-note" hidden></p>
+    <button type="button" class="more" id="f-more" hidden>Load more</button>
+  </div>
+
+  <div class="queue" id="f-queue"></div>
+</section>
+
+<!-- ------------------------------------------------------------- settings -->
+<section class="panel" id="p-settings" role="tabpanel" hidden>
+  <div id="s-groups"></div>
+
+  <div class="card">
+    <h2>Board</h2>
+    <p class="hint">Read only. Panel identity comes from the board registry plus a
+      one-time confirmation, never from probing a controller register.</p>
+    <dl class="info" id="s-info"><dd class="note">reading...</dd></dl>
+    <div class="toolbar end">
+      <button type="button" id="s-reboot" class="danger">Reboot board</button>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- buddy -->
+<section class="panel" id="p-buddy" role="tabpanel" hidden>
+  <div class="vx">
+
+    <div class="vx-stage" id="vx-stage">
+      <canvas id="vx-canvas"></canvas>
+      <div class="vx-hud">
+        <span id="vx-count">0 / 4096</span>
+        <span id="vx-dims">16 x 16 x 16</span>
+      </div>
+      <div class="vx-prev">
+        <canvas id="vx-preview" width="112" height="112"></canvas>
+        <span>panel preview</span>
+      </div>
+      <div class="vx-z">
+        <input type="range" id="vx-zslider" min="0" max="15" value="0"
+               orient="vertical" aria-label="active layer">
+        <span id="vx-zlabel">z 0</span>
+      </div>
+    </div>
+
+    <div class="vx-side">
+
+      <div class="seg" id="vx-tools" role="group" aria-label="tool">
+        <button type="button" class="on" data-tool="build">Build</button>
+        <button type="button" data-tool="paint">Paint</button>
+        <button type="button" data-tool="erase">Erase</button>
+        <button type="button" data-tool="eye">Eye</button>
+      </div>
+
+      <div class="toolbar">
+        <button type="button" id="vx-orbit" class="tog">Orbit</button>
+        <button type="button" id="vx-slice" class="tog">Slice</button>
+        <button type="button" id="vx-mirror" class="tog">Mirror X</button>
+        <button type="button" id="vx-reset">Recentre</button>
+      </div>
+
+      <div class="toolbar">
+        <button type="button" id="vx-undo">Undo</button>
+        <button type="button" id="vx-redo">Redo</button>
+        <button type="button" id="vx-clear" class="danger">Clear</button>
+      </div>
+
+      <div class="swatchbar">
+        <span class="sw big" id="vx-cur"></span>
+        <span class="mono" id="vx-curtxt">index 1</span>
+        <input type="color" id="vx-custom" value="#d88e56" aria-label="custom colour">
+        <button type="button" id="vx-add">Add</button>
+      </div>
+
+      <div class="pal" id="vx-pal" role="listbox" aria-label="palette"></div>
+
+      <fieldset class="card">
+        <legend>Identity</legend>
+        <label>Name <input id="b-name" maxlength="31" placeholder="pip"></label>
+        <label>Personality
+          <textarea id="b-person" rows="4" maxlength="480"
+            placeholder="terse, dry, helpful. never uses exclamation marks."></textarea>
+        </label>
+        <label>Accent <input type="color" id="b-accent" value="#d88e56"></label>
+        <label>Idle behaviour
+          <select id="b-idle">
+            <option value="still">still - holds the home angle</option>
+            <option value="wander" selected>wander - slow yaw drift</option>
+            <option value="curious">curious - looks around, quick turns</option>
+            <option value="sleepy">sleepy - sleeps early, wakes slowly</option>
+          </select>
+        </label>
+        <label>Sleep after
+          <select id="b-sleep">
+            <option value="0">never</option>
+            <option value="30000">30 s</option>
+            <option value="60000">1 min</option>
+            <option value="120000" selected>2 min</option>
+            <option value="300000">5 min</option>
+            <option value="900000">15 min</option>
+          </select>
+        </label>
+        <label>Home yaw <input type="range" id="b-yaw" min="0" max="31" value="0">
+          <span class="mono" id="b-yawtxt">0 / 32</span></label>
+        <div class="eyerow">
+          <span class="mono">eye <b id="b-eyetxt">none</b></span>
+          <span class="sw" id="b-eyesw"></span>
+          <span class="mono">blink <b id="b-blinktxt">none</b></span>
+          <span class="sw" id="b-blinksw"></span>
+          <button type="button" id="b-eyeclear">clear</button>
+        </div>
+        <p class="hint">The Eye tool tags a voxel colour as the eyes. Blink is the
+          index drawn in their place; leave it unset for a solid blink.</p>
+      </fieldset>
+
+      <fieldset class="card">
+        <legend>Model</legend>
+        <label>Grid
+          <select id="vx-dim">
+            <option value="8">8 cubed</option>
+            <option value="12">12 cubed</option>
+            <option value="16" selected>16 cubed</option>
+            <option value="20">20 cubed</option>
+            <option value="24">24 cubed</option>
+            <option value="32">32 cubed - max</option>
+          </select>
+        </label>
+        <p class="hint">The board rejects a model over 32 on any axis or over 4096
+          voxels. Shrinking the grid drops anything outside it.</p>
+      </fieldset>
+
+      <div class="toolbar">
+        <button type="button" id="b-load">Load from board</button>
+        <button type="button" id="b-save" class="primary">Save to board</button>
+      </div>
+      <div class="toolbar">
+        <button type="button" id="b-export">Export .vox</button>
+        <button type="button" id="b-import">Import .vox</button>
+        <input type="file" id="b-importfile" accept=".vox" hidden>
+      </div>
+      <p class="note" id="b-status"></p>
+    </div>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- console -->
+<section class="panel" id="p-console" role="tabpanel" hidden>
+  <div class="card grow">
+    <h2>Terminal
+      <span class="right">
+        <button type="button" id="c-clear">Clear</button>
+        <button type="button" id="c-follow" class="tog on">Follow</button>
+      </span>
+    </h2>
+    <pre class="out" id="c-out"></pre>
+    <form class="inline" id="c-form" autocomplete="off">
+      <span class="prompt">&gt;</span>
+      <input id="c-in" placeholder="help" spellcheck="false" autocapitalize="off">
+      <button type="submit">Run</button>
+    </form>
+  </div>
+
+  <div class="card grow">
+    <h2>Megabrain <span class="right mono" id="m-host"></span></h2>
+    <div class="chat" id="m-out"></div>
+    <form class="chatform" id="m-form" autocomplete="off">
+      <div class="row">
+        <select id="m-model" aria-label="model"></select>
+        <label class="mono tiny">max
+          <input type="number" id="m-max" min="16" max="2048" step="16" value="256">
+        </label>
+        <button type="button" id="m-stop" disabled>Stop</button>
+      </div>
+      <div class="row">
+        <textarea id="m-in" rows="2" placeholder="ask megabrain"
+                  spellcheck="false"></textarea>
+        <button type="submit" class="primary" id="m-send">Ask</button>
+      </div>
+    </form>
+  </div>
+</section>
+
+</main>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<dialog id="dlg">
+  <form method="dialog">
+    <h3 id="dlg-title"></h3>
+    <p class="note" id="dlg-msg"></p>
+    <input id="dlg-in">
+    <menu>
+      <button value="" id="dlg-cancel">Cancel</button>
+      <button value="ok" class="primary" id="dlg-ok">OK</button>
+    </menu>
+  </form>
+</dialog>
+
+<script src="voxel-editor.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>

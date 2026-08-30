@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Board headers are derived from boards/*.json. Regenerate with:
+#   python3 tools/gen_board_header.py --all
+boards/generated/
+
+# ESP-IDF build output (none yet — see STATUS.md)
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+
+# Compiled objects and images
+*.o
+*.elf
+*.map
+design/.dump
+
+# Editors
+.vscode/
+.idea/
+*.swp

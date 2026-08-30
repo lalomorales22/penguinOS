@@ -1,0 +1,59 @@
+// carbon. Original. Black and greys, and one deliberate compromise.
+//
+// Every UI role here is a true neutral - r == g == b, no hue bias anywhere -
+// because the brief was black and greys and a "grey" that leans blue is just
+// a bad blue. Focus is signalled by BRIGHTNESS instead of hue: the focused
+// border is near-white against a #333 unfocused one, which reads faster on a
+// small panel than a colour shift does.
+//
+// The compromise is the ansi block. Sixteen greys would make `ls` unreadable
+// and turn every compiler error the same colour as its file path, so the ansi
+// set carries real hues held to roughly 15% saturation. At a glance the
+// terminal still reads as greyscale; up close, red is red. cyd-amber makes the
+// same trade for the same reason.
+//
+// Sharp corners and a 3px gap: this is the industrial theme, not a soft one.
+{
+  "name": "carbon",
+  "font": "small",
+
+  "metrics": { "gap": 3, "border": 1, "bar_h": 13, "tab_h": 11, "radius": 0 },
+
+  "colors": {
+    "bg":               "#0d0d0d",
+    "surface":          "#161616",
+    "overlay":          "#1f1f1f",
+    "text":             "#e4e4e4",
+    "muted":            "#8a8a8a",
+    "accent":           "#d4d4d4",
+    "accent_alt":       "#ffffff",
+    "ok":               "#a8b0a8",
+    "warn":             "#c0b49c",
+    "err":              "#c09a96",
+    "border_focused":   "#e0e0e0",
+    "border_unfocused": "#333333",
+    "bar_bg":           "#080808",
+    "bar_fg":           "#b4b4b4",
+    "tab_active":       "#d4d4d4",
+    "tab_inactive":     "#5a5a5a"
+  },
+
+  "ansi": {
+    "black":          "#0d0d0d",
+    "red":            "#b08480",
+    "green":          "#8fa088",
+    "yellow":         "#b8ac90",
+    "blue":           "#8c98a8",
+    "magenta":        "#a894a4",
+    "cyan":           "#8ca8a4",
+    "white":          "#c4c4c4",
+    "bright_black":   "#4a4a4a",
+    "bright_red":     "#c8a09c",
+    "bright_green":   "#a8b8a0",
+    "bright_yellow":  "#d0c4a8",
+    "bright_blue":    "#a4b0c0",
+    "bright_magenta": "#c0acbc",
+    "bright_cyan":    "#a4c0bc",
+    "bright_white":   "#e4e4e4"
+  }
+}

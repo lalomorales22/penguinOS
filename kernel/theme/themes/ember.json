@@ -1,0 +1,59 @@
+// ember. Original. Red, without making everything look like an error.
+//
+// The obvious problem with a red theme is that red already means "something
+// broke". If accent and err are both red, a focused window border and a failed
+// command say the same thing. Red belongs to the accent here, so err is moved
+// all the way to magenta (#ff5aa8): 37 degrees of hue and 1.6x the luminance
+// away from the accent, which is the point at which the two stop reading as
+// the same colour on a 320x240 panel. A first pass put err at #ff4d6d and that
+// measured only 11 degrees out - close enough to look deliberate, not close
+// enough to actually be. warn holds the amber slot between the two.
+//
+// The ground is a near-black carrying a slight red bias, so the accent sits on
+// a related ground rather than fighting a neutral one. ok is a sage green -
+// the single cool colour in the theme, kept desaturated so it reads as calm
+// rather than as Christmas.
+{
+  "name": "ember",
+  "font": "small",
+
+  "metrics": { "gap": 3, "border": 1, "bar_h": 13, "tab_h": 11, "radius": 2 },
+
+  "colors": {
+    "bg":               "#140d0d",
+    "surface":          "#1c1313",
+    "overlay":          "#251919",
+    "text":             "#ede0dd",
+    "muted":            "#9a8480",
+    "accent":           "#e2513a",
+    "accent_alt":       "#ff8a6a",
+    "ok":               "#86a877",
+    "warn":             "#e0a355",
+    "err":              "#ff5aa8",
+    "border_focused":   "#e2513a",
+    "border_unfocused": "#3d2828",
+    "bar_bg":           "#0d0808",
+    "bar_fg":           "#d9a09a",
+    "tab_active":       "#e2513a",
+    "tab_inactive":     "#6b4f4c"
+  },
+
+  "ansi": {
+    "black":          "#140d0d",
+    "red":            "#d94f4f",
+    "green":          "#86a877",
+    "yellow":         "#e0a355",
+    "blue":           "#7f93b0",
+    "magenta":        "#c9738f",
+    "cyan":           "#7fa8a4",
+    "white":          "#d4c6c2",
+    "bright_black":   "#4a3434",
+    "bright_red":     "#ff6b5e",
+    "bright_green":   "#9dbf8d",
+    "bright_yellow":  "#f0bc72",
+    "bright_blue":    "#9aadc7",
+    "bright_magenta": "#e08fa8",
+    "bright_cyan":    "#96c0bb",
+    "bright_white":   "#ede0dd"
+  }
+}
