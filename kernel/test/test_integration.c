@@ -28,7 +28,8 @@
 //      -Ikernel/avatar/include -Ikernel/shell/include -Ikernel/svc/include \
 //      -Iboards/generated \
 //      kernel/test/test_integration.c kernel/wm/eos_wm.c kernel/theme/eos_theme.c \
-//      kernel/shell/eos_bar.c -o t && ./t
+//      kernel/shell/eos_bar.c kernel/avatar/eos_buddy.c kernel/avatar/eos_vox.c \
+//      -lm -o t && ./t
 
 #include <stdio.h>
 #include <string.h>

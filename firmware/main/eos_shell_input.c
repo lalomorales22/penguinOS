@@ -1,5 +1,11 @@
-// Key event to window-manager move. See eos_shell_input.h for what is real
-// here and for the one function that is a stub.
+// Key event to window-manager move.
+//
+// Nothing in this file is a stub any more. eos_shell_input_next() is one line
+// over kernel/hal's event ring, which kernel/hal/eos_input.c fills from the
+// NimBLE HID host, the board's GPIO buttons and the phone page. The one thing
+// worth knowing is that it is a POP and not a peek: every event this returns
+// is consumed, so the dispatch below is the only consumer and anything that
+// wants to watch keystreams without eating them has to use eos_input_peek().
 
 #include "eos_shell_input.h"
 
@@ -20,16 +26,7 @@ void eos_shell_input_init(eos_shell_input_t *in, eos_wm_t *wm,
 
 bool eos_shell_input_next(eos_event_t *out)
 {
-    // THE STUB. eos_input_init(), eos_input_tick() and eos_input_poll() are
-    // declared in kernel/hal/include/eos_input.h and implemented nowhere, so
-    // this board has no keyboard, no buttons and no touch. When the HAL lands,
-    // this whole body becomes:
-    //
-    //     return eos_input_poll(out);
-    //
-    // and the dispatch below starts receiving without moving.
-    (void)out;
-    return false;
+    return eos_input_poll(out);
 }
 
 bool eos_shell_input_pump(eos_shell_input_t *in)

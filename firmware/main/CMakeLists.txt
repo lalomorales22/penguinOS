@@ -17,13 +17,21 @@ idf_component_register(
         "eos_boot_theme.c"
         "eos_shell_draw.c"
         "eos_shell_input.c"
+        "eos_setup_screen.c"
+        "eos_web_embed.c"
     REQUIRES
         eos_kernel
         esp_timer
     EMBED_TXTFILES
         "${EOS_KERNEL_DIR}/theme/themes/cyd-amber.json"
+    EMBED_FILES
+        "${CMAKE_CURRENT_LIST_DIR}/../../web/index.html"
+        "${CMAKE_CURRENT_LIST_DIR}/../../web/app.js"
+        "${CMAKE_CURRENT_LIST_DIR}/../../web/style.css"
+        "${CMAKE_CURRENT_LIST_DIR}/../../web/setup.js"
+        "${CMAKE_CURRENT_LIST_DIR}/../../web/voxel-editor.js"
 )
 
-# Same promise the kernel makes. These four files are kernel code that happens
+# Same promise the kernel makes. These five files are kernel code that happens
 # to live next to app_main, and they compile clean for riscv32 and xtensa.
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)

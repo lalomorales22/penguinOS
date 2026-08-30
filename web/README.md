@@ -1,17 +1,23 @@
 # web — the ESP-OS companion app
 
-Served by the board over WiFi, launched at startup, reached at
-`http://<boardname>.local`. Four tabs: **Files**, **Settings**, **Buddy**,
-**Console**. Vanilla HTML, CSS and JS — no framework, no CDN, no build step, no
-webfont. Nothing outside this directory is ever fetched.
+Served by the board, launched at startup, reached at `http://<boardname>.local`.
+Two pages out of one bundle: the four-tab app — **Files**, **Settings**,
+**Buddy**, **Console** — and the setup screen a phone lands on after joining a
+new board's own access point. Vanilla HTML, CSS and JS — no framework, no CDN,
+no build step, no webfont. Nothing outside this directory is ever fetched.
 
 | File | Lines | Raw | Gzip | What |
 |---|---|---|---|---|
-| `index.html` | 264 | 10,781 | 3,041 | Structure and the inline SVG icon symbols |
-| `style.css` | 488 | 17,103 | 4,207 | Palette as custom properties, mobile-first layout |
-| `app.js` | 1,549 | 48,357 | 14,492 | API client, all four tabs |
+| `index.html` | 438 | 18,822 | 4,958 | Structure and the inline SVG icon symbols |
+| `style.css` | 722 | 24,864 | 5,873 | Palette as custom properties, mobile-first layout |
+| `app.js` | 1,608 | 50,533 | 15,284 | API client, all four tabs |
+| `setup.js` | 1,252 | 44,354 | 13,808 | The setup screen: WiFi, BLE pairing, radio etiquette |
 | `voxel-editor.js` | 958 | 33,010 | 10,426 | The buddy editor and the `.vox` codec |
-| **total served** | **3,259** | **109,251** | **32,166** | 29% of raw |
+| **total served** | **4,978** | **171,583** | **50,349** | 29% of raw |
+
+Setup added 62,332 raw and 18,183 gzipped across four files. Most of that is
+`setup.js`, and most of `setup.js` is English: nine ways a join can fail, six
+ways a bond can, and what to do about each. That prose is the feature.
 
 `README.md` is documentation and is not served.
 
@@ -22,24 +28,25 @@ wrong place to keep something that large. It is now regenerated from the live
 kernel by `design/build_preview.py`, so it cannot go stale either. See
 `design/README.md`.
 
-Ship only the four files in the table above; anything that globs `web/*` into a
+Ship only the five files in the table above; anything that globs `web/*` into a
 flash image is wrong.
 
 ## Serving it
 
-The four files live on the card, gzipped, and are served with
+The five files live on the card, gzipped, and are served with
 `Content-Encoding: gzip`. Nothing on the board ever compresses at runtime.
 
 ```
 /sd/web/index.html.gz
 /sd/web/style.css.gz
 /sd/web/app.js.gz
+/sd/web/setup.js.gz
 /sd/web/voxel-editor.js.gz
 ```
 
 ```bash
 # deploy: gzip onto the card, keeping the original names plus .gz
-for f in index.html style.css app.js voxel-editor.js; do
+for f in index.html style.css app.js setup.js voxel-editor.js; do
     gzip -9 -c "$f" > "/Volumes/ESPOS/web/$f.gz"
 done
 ```
@@ -50,8 +57,20 @@ Serving rules:
 |---|---|---|
 | `/` | `/sd/web/index.html.gz` | `text/html; charset=utf-8` |
 | `/style.css` | `/sd/web/style.css.gz` | `text/css; charset=utf-8` |
-| `/app.js`, `/voxel-editor.js` | matching `.gz` | `application/javascript; charset=utf-8` |
+| `/app.js`, `/setup.js`, `/voxel-editor.js` | matching `.gz` | `application/javascript; charset=utf-8` |
 | anything else not under `/api/` | 404 | — |
+
+**The captive portal must serve all five.** A board in SETUP is the case where
+this matters most and the case where the file set is easiest to get wrong: the
+setup page is `index.html`, the same one, and it will not work without
+`setup.js`. `setup.js` loads before `app.js`, because `app.js` reads
+`window.EOS_SETUP` at boot to decide which page this is.
+
+`voxel-editor.js` is 10,426 gzipped bytes that a board in SETUP never uses, and
+loading it lazily on the first visit to the Buddy tab would take that off the
+captive-portal path. It is not done here: it makes `buddyInit()` asynchronous,
+and 10 KB over an access point three feet away is a few milliseconds. The
+number is recorded so the trade is a decision rather than an oversight.
 
 Always send `Content-Encoding: gzip` for these. The page asks for no other
 static asset: the favicon is a `data:` URI precisely so the board is never
@@ -122,6 +141,178 @@ Failures return the HTTP status below plus
 removable and can vanish between any two requests.
 
 ---
+
+## Setup mode
+
+A board that has never joined a network cannot serve this app over one. It
+comes up in **SETUP** instead: its own WPA2 access point, a captive portal at
+`192.168.4.1`, and the AP name and password printed on the panel — the only
+out-of-band channel these boards have. `docs/provisioning.md` is the
+specification. This section is only the part the web app consumes.
+
+`setup.js` owns that screen and every endpoint below. `app.js` knows exactly
+one thing about it, `window.EOS_SETUP`, and nothing about `/api/wifi/*`,
+`/api/ble/*` or `/api/net/status`.
+
+Setup replaces the page rather than adding a fifth tab. A board in SETUP has no
+network, so Files, Console and Buddy have nothing to show. The same screen is
+reachable in run mode from **Settings → Network and input**, because pairing a
+keyboard needs the same radio etiquette and the same passkey panel, and because
+that is the only place a board on the wrong network can be moved from.
+
+### Which page is this
+
+`app.js` calls `EOS_SETUP.probe()` before it boots anything. That is one
+`GET /api/net/status` and it is the only extra request run mode pays.
+
+| `mode` | The page becomes |
+|---|---|
+| `setup`, `ap`, `apsta`, `portal`, `provision`, `provisioning`, `connecting` | the setup screen |
+| `run`, any other value, or no reply at all | the four-tab app |
+
+`#setup` in the URL forces the setup screen without asking, which is how it is
+driven against a running board.
+
+While setup holds the page the app's own *board not answering* bar is muted.
+Setup knocks the board off the air on purpose — a scan retunes the radio, a
+join takes it away — so that bar would be both true and useless. Setup says
+something specific in its place.
+
+### Endpoints
+
+Every one of these is in the table in `docs/provisioning.md`. The columns below
+are what the page actually reads, and what it does when a field is missing.
+
+| Method | Path | Sent | Read | Missing |
+|---|---|---|---|---|
+| GET | `/api/net/status` | — | `mode`, `ip`, `ssid`, `rssi`, `hostname`, `mdns`, `ap.ssid`, `join.*` | no reply is treated as run mode |
+| GET | `/api/wifi/scan` | — | `networks[]`: `ssid`, `rssi`, `auth`, `channel`, `hidden` | inline failure, manual entry still works |
+| POST | `/api/wifi/connect` | `{ssid, psk}` | `ok`, `state`, `reason`, `detail`, `ip` | falls back to polling `/api/net/status` |
+| POST | `/api/wifi/forget` | — | ignored beyond the status code | toast on failure |
+| GET | `/api/ble/scan` | — | `devices[]`: `addr`, `name`, `rssi`, `bonded`; `scanning` | inline failure |
+| POST | `/api/ble/pair` | `{addr}` | ignored; the outcome comes from `/api/ble/status` | polls anyway |
+| GET | `/api/ble/status` | — | `state`, `passkey`, `bonded.{addr,name}`, `connected`, `battery`, `reason` | polls until the pairing budget runs out |
+| POST | `/api/ble/forget` | — | status code only | inline failure |
+| GET | `/api/system` | — | `board`, `chip`, `display`, `fw`, `heap`, `net.hostname` | step 1 says so and setup continues |
+
+`/api/system` is the only endpoint shared with the rest of the app. Setup calls
+it once, for identity, and never polls it.
+
+Alternate spellings are accepted for every list and field the board might name
+differently — `networks`/`aps`/`results`, `devices`/`peripherals`,
+`addr`/`address`/`mac`, `hostname`/`host`, `auth`/`authmode`/`security`. A bare
+array is accepted where an object was expected. This is one `pick()` call per
+field and it costs nothing; getting it wrong costs a firmware round trip.
+
+`auth` may be the `wifi_auth_mode_t` **number** or a string. Both are rendered.
+Enterprise (5, 10, or anything matching `ent`/`802.1x`/`eap`) is listed but not
+selectable, because the board cannot join it and finding that out after a
+fifteen-second join is worse than being told.
+
+### The three rules this page is built around
+
+**Credentials are persisted only after a join succeeds.** That is the board's
+rule, not the page's, but the page is written so nothing depends on breaking
+it: the success screen says so out loud, and every failure screen ends with
+"nothing was saved, so the board is still on its own access point". If the
+board ever saves first, that copy becomes a lie and the bug becomes visible.
+
+**One radio.** WiFi and BLE share it on the C6, and the access point serving
+this page is running on it. Every operation that touches the radio takes a
+client-side mutex; while it is held, the other radio user's buttons are
+disabled rather than left live and silently inert. A `busy` (409) from the
+board is retried, not reported as a failure.
+
+**Scan once, rescan on purpose.** The WiFi scan runs when setup opens, while
+the person is still reading step 1, which is when the disruption costs least.
+After that it is the Rescan button, and the text next to it says the page may
+stall for a few seconds and will recover.
+
+### Surviving the radio moving
+
+A `GET` that dies mid-flight is the normal case here, not an error. Anything
+that is not a definite 4xx is retried up to five times with backoff, and each
+retry writes `the link dropped while the radio moved — retrying (n of 4)` on
+the line the person is already watching. A page that goes quiet for eight
+seconds reads as broken.
+
+The join is worse: the request that starts it is the request most likely to
+die, because joining takes the radio away from the access point serving it. So
+the response is never the only record of the outcome.
+
+| What the POST does | The page then |
+|---|---|
+| answers `{"ok":true,...}` or carries an `ip` | reads `/api/net/status` once for the real address, then shows it |
+| answers `202`, or `{"state":"trying"}` | polls `/api/net/status` for 45 s |
+| answers `{"ok":false,"reason":...}` | shows that reason |
+| times out, or the socket dies | polls `/api/net/status` for 45 s |
+
+Polling ends in one of three places. `join.state` of `ok`/`failed` is taken as
+given. With no `join` block at all, an `ip` that is not `0.0.0.0`, a matching
+`ssid` and a `mode` that is no longer SETUP is read as a join — a board that
+reports only what `docs/provisioning.md` lists still works.
+
+The third place is the one that matters: if the board simply stops answering
+and never comes back, the page does **not** say "failed". It says the board
+went quiet, that this most often means it joined and shut the access point
+down, gives the address to look for, and says a power cycle brings it straight
+back here with nothing saved. That is the likeliest real outcome of a
+successful first-boot join, and calling it a failure would be a lie.
+
+### Why a join failed
+
+"Failed" on its own is useless: wrong password, wrong name and too far away
+need three different things from the person. `reason` is accepted as a string
+or as a `wifi_err_reason_t` number, and both fold into the same table.
+
+| Key | `wifi_err_reason_t` | What the page says to do |
+|---|---|---|
+| `bad_auth` | 2, 3, 15, 202, 204 | password refused; it is case sensitive, watch for phone autocapitalisation |
+| `no_ap` | 201 | nothing by that name answered; check spelling, or the board is out of range even if the phone is not |
+| `assoc_fail` | 4, 6, 7, 8, 203, 205 | heard but refused; distance, a MAC filter, or a 5 GHz-only network |
+| `ap_full` | 5 | the router will not take another device |
+| `weak` | 200 | in range at scan, gone during the join; move it closer |
+| `enterprise` | 23 | 802.1X needs a username; this board cannot |
+| `ip_fail` | — | joined, but DHCP never issued an address |
+| `timeout` | — | did not finish in the board's budget |
+| anything else | — | the raw code and detail, plus "nothing was saved" |
+
+Unrecognised strings are matched loosely (`/wrong.?pass|4way|handshake/` and so
+on) before falling through, so a firmware that spells them differently still
+gets the useful sentence.
+
+### Pairing a keyboard
+
+The board is the BLE HID host, `IO_DISPLAY_ONLY`, so the six-digit passkey is
+generated on the board and typed **on the keyboard**, which has no screen. It
+appears on the panel and here, large enough to read across a room, on one line
+— a passkey that wraps reads as two numbers.
+
+The warning that a keyboard bonds to one host at a time is a full-width block
+in the flow, between choosing a device and pairing it, with two large buttons.
+`docs/provisioning.md` is explicit that this must be at the moment of pairing
+and not in a footnote, so it is not a `<dialog>`: the captive portal webview on
+older iOS may not have one, and this is the critical path.
+
+Failure reasons are the five ways `claude_term024`'s `kbTryConnect()` can
+actually fail, plus timeout: `not_found`, `connect_fail`, `bond_fail`,
+`no_hid`, `no_reports`, `timeout`. Unrecognised codes are matched loosely the
+same way the WiFi ones are.
+
+### One-handed on a phone
+
+Every tap target is at least 46 px tall and most rows are 56. Nothing is behind
+a hover. Password and SSID inputs are 16 px, because iOS zooms the viewport on
+any smaller field and the zoom does not come back. `autocapitalize`,
+`autocorrect` and `spellcheck` are off on both — a capitalised first letter is
+the most common cause of a "wrong password" that was typed correctly.
+Password visibility is a labelled Show/Hide button, not an icon.
+
+The "still joining" state is an indeterminate bar **and** a live seconds count.
+The bar alone can look like a frozen page; a number that keeps going up cannot.
+Under `prefers-reduced-motion` the bar stops outright rather than inheriting
+the sheet's blanket 1 ms animation, which would turn an infinite sweep into a
+strobe.
 
 ## System
 
@@ -504,14 +695,39 @@ self-describing and does not depend on the stock MagicaVoxel table.
 
 Everything below was run against this directory.
 
-**Syntax.** `node --check app.js voxel-editor.js` — both clean.
+**Syntax.** `node --check app.js setup.js voxel-editor.js` — all three clean.
 
-**No external resources.** `grep -E 'https?://|//cdn'` over `index.html` returns
-nothing. Every `href`/`src` in the page is `data:,` (the favicon), `style.css`,
-`app.js` or `voxel-editor.js`, and the CSS has no `url()` at all. The only
-`http://` in the tree is the SVG XML namespace passed to
-`document.createElementNS()` in `app.js`, which is an identifier and is never
-fetched.
+**No external resources.** `grep -rnE 'https?://|//cdn'` over `*.html`, `*.js`
+and `*.css` in this directory returns two lines, both in `app.js`, both the SVG
+XML namespace passed to `document.createElementNS()`. It is an identifier and
+is never fetched. `setup.js` adds none: it builds its `<use>` icons by writing
+constant markup, which the HTML parser namespaces for it, and it writes
+addresses as protocol-relative `//host/` hrefs so no scheme appears in the
+source at all. `grep 'url('` over `style.css` returns nothing.
+
+**Setup, driven end to end.** A mock firmware implementing every endpoint in
+*Setup mode* was run against the real page in a browser at 375x812 and at
+1200x900. What was exercised, and what it did:
+
+| Case | Result |
+|---|---|
+| Board in SETUP | probe took the page, step 1 showed board, chip, panel, MAC, firmware and the AP name to compare against the panel |
+| Scan of 8 APs | two entries for one SSID collapsed to one row at the louder reading, sorted by signal, enterprise and hidden rows listed but not selectable |
+| Password under 8 characters | refused before the radio moved, with the length it got |
+| Wrong password (reason 202) | "Wrong password", the case-sensitivity and autocapitalisation warning, Try again keeps the network |
+| Correct password | joined, both addresses, and the line that credentials are saved only now |
+| Hidden SSID by hand | leading and trailing spaces trimmed, 202-then-poll, reason 201 rendered as "nothing called HiddenHouse answered" |
+| Scan socket killed 3 times | `retrying (1 of 4)`, `(2 of 4)`, then 7 networks; the app's offline bar stayed hidden throughout |
+| Every scan killed | inline failure in the panel, button re-enabled, manual entry still offered |
+| Board silent from the POST onward | 45 s of live seconds count and rising "no answer for N checks", then the *stopped answering* screen, not a failure |
+| BLE scan and pair | 3 devices, the one-host warning, `Connecting…`, then 428193 on one line, then bonded with battery |
+| BLE bond refused | the clear-the-other-bond instruction, passkey panel closed, list back |
+| Radio mutex | both scan buttons and Join disabled for the whole join, re-enabled after |
+| Run mode | the four tabs booted normally; Settings → Set up WiFi took the page and Back returned it, with `/api/system` polling resumed |
+
+**Regressions.** The only console errors across the whole run were
+`ERR_EMPTY_RESPONSE` from the sockets the mock destroyed on purpose. No
+exception, and no unhandled rejection.
 
 **The `.vox` files are files the board reads.** `kernel/avatar/eos_vox.c` was
 compiled and pointed at a file this editor produced, including one drawn by hand
@@ -557,8 +773,9 @@ desktop.
 
 ## Assumptions to confirm
 
-Four things here are my invention rather than something the repo already fixed.
-They are all cheap to change now and expensive later.
+Nine things here are invention rather than something the repo already fixed.
+They are all cheap to change now and expensive later. Items 5 to 9 are the
+setup screen's, and 5, 6 and 7 are the ones another agent has to agree to.
 
 1. **`buddy.json` is a format I defined.** Nothing in `kernel/avatar/` reads it
    yet — `eos_buddy.h` has the fields but no JSON loader. The schema above maps
@@ -572,3 +789,36 @@ They are all cheap to change now and expensive later.
    the OS has a single console log that both boot messages and command output
    flow into. If commands need their own output channel, `exec` should return a
    handle instead.
+5. **`/api/net/status` carries `mode`, `ap` and `join`.**
+   `docs/provisioning.md` describes it as "Mode, IP, RSSI, mDNS name" and does
+   not name the fields. The page reads `mode` (which page to be), `ap.ssid`
+   (so step 1 can be checked against the panel, and so the last screen can name
+   the access point that is about to disappear) and `join.{state,ssid,reason,detail}`
+   (the outcome of a join whose HTTP response died). Of these, **`join` is the
+   one that has to exist**: without it the page falls back to inferring a join
+   from `ip` plus `ssid` plus a `mode` that is no longer SETUP, which works but
+   cannot tell a wrong password from an out-of-range network, and the whole
+   point of the failure table above is that it can.
+6. **`POST /api/wifi/connect` reports the outcome as
+   `{"ok":false,"reason":...}` with a 200, not as a 4xx.** A wrong password is
+   not a malformed request. The page handles a 4xx anyway, but a board that
+   returns 400 for a bad password will lose `reason` into the generic error
+   model and the person will get worse text.
+7. **`/api/ble/status` exposes `passkey` while pairing.**
+   `docs/provisioning.md` lists only "bonded device, connected yes/no, battery
+   if exposed", but it also says the passkey must appear in the web page, and
+   this is the only endpoint it can come from. `claude_term024` already puts
+   `passkey` in its status JSON, so the shape is proven; the field name here is
+   the same. The page also reads `state`
+   (`connecting`/`passkey`/`bonded`/`failed`) and `reason`, and degrades to
+   inferring bonded from a `bonded` object if `state` is absent.
+8. **The BLE failure reasons are named after the five ways
+   `claude_term024`'s `kbTryConnect()` can fail.** `not_found`,
+   `connect_fail`, `bond_fail`, `no_hid`, `no_reports`. If the port names them
+   differently the loose matcher probably still catches them, but the exact
+   strings are cheaper.
+9. **`GET /api/ble/scan` blocks for the scan and returns the result.** If it
+   returns immediately with `scanning: true` instead, the page polls it until
+   that clears or 25 s pass, so either shape works. What it must not do is
+   return an empty list with no `scanning` flag while a scan is still running,
+   because that is indistinguishable from "no keyboards".

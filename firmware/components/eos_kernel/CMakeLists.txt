@@ -15,18 +15,27 @@
 # still compiles for the host with ESP_PLATFORM unset, which is how its 109
 # checks run.
 
+set(_eos_kernel_srcs
+    "${EOS_KERNEL_DIR}/wm/eos_wm.c"
+    "${EOS_KERNEL_DIR}/theme/eos_theme.c"
+    "${EOS_KERNEL_DIR}/shell/eos_bar.c"
+    "${EOS_KERNEL_DIR}/shell/eos_keys.c"
+    "${EOS_KERNEL_DIR}/avatar/eos_vox.c"
+    "${EOS_KERNEL_DIR}/avatar/eos_buddy.c"
+    "${EOS_KERNEL_DIR}/svc/eos_brain.c"
+    "${EOS_KERNEL_DIR}/svc/eos_radio.c"
+    "${EOS_KERNEL_DIR}/svc/eos_net.c"
+    "${EOS_KERNEL_DIR}/svc/eos_ble.c"
+    "${EOS_KERNEL_DIR}/svc/eos_httpd.c"
+    "${EOS_KERNEL_DIR}/font/eos_font.c"
+    "${EOS_KERNEL_DIR}/qr/eos_qr.c"
+    "${EOS_KERNEL_DIR}/hal/eos_input.c"
+    "${EOS_KERNEL_DIR}/hal/backend/esp_lcd/eos_display_st7789.c")
+
 idf_component_register(
     SRCS
         "eos_board_active.c"
-        "${EOS_KERNEL_DIR}/wm/eos_wm.c"
-        "${EOS_KERNEL_DIR}/theme/eos_theme.c"
-        "${EOS_KERNEL_DIR}/shell/eos_bar.c"
-        "${EOS_KERNEL_DIR}/shell/eos_keys.c"
-        "${EOS_KERNEL_DIR}/avatar/eos_vox.c"
-        "${EOS_KERNEL_DIR}/avatar/eos_buddy.c"
-        "${EOS_KERNEL_DIR}/svc/eos_brain.c"
-        "${EOS_KERNEL_DIR}/font/eos_font.c"
-        "${EOS_KERNEL_DIR}/hal/backend/esp_lcd/eos_display_st7789.c"
+        ${_eos_kernel_srcs}
     INCLUDE_DIRS
         "${EOS_KERNEL_DIR}/hal/include"
         "${EOS_KERNEL_DIR}/wm/include"
@@ -35,6 +44,7 @@ idf_component_register(
         "${EOS_KERNEL_DIR}/avatar/include"
         "${EOS_KERNEL_DIR}/svc/include"
         "${EOS_KERNEL_DIR}/font/include"
+        "${EOS_KERNEL_DIR}/qr/include"
         "${EOS_BOARDS_DIR}"
     REQUIRES
         esp_hw_support   # esp_chip_info.h, esp_mac.h
@@ -42,17 +52,29 @@ idf_component_register(
         esp_timer        # eos_brain's clock
         esp_netif        # esp_ip4_addr_t, IPSTR/IP2STR
         lwip             # BSD sockets under ESP_PLATFORM
-        nvs_flash        # eos_brain caches the discovered host
+        nvs_flash        # eos_brain caches the host; eos_net keeps credentials
+        esp_wifi         # eos_net: STA, SoftAP, scanning
+        esp_event        # eos_net's join and got-ip handlers
+        esp_http_server  # eos_httpd. No DNS here: the captive responder is eos_net's.
         esp_lcd          # esp_lcd_new_panel_st7789 and the panel ops
         esp_driver_spi   # driver/spi_master.h, the panel's bus
         esp_driver_ledc  # driver/ledc.h, the backlight
-        esp_driver_gpio  # the panel's plain CS/DC/RST pins
+        esp_driver_gpio  # the panel's CS/DC/RST pins, and eos_input's buttons
+        bt               # NimBLE for eos_ble. Never Bluedroid: 83KB vs 19KB is an OOM.
 )
 
 # Which boards/generated/<id>.h everything downstream compiles against. PUBLIC,
 # so the display backend and the boot glue get it without repeating the choice.
 target_compile_definitions(${COMPONENT_LIB} PUBLIC
     EOS_BOARD_HEADER="${EOS_BOARD_ID}.h")
+
+# eos_net's radio lock needs no gate any more. It used to: the lock lived at
+# the tail of eos_ble.h and eos_net had to be told with a compile definition to
+# bind to it, which meant an image built without eos_ble.c was silently
+# unserialised while still claiming a radio it shared. The lock is now
+# kernel/svc/eos_radio.c, in SRCS above and owned by neither stack, and
+# eos_net.c binds to eos_radio.h with __has_include. Both scans take the same
+# lock in every build there is.
 
 # The kernel is required to build clean under these for both riscv32 and xtensa
 # and the host suites already do. PRIVATE, so the promise is not imposed on IDF's
