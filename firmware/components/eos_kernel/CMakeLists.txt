@@ -6,10 +6,14 @@
 # name and would rot the first time someone fixed a bug in the wrong one.
 #
 # The one non-obvious constraint: everything in SRCS below is portable C99 with
-# no allocation and no hardware, except the tail of eos_brain.c, which sits
+# no allocation and no hardware, except two files. The tail of eos_brain.c sits
 # behind #ifdef ESP_PLATFORM and is the only reason this component REQUIRES a
-# network stack. That section needs mdns, which left IDF core in v5.0 and is a
-# managed component now — see idf_component.yml.
+# network stack; that section needs mdns, which left IDF core in v5.0 and is a
+# managed component now — see idf_component.yml. And eos_display_st7789.c is
+# the ST7789 backend: it is where the esp_lcd, spi, ledc and gpio requirements
+# come from and it makes the single heap allocation in the whole image. It
+# still compiles for the host with ESP_PLATFORM unset, which is how its 109
+# checks run.
 
 idf_component_register(
     SRCS
@@ -21,6 +25,8 @@ idf_component_register(
         "${EOS_KERNEL_DIR}/avatar/eos_vox.c"
         "${EOS_KERNEL_DIR}/avatar/eos_buddy.c"
         "${EOS_KERNEL_DIR}/svc/eos_brain.c"
+        "${EOS_KERNEL_DIR}/font/eos_font.c"
+        "${EOS_KERNEL_DIR}/hal/backend/esp_lcd/eos_display_st7789.c"
     INCLUDE_DIRS
         "${EOS_KERNEL_DIR}/hal/include"
         "${EOS_KERNEL_DIR}/wm/include"
@@ -28,6 +34,7 @@ idf_component_register(
         "${EOS_KERNEL_DIR}/shell/include"
         "${EOS_KERNEL_DIR}/avatar/include"
         "${EOS_KERNEL_DIR}/svc/include"
+        "${EOS_KERNEL_DIR}/font/include"
         "${EOS_BOARDS_DIR}"
     REQUIRES
         esp_hw_support   # esp_chip_info.h, esp_mac.h
@@ -36,6 +43,10 @@ idf_component_register(
         esp_netif        # esp_ip4_addr_t, IPSTR/IP2STR
         lwip             # BSD sockets under ESP_PLATFORM
         nvs_flash        # eos_brain caches the discovered host
+        esp_lcd          # esp_lcd_new_panel_st7789 and the panel ops
+        esp_driver_spi   # driver/spi_master.h, the panel's bus
+        esp_driver_ledc  # driver/ledc.h, the backlight
+        esp_driver_gpio  # the panel's plain CS/DC/RST pins
 )
 
 # Which boards/generated/<id>.h everything downstream compiles against. PUBLIC,
