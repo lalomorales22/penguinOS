@@ -33,6 +33,7 @@ MAX_BAD_BAUDS = 4
 TARGETS = {
     "esp32":   {"max_gpio": 39, "input_only": set(range(34, 40)), "dac": (25, 26), "cores": (1, 2)},
     "esp32c5": {"max_gpio": 28, "input_only": set(),              "dac": (),       "cores": (1,)},
+    "esp32c6": {"max_gpio": 30, "input_only": set(),              "dac": (),       "cores": (1,)},
     "esp32s3": {"max_gpio": 48, "input_only": set(),              "dac": (),       "cores": (1, 2)},
 }
 
@@ -1336,7 +1337,7 @@ def board_init(d, dv):
 # whole of the coupling: if that header moves, this is the part to fix.
 
 HAL_SOC = {"esp32": "EOS_SOC_ESP32", "esp32c5": "EOS_SOC_ESP32_C5",
-           "esp32s3": "EOS_SOC_ESP32_S3"}
+           "esp32c6": "EOS_SOC_ESP32_C6", "esp32s3": "EOS_SOC_ESP32_S3"}
 HAL_TIER = {0: "EOS_TIER_SOFT", 1: "EOS_TIER_LEAN", 2: "EOS_TIER_RICH"}
 HAL_COMP = {"indexed8": "EOS_COMP_INDEXED8", "mono1": "EOS_COMP_MONO1",
             "lvgl": "EOS_COMP_LVGL"}

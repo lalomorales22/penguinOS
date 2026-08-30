@@ -149,6 +149,7 @@
           "enum": [
             "esp32",
             "esp32c5",
+            "esp32c6",
             "esp32s3"
           ],
           "description": "ESP-IDF target name, i.e. what idf.py set-target takes."
