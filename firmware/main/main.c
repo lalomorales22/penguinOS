@@ -15,6 +15,11 @@
 //   display before theme   eos_display_init() seeds its colour LUT from the
 //                          compiled-in default, so a board that finds no theme
 //                          file still draws in real colours.
+//   storage before theme   eos_boot_theme_load() reads /int/theme.json, and an
+//                          unmounted /int means it silently never finds one.
+//                          It comes after the panel and not before it because
+//                          a first boot formats a blank 960 KB partition, and
+//                          that is a stall the glass should be lit for.
 //   theme before eos_wm    gap, bar_h and tab_h are the theme's, min_tile_w and
 //                          min_tile_h are the board's, and eos_wm_cfg_t wants
 //                          all five at once.
@@ -56,6 +61,7 @@
 #include "eos_bar.h"
 #include "eos_keys.h"
 #include "eos_input.h"
+#include "eos_storage.h"
 #include "eos_ble.h"
 #include "eos_net.h"
 #include "eos_httpd.h"
@@ -366,7 +372,33 @@ void app_main(void)
              (unsigned)info->caps, (unsigned)info->palette_len);
     heap_step("display");
 
-    // 2. The theme, and the palette it implies. A missing or corrupt file is a
+    // 2. The filesystem. A board whose internal filesystem will not mount is
+    //    not stopped by it: every caller above storage falls back to something
+    //    compiled in, and a log line naming the partition is more use than a
+    //    board that refuses to come up. A missing card is not even a log line -
+    //    it is a mount that reports itself absent, which is what /api/system
+    //    shows.
+    err = eos_storage_init();
+    if (err != EOS_OK) {
+        ESP_LOGE(TAG, "storage init failed: %s (%d) - settings and files are off",
+                 eos_strerr(err), (int)err);
+    } else {
+        eos_mount_t mnt[EOS_MOUNT_MAX];
+        int i, nm = eos_storage_mounts(mnt, EOS_MOUNT_MAX);
+        for (i = 0; i < nm && i < EOS_MOUNT_MAX; i++) {
+            uint64_t total = 0, used = 0;
+            if (mnt[i].mounted) eos_storage_usage(mnt[i].point, &total, &used);
+            ESP_LOGI(TAG, "fs     %-4s %-8s %-11s %llu of %llu bytes used",
+                     mnt[i].point,
+                     mnt[i].fs == EOS_FS_LITTLEFS ? "littlefs"
+                       : mnt[i].fs == EOS_FS_FAT  ? "fat" : "none",
+                     mnt[i].mounted ? "mounted" : "not present",
+                     (unsigned long long)used, (unsigned long long)total);
+        }
+    }
+    heap_step("storage");
+
+    // 3. The theme, and the palette it implies. A missing or corrupt file is a
     //    log line, never a stop - eos_theme.h guarantees the caller is left
     //    holding a usable theme whatever happened.
     src = eos_boot_theme_load(b, &theme);
@@ -379,7 +411,7 @@ void app_main(void)
              eos_font_flash_bytes(),
              eos_font_name(eos_font_id_from_name(eos_theme_font(&theme))));
 
-    // 3. The window manager. The split across these five fields is the whole
+    // 4. The window manager. The split across these five fields is the whole
     //    reason eos_theme_metrics_t does not carry min_tile_*: a minimum tile
     //    is a property of the PANEL - below it a tile is unreadable whatever
     //    the theme says - and gap, bar_h and tab_h are a property of the LOOK.
@@ -403,11 +435,11 @@ void app_main(void)
     open_windows(b);
     heap_step("shell");
 
-    // 4. Something on the panel before anything slow. eos_net_start() below can
+    // 5. Something on the panel before anything slow. eos_net_start() below can
     //    block for the whole fifteen second join budget.
     eos_setup_screen_message(&theme, "ESP-OS", "starting the radios");
 
-    // 5. Input, which is what brings up the NimBLE HID host. Before WiFi: see
+    // 6. Input, which is what brings up the NimBLE HID host. Before WiFi: see
     //    the file header. NULL takes eos_input_defaults().
     eos_ble_on_passkey(on_passkey, NULL);
     err = eos_input_init(NULL);
@@ -418,7 +450,7 @@ void app_main(void)
              (unsigned)b->input.button_count);
     heap_step("ble");
 
-    // 6. The network. eos_net_idf_defaults() fills in the driver, the NVS store
+    // 7. The network. eos_net_idf_defaults() fills in the driver, the NVS store
     //    and the timings out of docs/provisioning.md; everything set after it
     //    is this board's.
     eos_net_idf_defaults(&ncfg);
@@ -445,11 +477,14 @@ void app_main(void)
              eos_net_cred_name(eos_net_cred(&net)), eos_net_ap_ssid(&net));
     heap_step("wifi");
 
-    // 7. The server. It binds to eos_net and eos_ble, so it goes up after both.
-    //    The three file ports are left NULL on purpose: kernel/hal has no
-    //    storage backend yet, so static routes 404 and SETUP serves eos_httpd's
-    //    own built-in page, which needs no filesystem. Four lines here turn
-    //    static serving on the day a backend lands - see eos_httpd.h.
+    // 8. The server. It binds to eos_net and eos_ble, so it goes up after both.
+    //    The three file ports go to eos_web_embed, not to eos_storage. There
+    //    IS a storage backend now and /int is mounted, but it is empty on
+    //    every board that exists: nothing deploys the five web files onto it
+    //    yet. Serving from a filesystem that has no index.html would trade a
+    //    working app in flash for a 404. When a deploy path exists, the rule
+    //    from web/README.md applies - prefer the file, fall back to the
+    //    embedded copy, and never leave the board with nothing to serve.
     eos_httpd_cfg_default(&hcfg);
     hcfg.mode = (eos_net_mode(&net) == EOS_NET_SETUP) ? EOS_HTTPD_MODE_SETUP
                                                       : EOS_HTTPD_MODE_RUN;
@@ -473,7 +508,7 @@ void app_main(void)
              (int32_t)heap_boot - (int32_t)heap_free(), heap_boot,
              heap_free(), heap_largest());
 
-    // 8. The scene the desktop draws when it is the one on screen.
+    // 9. The scene the desktop draws when it is the one on screen.
     eos_bar_status_init(&bar);
     bar.brain_up = false;
     bar.mood     = EOS_MOOD_IDLE;
@@ -485,10 +520,10 @@ void app_main(void)
     view.keys  = &keys;
     board_lines(b, &view, &net);
 
-    // 9. And the one SETUP draws. The QR payload is generated once: the AP name
-    //    and password do not change while the board is up, and eos_net keeps the
-    //    password across a forget precisely so the screen someone is reading
-    //    does not go stale under them.
+    // 10. And the one SETUP draws. The QR payload is generated once: the AP name
+    //     and password do not change while the board is up, and eos_net keeps
+    //     the password across a forget precisely so the screen someone is
+    //     reading does not go stale under them.
     memset(&setup, 0, sizeof setup);
     qr[0] = '\0';
     if (eos_net_ap_qr(&net, qr, sizeof qr) < 0) {

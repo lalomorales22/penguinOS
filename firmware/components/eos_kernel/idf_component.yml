@@ -1,6 +1,17 @@
+# Two managed components, both of them load-bearing.
+#
 # mdns moved out of esp-idf core in v5.0. eos_brain.c's ESP_PLATFORM section
 # calls mdns_query_a() to find the host running the model, so the component is a
 # hard requirement of the kernel and not an optional extra. It is first-party
 # Espressif and pulls in nothing else.
+#
+# littlefs is the filesystem behind eos_storage's "/int" mount. LittleFS itself
+# has never been part of esp-idf; joltwallet's component is the one everybody
+# uses and it carries the upstream littlefs sources plus the VFS binding, which
+# is what lets kernel/hal/backend/storage/eos_storage_idf.c be plain POSIX. It
+# is a THIRD-PARTY download — the first build after this line was added fetches
+# it from the component registry — and it is the only non-Espressif code in the
+# image.
 dependencies:
   espressif/mdns: "^1.5"
+  joltwallet/littlefs: "^1.14"
