@@ -64,8 +64,9 @@
     },
     "col_offset": 0,
     "row_offset": 0,
+    "offset_reason": "VERIFIED, and worth stating because the C5 in this same registry needs col_offset 34. This panel is a full 240 columns of a 240-column ST7789 window, so no gap is applied. Evidence: the probe drew a 60x60 block at 0,0 and a 2px border around the whole frame, and both landed inside the visible area. An offset window would have pushed the block inboard and clipped the border on two edges.",
     "invert": true,
-    "invert_reason": "UNVERIFIED. esp_lcd_panel_invert_color(panel, true) is set because IPS ST7789 panels normally need it, and the colour bars render plausibly with it on. Nobody has yet confirmed whether the test square in the top-left corner reads red (invert correct) or cyan (invert wrong and every colour on screen is complemented). One glance at the board settles it."
+    "invert_reason": "VERIFIED. esp_lcd_panel_invert_color(panel, true) is required, as IPS ST7789 panels generally are. Checked the unambiguous way rather than by eyeballing a colour ramp: the probe drew a pure red (255,0,0) 60x60 block at the origin, which renders cyan if inversion is wrong, and it was confirmed red on hardware. Red and cyan are exact complements, so there is no reading of that result other than the correct one."
   },
   "inputs": {
     "bluetooth_keyboard": {
@@ -175,9 +176,6 @@
     "confirm_prompt": "Is this the square 240x240 board, and not the long thin C5-LCD-1.47 strip? esptool distinguishes them by chip (ESP32-C6 vs ESP32-C5)."
   },
   "unverified": [
-    "display.invert",
-    "display.col_offset",
-    "display.row_offset",
     "peripherals.internal_fs.partition_label",
     "render.min_tile_w",
     "render.min_tile_h",
