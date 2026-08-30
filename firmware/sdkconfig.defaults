@@ -57,9 +57,34 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # wrong answer is worse than a panic with a backtrace.
 CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
 
-# ------------------------------------------------------------------- radios
-# Wi-Fi and Bluetooth are OFF. Nothing in this run brings up a radio, and the
-# 425,648-byte free-heap figure the display tier decisions were made against was
-# measured with the radios down. Turning them on costs tens of KB and must be
-# done together with re-measuring, not as a config tweak.
-CONFIG_BT_ENABLED=n
+# ---------------------------------------------------------------- bluetooth
+# NimBLE, and only ever NimBLE. Bluedroid is 83 KB of RAM against NimBLE's 19 KB
+# and is an instant out-of-memory on the tier-0 boards; the CYD proved that the
+# expensive way. The board is a HID HOST here - it connects to a keyboard, it
+# does not pretend to be one - so the central and observer roles are what carry
+# the weight, and bonds go in NVS so a keyboard reconnects after sleep without
+# a second pairing.
+#
+# The free-heap figure the display tier decisions were made against (425,648
+# bytes) was measured with the radios DOWN. Both radios are now in the image
+# and that number no longer holds; the boot log prints the real one.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# One keyboard at a time: one connection, and one bond record in eos_ble's own
+# NVS namespace. NimBLE's key store is left at three slots and not squeezed to
+# one, for two reasons. The re-pair path briefly holds the old peer's keys and
+# the new ones at once, and IDF's own ble_store_nvs.c does not compile at a
+# store size of one - its bond sort reads element i+1 of a one-element array and
+# GCC 14 rejects it under -Werror=array-bounds. Which of the stored keys is THE
+# keyboard is eos_ble's bond record to say, not the key store's.
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MAX_BONDS=3
+CONFIG_BT_NIMBLE_MAX_CCCDS=8
+
+# The bond survives a power cut. Without this the keyboard has to be re-paired,
+# with a fresh passkey typed on it, after every reboot.
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
+# The GAP name this host advertises to a peripheral during pairing.
+CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME="esp-os"

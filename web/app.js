@@ -122,7 +122,11 @@ function unslot() {
   if (n) n(); else Q.active--;
 }
 
-var Link = { fails: 0, ok: 0 };
+// `quiet` is held by the setup screen. Setup deliberately knocks the board off
+// the air - a scan retunes the radio, a join takes it away - so the app's own
+// "board not answering" bar would be both true and useless there. Setup says
+// something more specific in its place.
+var Link = { fails: 0, ok: 0, quiet: false };
 
 function markUp() {
   Link.fails = 0;
@@ -132,6 +136,7 @@ function markUp() {
 function markDown(why) {
   Link.fails++;
   $('linkdot').className = 'dot down';
+  if (Link.quiet) return;
   if (Link.fails >= 2) {
     $('offlinetext').textContent = why || 'board not answering';
     $('offline').hidden = false;
@@ -924,6 +929,10 @@ function bindSettings() {
           });
       });
   };
+
+  // Both of these belong to setup.js, which owns every provisioning endpoint.
+  $('s-setup').onclick = function () { if (SETUP) SETUP.open('manual'); };
+  $('s-forget').onclick = function () { if (SETUP) SETUP.forget(); };
 }
 
 // ================================================================== BUDDY
@@ -1436,6 +1445,41 @@ function bindBrain() {
   };
 }
 
+// ================================================================== SETUP
+//
+// Provisioning is not a fifth tab: a board with no network has nothing to say
+// through Files, Console or Buddy. setup.js replaces the page instead, and
+// this object is the whole seam between the two files. app.js knows nothing
+// about /api/wifi/*, /api/ble/* or /api/net/status; setup.js knows nothing
+// about the app's DOM.
+
+var SETUP = window.EOS_SETUP || null;
+
+function setupHost() {
+  return {
+    api: api,
+    toast: toast,
+    confirm: confirmBox,
+    pause: function () {
+      sysPoller.stop();
+      if (C.poller) C.poller.stop();
+      if (B.ed) B.ed.stop();
+    },
+    resume: function () { sysPoller.start(); },
+    quiet: function (on) {
+      Link.quiet = !!on;
+      if (on) $('offline').hidden = true;
+    },
+    show: function (on) {
+      $('tabs').hidden = on;
+      $('setup').hidden = !on;
+      var m = document.querySelector('main');
+      if (m) m.hidden = on;
+      if (on) $('offline').hidden = true;
+    }
+  };
+}
+
 // ==================================================================== app
 
 var sysPoller = new Poller(5000, pollSystem);
@@ -1497,6 +1541,9 @@ function boot() {
   bindBrain();
   buildSettings();
 
+  if (SETUP) SETUP.attach(setupHost());
+  else $('s-netcard').hidden = true;
+
   $('retrynow').onclick = function () {
     Link.fails = 0;
     $('offline').hidden = true;
@@ -1506,9 +1553,19 @@ function boot() {
 
   $('linkdot').className = 'dot busy';
 
+  // One cheap request decides which of the two pages this is. A board in SETUP
+  // has no network, so none of the four tabs can do anything; if it answers as
+  // a running board, or does not answer at all, this stays the app it was.
+  (SETUP ? SETUP.probe() : Promise.resolve(false)).then(function (taken) {
+    if (taken) return null;
+    return bootApp();
+  });
+}
+
+function bootApp() {
   // Themes and the app list first: both feed the settings selects, and both
   // are small enough that doing them up front costs nothing.
-  loadThemes()
+  return loadThemes()
     .then(function () {
       return api('/api/apps').then(function (d) {
         S.apps = (d && d.apps) || [];
@@ -1525,20 +1582,22 @@ function boot() {
       var h = location.hash.replace('#', '');
       showTab(h && $('p-' + h) ? h : 'files');
     });
-
-  // A hidden tab costs the board nothing.
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) {
-      sysPoller.stop();
-      if (C.poller) C.poller.stop();
-      if (B.ed) B.ed.stop();
-    } else {
-      sysPoller.start();
-      if (S.tab === 'console' && C.poller) C.poller.start();
-      if (S.tab === 'buddy' && B.ed) B.ed.start();
-    }
-  });
 }
+
+// A hidden tab costs the board nothing. Bound once, at load, and inert while
+// the setup screen holds the page because nothing it stops is running then.
+document.addEventListener('visibilitychange', function () {
+  if (SETUP && SETUP.isOpen()) return;
+  if (document.hidden) {
+    sysPoller.stop();
+    if (C.poller) C.poller.stop();
+    if (B.ed) B.ed.stop();
+  } else {
+    sysPoller.start();
+    if (S.tab === 'console' && C.poller) C.poller.start();
+    if (S.tab === 'buddy' && B.ed) B.ed.start();
+  }
+});
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', boot);

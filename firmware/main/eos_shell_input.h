@@ -7,12 +7,12 @@
 // takes the bar out of the layout, and the caller really redraws when the
 // result says something moved.
 //
-// The one thing that is NOT here is a source of events. eos_input.h declares a
-// queue that nothing implements yet — no BLE HID host, no button poll — so
-// eos_shell_input_next() below is the single stub in this file and it always
-// reports an empty queue. It is one line away from real: when the input HAL
-// lands, its body becomes `return eos_input_poll(out);` and nothing else in
-// ESP-OS changes. Do not scatter a second dispatch path around it.
+// The source of events is kernel/hal/eos_input.c, which is the implementation
+// behind eos_input.h: a 32-event ring fed by the NimBLE HID host in
+// kernel/svc/eos_ble.c, by the board's GPIO buttons, and by anything the phone
+// page injects. eos_shell_input_next() is exactly `eos_input_poll(out)` and
+// there is deliberately no second dispatch path anywhere: a keystroke reaches
+// the window manager through this function or it does not reach it at all.
 
 #ifndef EOS_SHELL_INPUT_H
 #define EOS_SHELL_INPUT_H
@@ -41,8 +41,7 @@ void eos_shell_input_init(eos_shell_input_t *in, eos_wm_t *wm,
                           eos_shell_state_t *st, const eos_keymap_t *km,
                           eos_rect_t screen, int16_t theme_bar_h);
 
-// STUB. Pops the next input event, and today there is never one because
-// nothing implements eos_input.h yet. Returns false = queue empty.
+// Pops the next input event from the HAL ring. False = queue empty.
 bool eos_shell_input_next(eos_event_t *out);
 
 // Drains the queue through eos_keys_feed(). Returns true when at least one

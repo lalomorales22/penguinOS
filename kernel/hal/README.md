@@ -1,7 +1,7 @@
 # kernel/hal — the line every board has to cross
 
-Four headers, no `.c` files. They define the only things the rest of ESP-OS is
-allowed to know about hardware:
+Four headers and one `.c` file. The headers define the only things the rest of
+ESP-OS is allowed to know about hardware:
 
 | Header | What it fixes |
 |---|---|
@@ -12,6 +12,18 @@ allowed to know about hardware:
 
 Above this line nothing includes a driver header, mentions a GPIO number, or
 tests for a board. Below it, a backend implements 58 functions and gets an OS.
+
+`eos_input.c` is the exception to "no `.c` files", and it is here rather than in
+a backend directory because the part of input that is hard is not hardware. The
+ring, the press/release diff over a HID report, the held-key table, key repeat
+and the hold expiry are the same on every board in the fleet; what differs is
+only which GPIOs are buttons. It is compiled by the host suite in
+`kernel/svc/test/test_ble.c` with no ESP-IDF present, which is how the report
+decoder gets attacked with malformed input.
+
+| File | What |
+|---|---|
+| `eos_input.c` | the ring, the HID diff, held state, repeat, button debounce |
 
 ## The tier model
 
@@ -154,11 +166,11 @@ arithmetic stays correct everywhere.
 `stride` is in **bytes** for every format. Zero means tightly packed;
 `eos_bitmap_stride()` works it out.
 
-## What an input backend must implement
+## The input implementation
 
-Seventeen functions. The keycode space is USB HID usage codes, unchanged,
-because the K809 already speaks them and nothing should sit between the radio
-and the queue.
+Seventeen functions, all of them in `eos_input.c`. The keycode space is USB HID
+usage codes, unchanged, because the K809 already speaks them and nothing should
+sit between the radio and the queue.
 
 | Group | Functions |
 |---|---|
@@ -172,7 +184,58 @@ notify callback. It drops on a full ring and counts the drop rather than
 overwriting unread history — losing a key-up is worse than losing a key-down.
 
 `eos_input_hid_report()` takes the raw 8-byte report (`mods`, reserved, six
-usages) and does the press/release diff centrally, so no driver repeats it.
+usages) and does the press/release diff centrally, so no driver repeats it. A
+HID keyboard reports STATE, not events — it never says a key was released, it
+just stops mentioning it — so the whole event stream is a diff, and it is done
+once, here.
+
+Reports arrive over the air from a peripheral nobody audited, so the decoder is
+written for any length from 0 to 255 and any byte values:
+
+| Report | What happens |
+|---|---|
+| `len == 0`, or NULL | ignored |
+| `len 1..2` | modifiers only; every key slot reads as released |
+| `len >= 3` | modifiers plus `len - 2` usage slots, at most six honoured |
+| a slot holding `0x01`, `0x02` or `0x03` | ErrorRollOver / POSTFail / ErrorUndefined: **the whole key array is discarded** and the previously held set is left alone. Modifiers still apply. |
+| the same usage in two slots | one key |
+| a seventh usage | ignored |
+
+The rollover rule is the one worth stating twice. A cheap keyboard that cannot
+resolve its matrix fills all six slots with `0x01`; reading that as six keys
+going down turns a mashed keyboard into six spurious binds, and reading it as
+six releases drops the keys that really were down.
+
+Fixed cost, whatever is happening:
+
+| Structure | Size | Note |
+|---|---|---|
+| event ring | 512 B | `EOS_INPUT_QUEUE` (32) x 16 B |
+| held table | 256 B | 16 slots: six HID usages, eight modifiers, headroom |
+| button state | 96 B | `EOS_MAX_BUTTONS` |
+
+Sixteen held slots and not more: a seventeenth simultaneous key is refused
+rather than evicting one, because evicting loses that key's release and latches
+it down forever.
+
+Two spinlocks, never nested in the other order: one guards the ring, one guards
+the held table and modifier state. `eos_input_push()` takes only the first,
+which is what makes it safe from a NimBLE callback or a GPIO ISR.
+
+Modifier state is not a variable that could disagree with the held table — it
+IS the held table, recomputed after every change, so a stuck modifier cannot
+outlive the key it came from. Modifier presses are queued BEFORE the key in the
+same report and released AFTER it, so `super+return` arrives as one chord and
+not as a return that has not heard about super yet.
+
+Buttons are polled with a 20 ms debounce rather than interrupt driven. A tact
+switch bounces for a few milliseconds and an ISR per edge delivers that bounce
+as keystrokes; none of these boards has hardware debounce anywhere.
+
+Touch has no backend yet. The injection path (`eos_input_inject_touch`) is
+complete and events flow, but no XPT2046 or GT911 driver is bound, so a board
+declaring `inputs.touch.present` gets injection only. The C6-LCD-1.3 declares
+no touch, so nothing is missing on the board this runs on.
 
 Two behaviours the backend must get right, both learned the hard way on the
 arcade build:
