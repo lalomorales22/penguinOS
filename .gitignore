@@ -21,3 +21,9 @@ design/.dump
 .vscode/
 .idea/
 *.swp
+
+# Per-board bring-up apps are real IDF projects; their build output is not
+boards/*/probe/build/
+boards/*/probe/sdkconfig
+boards/*/probe/managed_components/
+boards/*/probe/dependencies.lock
