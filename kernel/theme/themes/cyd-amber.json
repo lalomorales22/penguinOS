@@ -1,0 +1,58 @@
+// cyd-amber. Original, not a port of anything.
+//
+// Built out of the five colours the CY24 terminal has been running for months:
+// bg 38,38,36 / border 205,133,90 / text 224,222,218 / dim 138,135,129 /
+// orange 216,142,86. Those five are used here exactly, at bg, border_focused,
+// text, muted and accent. Everything else was chosen around them.
+//
+// The palette is deliberately warm end to end, the way an amber phosphor tube
+// is, with exactly one cool colour in the ansi set: blue. A terminal without a
+// distinguishable blue makes `ls` unreadable, and that mattered more than
+// keeping the CRT conceit pure.
+//
+// Metrics are tight because this is the theme for the 320x240 CYD: a 2px gap
+// and a 12px bar, so a two-way split still leaves usable tiles.
+{
+  "name": "cyd-amber",
+  "font": "small",
+
+  "metrics": { "gap": 2, "border": 1, "bar_h": 12, "tab_h": 11, "radius": 0 },
+
+  "colors": {
+    "bg":               "#262624",
+    "surface":          "#302f2c",
+    "overlay":          "#3b3a36",
+    "text":             "#e0deda",
+    "muted":            "#8a8781",
+    "accent":           "#d88e56",
+    "accent_alt":       "#f0c08a",
+    "ok":               "#8fae6e",
+    "warn":             "#e0b357",
+    "err":              "#cf5f4a",
+    "border_focused":   "#cd855a",
+    "border_unfocused": "#4a4844",
+    "bar_bg":           "#1e1e1c",
+    "bar_fg":           "#cd855a",
+    "tab_active":       "#d88e56",
+    "tab_inactive":     "#6b6862"
+  },
+
+  "ansi": {
+    "black":          "#262624",
+    "red":            "#c05a45",
+    "green":          "#7f9c5e",
+    "yellow":         "#d88e56",
+    "blue":           "#6f8ba0",
+    "magenta":        "#a9738b",
+    "cyan":           "#6f9c96",
+    "white":          "#c8c5bf",
+    "bright_black":   "#4a4844",
+    "bright_red":     "#e07a60",
+    "bright_green":   "#9cba76",
+    "bright_yellow":  "#f0b06a",
+    "bright_blue":    "#8fa9bd",
+    "bright_magenta": "#c78fa5",
+    "bright_cyan":    "#8fbab3",
+    "bright_white":   "#e0deda"
+  }
+}

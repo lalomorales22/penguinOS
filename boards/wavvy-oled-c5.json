@@ -1,0 +1,211 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "wavvy-oled-c5",
+  "name": "wavvy OLED (ESP32-C5 + SSD1306 128x64 I2C)",
+  "summary": "The smallest surface ESP-OS targets. 1bpp mono, 1KB of framebuffer, and the board that proves the window manager scales down.",
+  "chip": {
+    "target": "esp32c5",
+    "variant": "ESP32-C5",
+    "cores": 1,
+    "flash_size_mb": 4,
+    "psram": {
+      "present": false,
+      "type": "none",
+      "size_mb": 0
+    }
+  },
+  "render": {
+    "tier": 0,
+    "compositor": "mono1",
+    "lvgl": false,
+    "palette_entries": 0,
+    "full_framebuffer": true,
+    "band_height": 0,
+    "min_tile_w": 60,
+    "min_tile_h": 20,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 49152,
+    "reason": "The C5 has the RAM for LVGL, so by chip alone this would be tier 1. It is tier 0 anyway because the tier picks a renderer, not a chip: the whole framebuffer is 128x64 at 1bpp, which is 1024 bytes, already in the exact byte layout the SSD1306 wants. LVGL's 1bpp path would add tens of KB of code and a conversion step to manage a buffer smaller than one LVGL draw descriptor. The compositor owns the page directly and pushes all 1024 bytes in one I2C transfer."
+  },
+  "display": {
+    "controller": "SSD1306",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
+    "native_width": 128,
+    "native_height": 64,
+    "rotation": 0,
+    "color_depth": 1,
+    "bytes_per_pixel": 0,
+    "color_order": "mono",
+    "supports_16bit_pixels": false,
+    "pixel_format_reason": "1bpp packed, eight vertical pixels per byte in the SSD1306's page layout. There is no per-pixel byte cost at all, which is why the whole panel fits in 1024 bytes and no staging buffer is needed.",
+    "bus": "i2c",
+    "spi_host": null,
+    "clock_hz": 400000,
+    "clock_reason": "400kHz I2C fast mode. At the default 100kHz a full 1024-byte page push takes about four times as long and animation is visibly stepped; 400kHz is what the proven wavvy_oled sketch runs.",
+    "pins": {
+      "sck": -1,
+      "mosi": -1,
+      "miso": -1,
+      "dc": -1,
+      "cs": -1,
+      "rst": -1,
+      "sda": 23,
+      "scl": 24
+    },
+    "i2c_address": 60,
+    "backlight": {
+      "pin": -1,
+      "active_low": false,
+      "pwm": false
+    },
+    "col_offset": 0,
+    "row_offset": 0,
+    "invert": false
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "Nothing else is wired for input on this board. NimBLE, same single HID host as every other board."
+    },
+    "web_input": true,
+    "touch": {
+      "present": false,
+      "controller": null,
+      "bus": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": -1,
+        "sda": -1,
+        "scl": -1
+      },
+      "i2c_address": null,
+      "absent_reason": "A bare SSD1306 module on four wires. There is nothing on it but VCC, GND, SDA and SCL."
+    },
+    "buttons": []
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": false,
+      "kind": "none",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": -1,
+      "count": 0,
+      "active_low": false
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1
+    },
+    "sdcard": {
+      "present": false,
+      "bus": null,
+      "spi_host": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1
+      },
+      "max_clock_hz": 0,
+      "shares_display_bus": false,
+      "mount_point": null
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": null,
+    "usb_bridge": "usb_serial_jtag",
+    "upload_baud": 460800,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "huge_app",
+    "app_partition_kb": 3072,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-C5",
+      "flash_size_mb": 4,
+      "psram": false
+    },
+    "panel_id_register": {
+      "supported": false,
+      "register": null,
+      "reads_back": null,
+      "note": "The SSD1306 does answer at I2C address 0x3C, which is the one panel in the fleet that gives any sign of life on a bus scan. It is still not identification: every SSD1306 and a good number of SH1106 modules answer there too, and an SH1106 driven as an SSD1306 renders with a two-column offset."
+    },
+    "usb_serial": null,
+    "mac_allowlist": [],
+    "distinguishing_notes": [
+      "Small mono OLED, white or blue on black, wired to the C5 with four jumpers rather than sitting on a carrier.",
+      "The only I2C panel in the fleet. If a bus scan finds a device at 0x3C, this is the board.",
+      "Same ESP32-C5 and same 4MB flash as the Waveshare LCD board, so esptool reports them identically."
+    ],
+    "confirm_prompt": "Is this the C5 with the 128x64 mono OLED on SDA GPIO23 / SCL GPIO24, and not the Waveshare C5 with the 1.47in colour LCD? esptool reports both as ESP32-C5 with 4MB."
+  },
+  "unverified": [
+    "chip.variant",
+    "inputs.buttons",
+    "peripherals.rgb_led.present",
+    "flashing.flash_mode",
+    "flashing.flash_freq_mhz",
+    "render.heap_budget_bytes",
+    "peripherals.internal_fs.partition_label",
+    "render.min_tile_w",
+    "render.min_tile_h"
+  ],
+  "gotchas": [
+    {
+      "id": "tier-zero-on-purpose",
+      "severity": "high",
+      "field": "render.tier",
+      "text": "This is a tier 1 chip running the tier 0 renderer, and that is deliberate. The tier selects a renderer, not a chip class. Anyone reading tier 0 here and assuming a RAM shortage will be looking for a problem that does not exist."
+    },
+    {
+      "id": "sh1106-lookalike",
+      "severity": "high",
+      "field": "display.controller",
+      "text": "SH1106 modules are sold in the same 128x64 form factor and answer at the same 0x3C. Driven as an SSD1306 they render shifted two columns right with a stripe down one edge. If a fresh module looks offset, that is which part it is, not a wiring fault."
+    },
+    {
+      "id": "no-carrier-led-recorded",
+      "severity": "note",
+      "field": "peripherals.rgb_led.present",
+      "text": "The C5 module this OLED hangs off almost certainly has an addressable LED on it, but nobody has recorded which pin, so none is declared. Trace it before using one."
+    },
+    {
+      "id": "i2c-address-decimal",
+      "severity": "note",
+      "field": "display.i2c_address",
+      "text": "JSON has no hex literal, so the address is stored as 60. That is 0x3C. The generated header emits it back as 0x3C."
+    }
+  ]
+}

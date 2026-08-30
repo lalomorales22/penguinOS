@@ -1,0 +1,216 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "waveshare-c5-lcd-147",
+  "name": "Waveshare ESP32-C5-LCD-1.47",
+  "summary": "The tier 1 reference board: enough RAM for LVGL 9 with partial buffers, no PSRAM, and a vendor BSP that owns panel init.",
+  "chip": {
+    "target": "esp32c5",
+    "variant": "ESP32-C5",
+    "cores": 1,
+    "flash_size_mb": 4,
+    "psram": {
+      "present": false,
+      "type": "none",
+      "size_mb": 0
+    }
+  },
+  "render": {
+    "tier": 1,
+    "compositor": "lvgl",
+    "lvgl": true,
+    "palette_entries": 0,
+    "full_framebuffer": false,
+    "band_height": 40,
+    "min_tile_w": 80,
+    "min_tile_h": 40,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 131072,
+    "reason": "The C5 has room for LVGL 9 but not for a whole screen. A 320x172 RGB565 frame is 110KB, which is most of the usable SRAM, so LVGL runs partial: one 320x40 draw buffer of 25.6KB, flushed as it fills. No PSRAM means no second buffer and no animation budget, so this is tier 1, not tier 2."
+  },
+  "display": {
+    "controller": "ST7789",
+    "driver_source": "bsp",
+    "bsp_component": "waveshare/esp32_c5_lcd_1_47",
+    "bsp_version": "1.0.0",
+    "native_width": 172,
+    "native_height": 320,
+    "rotation": 1,
+    "color_depth": 16,
+    "bytes_per_pixel": 2,
+    "color_order": "rgb",
+    "supports_16bit_pixels": true,
+    "pixel_format_reason": "RGB565 straight down the wire, two bytes per pixel.",
+    "bus": "spi",
+    "spi_host": "SPI2",
+    "clock_hz": 40000000,
+    "clock_reason": "40MHz, read off the BSP: BSP_LCD_SPI_CLK_HZ in esp32_c5_lcd_1_47.h is (40 * 1000 * 1000). driver_source is bsp, so the component sets the real pixel clock and this value is a mirror of it, not a control. It must be kept equal to whatever the BSP is configured with; changing it here does not change the hardware.",
+    "pins": {
+      "sck": 7,
+      "mosi": 6,
+      "miso": -1,
+      "dc": 24,
+      "cs": 23,
+      "rst": 26,
+      "sda": -1,
+      "scl": -1
+    },
+    "i2c_address": null,
+    "backlight": {
+      "pin": 10,
+      "active_low": false,
+      "pwm": true
+    },
+    "col_offset": 34,
+    "row_offset": 0,
+    "invert": true
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "There is no touch layer and no exposed button on this board, so a BLE keyboard is the only input. NimBLE is the stack ESP-OS carries everywhere; keeping one stack across all boards keeps one HID host implementation."
+    },
+    "web_input": true,
+    "touch": {
+      "present": false,
+      "controller": null,
+      "bus": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": -1,
+        "sda": -1,
+        "scl": -1
+      },
+      "i2c_address": null,
+      "absent_reason": "The 1.47in module has no touch layer. The Waveshare BSP capability table lists Touch: No, alongside Buttons: No, Audio: No and IMU: No."
+    },
+    "buttons": []
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": true,
+      "kind": "ws2812",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": 8,
+      "count": 1,
+      "active_low": false
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1
+    },
+    "sdcard": {
+      "present": true,
+      "bus": "spi",
+      "spi_host": "SPI2",
+      "pins": {
+        "sck": 7,
+        "mosi": 6,
+        "miso": 5,
+        "cs": 4
+      },
+      "max_clock_hz": 20000000,
+      "shares_display_bus": true,
+      "mount_point": "/sd"
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": null,
+    "usb_bridge": "usb_serial_jtag",
+    "upload_baud": 460800,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "huge_app",
+    "app_partition_kb": 3072,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-C5",
+      "flash_size_mb": 4,
+      "psram": false
+    },
+    "panel_id_register": {
+      "supported": false,
+      "register": null,
+      "reads_back": null,
+      "note": "Not attempted, and pointless here anyway: MISO is not wired to the panel, so nothing can be read back from the controller at all."
+    },
+    "usb_serial": null,
+    "mac_allowlist": [],
+    "distinguishing_notes": [
+      "Long thin 1.47 inch IPS strip, 320x172 in landscape, on a narrow board.",
+      "Native USB, so it enumerates as a usb_serial_jtag device rather than a CH340 or CP2102 bridge.",
+      "The only C5 board in the fleet with an LCD; the other C5 drives a 128x64 OLED over I2C."
+    ],
+    "confirm_prompt": "Is this the Waveshare ESP32-C5-LCD-1.47 with the long thin colour strip, and not the C5 wired to the 128x64 mono OLED? Both are ESP32-C5 with 4MB and esptool reports them identically."
+  },
+  "unverified": [
+    "render.band_height",
+    "flashing.flash_mode",
+    "flashing.flash_freq_mhz",
+    "peripherals.sdcard.max_clock_hz",
+    "render.heap_budget_bytes",
+    "peripherals.internal_fs.partition_label",
+    "render.min_tile_w",
+    "render.min_tile_h"
+  ],
+  "gotchas": [
+    {
+      "id": "bsp-owns-panel",
+      "severity": "high",
+      "field": "display.driver_source",
+      "text": "The Waveshare BSP component brings the panel up, not ESP-OS. It pulls espressif/esp_lvgl_port ^2 and lvgl >=8,<10, so the LVGL major version is not a free choice on this board: it has to stay inside that range or the component will not resolve."
+    },
+    {
+      "id": "st7789-offsets",
+      "severity": "high",
+      "field": "display.row_offset",
+      "text": "The panel is 172 columns of a 240-column ST7789 frame memory, so it needs a RAM offset or everything is shifted. The BSP applies esp_lcd_panel_set_gap(panel, 34, 0) and esp_lcd_panel_invert_color(panel, true), and this profile mirrors both. 34 is (240-172)/2, the panel centred in the controller window. If driver_source is ever moved off bsp to esp_lcd, these two calls are what has to be made by hand, and the symptom of dropping the gap is a picture that looks fine but is nudged sideways."
+    },
+    {
+      "id": "sd-shares-panel-bus",
+      "severity": "high",
+      "field": "peripherals.sdcard.shares_display_bus",
+      "text": "The microSD sits on the same SPI host as the panel: CLK GPIO7 and MOSI GPIO6 are shared, MISO GPIO5 and CS GPIO4 are the card's own. Every card access has to take the panel's bus lock, and card traffic during a flush will tear the frame."
+    },
+    {
+      "id": "no-buttons-recorded",
+      "severity": "note",
+      "field": "inputs.buttons",
+      "text": "The board has BOOT and RESET buttons but the BSP does not expose their GPIOs and nobody has traced them, so none are declared here. Confirm on hardware before binding a key to one."
+    },
+    {
+      "id": "no-panel-miso",
+      "severity": "note",
+      "field": "display.pins.miso",
+      "text": "MISO is not wired to the panel. Nothing can be read back from the controller, which also means no register read can ever identify it."
+    }
+  ]
+}

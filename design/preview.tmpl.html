@@ -1,0 +1,563 @@
+<title>ESP-OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#131211; --surface:#1a1917; --raise:#232120;
+  --line:#34312d; --line-soft:#262421;
+  --text:#e6e3dd; --muted:#8e8a83; --dim:#635f59;
+  --amber:#d88e56; --amber-hi:#f0c08a;
+  --ok:#8fae6e; --warn:#e0b357; --err:#cf5f4a;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --data:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --wrap:1180px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--text);
+  font-family:var(--sans); font-size:16px; line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:var(--wrap); margin:0 auto; padding:0 28px}
+a{color:var(--amber)}
+
+/* ---------- masthead ---------- */
+header.mast{
+  border-bottom:1px solid var(--line);
+  background:
+    radial-gradient(900px 340px at 12% -10%, rgba(216,142,86,.13), transparent 70%),
+    var(--ground);
+}
+.mast-inner{padding:74px 0 56px}
+.eyebrow{
+  font-family:var(--data); font-size:.6875rem; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--amber); margin:0 0 22px;
+}
+h1{
+  font-family:var(--mono); font-weight:800; font-size:clamp(3rem,9vw,5.5rem);
+  line-height:.92; letter-spacing:-.045em; margin:0 0 26px; text-wrap:balance;
+}
+h1 .sep{color:var(--amber)}
+.lede{
+  font-size:clamp(1.02rem,1.7vw,1.2rem); color:var(--muted);
+  max-width:62ch; margin:0 0 34px;
+}
+.lede strong{color:var(--text); font-weight:500}
+.stats{
+  display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+  border-radius:4px; overflow:hidden; background:var(--surface); width:fit-content;
+}
+.stat{padding:13px 22px; border-right:1px solid var(--line)}
+.stat:last-child{border-right:0}
+.stat b{
+  display:block; font-family:var(--data); font-size:1.3rem; font-weight:500;
+  color:var(--amber-hi); font-variant-numeric:tabular-nums; line-height:1.2;
+}
+.stat span{
+  display:block; font-family:var(--data); font-size:.625rem; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--dim); margin-top:3px;
+}
+
+/* ---------- sections ---------- */
+section{padding:70px 0; border-bottom:1px solid var(--line-soft)}
+.shead{margin-bottom:34px; max-width:70ch}
+h2{
+  font-family:var(--mono); font-weight:700; font-size:clamp(1.35rem,2.6vw,1.85rem);
+  letter-spacing:-.02em; margin:0 0 12px; text-wrap:balance;
+}
+h2::before{content:"› "; color:var(--amber)}
+.shead p{margin:0; color:var(--muted); font-size:.98rem}
+.shead p+p{margin-top:10px}
+
+/* ---------- theme switch ---------- */
+.themebar{display:flex; flex-wrap:wrap; gap:9px; margin:0 0 30px; align-items:center}
+.themebar .lbl{
+  font-family:var(--data); font-size:.625rem; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--dim); margin-right:5px;
+}
+.tbtn{
+  font-family:var(--data); font-size:.75rem; color:var(--muted); cursor:pointer;
+  background:var(--surface); border:1px solid var(--line); border-radius:3px;
+  padding:6px 11px 6px 8px; display:inline-flex; align-items:center; gap:8px;
+  transition:border-color .14s, color .14s;
+}
+.tbtn:hover{border-color:var(--dim); color:var(--text)}
+.tbtn[aria-pressed="true"]{border-color:var(--amber); color:var(--text)}
+.tbtn:focus-visible{outline:2px solid var(--amber); outline-offset:2px}
+.sw{display:flex; border-radius:2px; overflow:hidden; flex:0 0 auto}
+.sw i{width:7px; height:14px; display:block}
+
+/* ---------- panel gallery ---------- */
+.gallery{display:flex; flex-wrap:wrap; gap:38px 34px; align-items:flex-start}
+.panel{margin:0; flex:0 1 auto}
+.bezel{
+  padding:11px; border-radius:7px; background:var(--raise);
+  border:1px solid var(--line); box-shadow:0 14px 34px rgba(0,0,0,.45);
+  width:calc(var(--pw) * var(--k) * 1px); height:calc(var(--ph) * var(--k) * 1px);
+}
+.screen{
+  width:calc(var(--pw) * 1px); height:calc(var(--ph) * 1px);
+  transform:scale(var(--k)); transform-origin:top left;
+  position:relative; overflow:hidden; font-family:var(--data);
+}
+.screen *{box-sizing:border-box}
+figcaption{margin-top:14px; max-width:calc(var(--pw) * var(--k) * 1px + 22px)}
+figcaption .cap-t{
+  font-family:var(--mono); font-weight:700; font-size:.8125rem; letter-spacing:-.01em;
+}
+figcaption .cap-s{
+  font-family:var(--data); font-size:.6875rem; color:var(--dim); margin-top:3px;
+  display:flex; flex-wrap:wrap; gap:4px 9px;
+}
+figcaption .cap-n{margin-top:8px; font-size:.78rem; color:var(--muted); line-height:1.5}
+figcaption .cap-n b{color:var(--amber); font-weight:500}
+
+/* screen internals */
+.bar{position:absolute; left:0; top:0; display:block}
+.seg{position:absolute; top:0; white-space:pre; line-height:1}
+.tile{position:absolute; overflow:hidden}
+.tag{
+  position:absolute; right:2px; top:1px; font-size:6px; letter-spacing:.06em;
+  text-transform:uppercase; opacity:.5; line-height:1;
+}
+.tabs{position:absolute; display:flex; gap:1px; overflow:hidden}
+.tabs span{
+  flex:1 1 0; min-width:0; overflow:hidden; white-space:nowrap;
+  display:flex; align-items:center; justify-content:center; line-height:1;
+}
+.tc{padding:3px 4px; line-height:1.35; height:100%; overflow:hidden}
+.tc .row{white-space:pre; overflow:hidden; text-overflow:clip}
+canvas.buddy{display:block; width:100%; height:100%}
+
+/* ---------- rule diagram ---------- */
+.rule{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:22px}
+.rcard{
+  border:1px solid var(--line); border-radius:5px; background:var(--surface); padding:20px;
+}
+.rcard h3{
+  font-family:var(--data); font-size:.6875rem; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--amber); margin:0 0 14px; font-weight:500;
+}
+.rcard p{margin:0; font-size:.86rem; color:var(--muted); line-height:1.6}
+.rdemo{
+  background:var(--ground); border:1px solid var(--line-soft); border-radius:3px;
+  height:96px; position:relative; margin-bottom:14px;
+}
+.rdemo i{position:absolute; border:1px solid var(--amber); background:rgba(216,142,86,.11); display:block}
+.rdemo i.ghost{border-color:var(--dim); background:transparent}
+.rdemo b{
+  position:absolute; font-family:var(--data); font-size:8px; color:var(--amber);
+  font-weight:400; letter-spacing:.08em;
+}
+
+/* ---------- tables ---------- */
+.tscroll{overflow-x:auto; border:1px solid var(--line); border-radius:5px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:.84rem; min-width:520px}
+th,td{padding:10px 16px; text-align:left; border-bottom:1px solid var(--line-soft)}
+tr:last-child td{border-bottom:0}
+th{
+  font-family:var(--data); font-size:.625rem; letter-spacing:.15em; text-transform:uppercase;
+  color:var(--dim); font-weight:500; background:var(--raise);
+}
+td.k{font-family:var(--data); color:var(--amber-hi); white-space:nowrap}
+td.n{font-family:var(--data); font-variant-numeric:tabular-nums; text-align:right; color:var(--muted)}
+td.d{color:var(--muted)}
+.pill{
+  font-family:var(--data); font-size:.625rem; letter-spacing:.08em; text-transform:uppercase;
+  padding:3px 8px; border-radius:2px; border:1px solid; white-space:nowrap;
+}
+.p-ok{color:var(--ok); border-color:rgba(143,174,110,.42); background:rgba(143,174,110,.09)}
+.p-wip{color:var(--warn); border-color:rgba(224,179,87,.42); background:rgba(224,179,87,.09)}
+.p-no{color:var(--err); border-color:rgba(207,95,74,.42); background:rgba(207,95,74,.09)}
+
+/* ---------- keybinds ---------- */
+.keys{display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:0 30px}
+.kb{
+  display:flex; align-items:baseline; gap:12px; padding:8px 0;
+  border-bottom:1px solid var(--line-soft);
+}
+.kb kbd{
+  font-family:var(--data); font-size:.72rem; color:var(--amber-hi); white-space:nowrap;
+  background:var(--surface); border:1px solid var(--line); border-radius:3px;
+  padding:3px 7px; flex:0 0 auto;
+}
+.kb span{font-size:.84rem; color:var(--muted); line-height:1.4}
+
+footer{padding:44px 0 66px; color:var(--dim); font-size:.8rem; font-family:var(--data)}
+footer p{margin:0 0 6px; max-width:76ch; line-height:1.7}
+
+@media (max-width:640px){
+  .wrap{padding:0 18px}
+  .mast-inner{padding:52px 0 40px}
+  section{padding:52px 0}
+  .stat{padding:11px 16px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important; transition:none !important}
+}
+</style>
+
+<header class="mast"><div class="wrap mast-inner">
+  <p class="eyebrow">esp32 firmware · tiling wm · voxel companion</p>
+  <h1>ESP<span class="sep">-</span>OS</h1>
+  <p class="lede">A tiling window manager, a theme engine and a little voxel buddy — running on
+  microcontrollers with <strong>20 KB of free heap</strong> and screens smaller than a credit card.
+  Every panel below is drawn from the <strong>real kernel's own layout output</strong>, not mocked up.</p>
+  <div class="stats">
+    <div class="stat"><b>2,966</b><span>host checks</span></div>
+    <div class="stat"><b>0</b><span>failures</span></div>
+    <div class="stat"><b>5</b><span>board profiles</span></div>
+    <div class="stat"><b>7</b><span>themes</span></div>
+    <div class="stat"><b>1</b><span>window tree</span></div>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <div class="shead">
+    <h2>Four panels, one window tree</h2>
+    <p>The same BSP tiling tree drives a 480-pixel-tall ILI9488 and a 128×64 OLED. Nothing is
+    special-cased per board. Pick a theme and watch every panel change at once. Gap, border, bar height and tab height are theme
+    metrics too, so the tiles genuinely <strong>re-lay out</strong> — goldleaf’s wider gap costs the
+    terminal three pixels. That is the Omarchy trick worth stealing: one file on the microSD
+    reskins the whole system, no rebuild.</p>
+  </div>
+  <div class="themebar" id="themebar"><span class="lbl">theme</span></div>
+  <div class="gallery" id="gallery"></div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="shead">
+    <h2>Why it tiles at all on a 2.4-inch screen</h2>
+    <p>Real tiling past two panes on a 320×240 panel produces slivers nobody can read. So a split
+    that cannot give both children the configured minimum tile size does not shrink them — it
+    <strong>collapses into a tab group</strong>. The tree never changes; only the layout pass adapts.
+    That single rule is what lets one window manager serve every screen in the drawer.</p>
+  </div>
+  <div class="rule">
+    <div class="rcard">
+      <div class="rdemo">
+        <i style="left:6px;top:6px;width:calc(50% - 9px);height:calc(100% - 12px)"></i>
+        <i style="right:6px;top:6px;width:calc(50% - 9px);height:calc(100% - 12px)"></i>
+      </div>
+      <h3>Room to split</h3>
+      <p>Both children clear the minimum, so the split renders as a real side-by-side tile pair
+      with the theme's gap between them.</p>
+    </div>
+    <div class="rcard">
+      <div class="rdemo">
+        <i class="ghost" style="left:6px;top:6px;width:calc(33% - 8px);height:calc(100% - 12px)"></i>
+        <i class="ghost" style="left:33%;top:6px;width:calc(33% - 8px);height:calc(100% - 12px)"></i>
+        <i class="ghost" style="right:6px;top:6px;width:calc(33% - 8px);height:calc(100% - 12px)"></i>
+        <b style="left:50%;top:42px;transform:translateX(-50%)">TOO NARROW</b>
+      </div>
+      <h3>What we refuse to draw</h3>
+      <p>Three panes on a 320-pixel-wide screen leaves about 100 pixels each. A terminal at that
+      width is decoration, not a tool.</p>
+    </div>
+    <div class="rcard">
+      <div class="rdemo">
+        <i style="left:6px;top:6px;width:calc(100% - 12px);height:15px;background:rgba(216,142,86,.2)"></i>
+        <b style="left:11px;top:9px">files</b>
+        <b style="left:52px;top:9px;color:var(--dim)">settings</b>
+        <b style="left:105px;top:9px;color:var(--dim)">term</b>
+        <i style="left:6px;top:27px;width:calc(100% - 12px);height:calc(100% - 33px)"></i>
+      </div>
+      <h3>So it tabs instead</h3>
+      <p>The whole cramped subtree flattens into one tab strip. Every window stays reachable with
+      <kbd style="font-family:var(--data);color:var(--amber-hi)">super+tab</kbd>, and the one you
+      are using gets the full width.</p>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="shead">
+    <h2>Keybinds</h2>
+    <p>Hyprland muscle memory, on a Bluetooth keyboard, on a microcontroller. Loadable from JSON
+    on the SD card, with this table compiled in as the fallback.</p>
+  </div>
+  <div class="keys" id="keys"></div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="shead">
+    <h2>Honest status</h2>
+    <p>What actually runs today versus what is designed but not yet wired to hardware. Everything
+    marked verified compiles and passes its host tests on the Mac; nothing has been flashed to a
+    board yet, because the display backends are the next piece of work.</p>
+  </div>
+  <div class="tscroll"><table>
+    <thead><tr><th>Component</th><th>State</th><th style="text-align:right">Checks</th><th>Notes</th></tr></thead>
+    <tbody id="status"></tbody>
+  </table></div>
+</div></section>
+
+<footer><div class="wrap">
+  <p>Layout geometry, bar segments, theme palettes and metrics on this page are emitted by the
+  compiled kernel — <span style="color:var(--muted)">eos_wm.c, eos_bar.c and eos_theme.c</span> —
+  and rendered here at true pixel dimensions. The voxel buddy is a browser port of the same
+  painter's-algorithm cube rasteriser that runs on the board.</p>
+</div></footer>
+
+<script>
+const DATA = /*__DATA__*/;
+const PANELS = DATA.layouts["cyd-amber"];   // labels + pixel sizes, theme-independent
+const PREF = [1.5, 1.0, 1.5, 3.0];
+const ROLE = ["bar_fg","muted","accent","ok","warn"];
+const THEMES = Object.keys(DATA.themes);
+let current = "cyd-amber";
+
+/* ---------- voxel buddy ---------- */
+const BOXES = [
+  [-3,0,-2,-1,1,1,3],[1,0,-2,3,1,1,3],
+  [-3,2,-2,3,7,2,0],
+  [-5,3,-1,-4,6,0,0],[4,3,-1,5,6,0,0],
+  [-4,8,-3,4,13,3,1],
+  [-3,11,-4,-2,12,-4,2],[2,11,-4,3,12,-4,2],
+  [0,14,0,0,15,0,0],[0,16,0,0,16,0,4]
+];
+const VOX = (() => {
+  const m = new Map();
+  for (const [x0,y0,z0,x1,y1,z1,c] of BOXES)
+    for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++) for (let z=z0;z<=z1;z++)
+      m.set(x+","+y+","+z, c);
+  const out = [];
+  for (const [k,c] of m) {
+    const [x,y,z] = k.split(",").map(Number);
+    const buried = m.has((x+1)+","+y+","+z) && m.has((x-1)+","+y+","+z) &&
+                   m.has(x+","+(y+1)+","+z) && m.has(x+","+(y-1)+","+z) &&
+                   m.has(x+","+y+","+(z+1)) && m.has(x+","+y+","+(z-1));
+    if (!buried) out.push([x,y,z,c]);
+  }
+  return out;
+})();
+
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1),16);
+  const cl = v => Math.max(0, Math.min(255, Math.round(v*f)));
+  return "rgb("+cl(n>>16&255)+","+cl(n>>8&255)+","+cl(n&255)+")";
+}
+const COSP = 0.87, SINP = 0.49;
+
+function drawBuddy(cv, th, t) {
+  const ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const yaw = Math.sin(t/2400)*0.75;
+  const bob = Math.sin(t/760)*0.4;
+  const blink = (t % 4200) < 150;
+  const s = Math.min(W/13.5, H/22.5);
+  const cx = W/2, cy = H*0.80;
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const cols = [th.accent, th.accent_alt, th.bg, th.muted, th.ok];
+
+  const list = VOX.map(v => {
+    const rx = v[0]*cs - v[2]*sn, rz = v[0]*sn + v[2]*cs;
+    return { v, rx, rz, d: rz*COSP - (v[1]+bob)*SINP };
+  }).sort((a,b) => b.d - a.d);
+
+  const xf = sn < 0 ? 1 : 0;
+  const zf = cs > 0 ? 0 : 1;
+  const P = (x,y,z) => {
+    const rx = x*cs - z*sn, rz = x*sn + z*cs;
+    return [cx + rx*s, cy - (y+bob)*s*COSP - rz*s*SINP];
+  };
+  const quad = (pts, col) => {
+    ctx.fillStyle = col; ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i=1;i<4;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath(); ctx.fill();
+  };
+
+  for (const o of list) {
+    const [x,y,z,c] = o.v;
+    let base = cols[c] || th.accent;
+    if (c === 2 && blink) base = cols[1];
+    quad([P(x,y+1,z),P(x+1,y+1,z),P(x+1,y+1,z+1),P(x,y+1,z+1)], shade(base,1.12));
+    const zq = zf === 0
+      ? [P(x,y,z),P(x,y+1,z),P(x+1,y+1,z),P(x+1,y,z)]
+      : [P(x,y,z+1),P(x+1,y,z+1),P(x+1,y+1,z+1),P(x,y+1,z+1)];
+    quad(zq, shade(base,0.84));
+    const xq = xf === 1
+      ? [P(x+1,y,z),P(x+1,y+1,z),P(x+1,y+1,z+1),P(x+1,y,z+1)]
+      : [P(x,y,z),P(x,y,z+1),P(x,y+1,z+1),P(x,y+1,z)];
+    quad(xq, shade(base,0.58));
+  }
+}
+
+/* ---------- tile content ---------- */
+function tileBody(app, th, w, h) {
+  const A = th.ansi, mk = (c,t) => '<div class="row" style="color:'+c+'">'+t+'</div>';
+  if (app === "term") return '<div class="tc">'
+    + mk(A[3], "$ ask megabrain") + mk(th.muted, "  model qwen3.5:2b")
+    + mk(th.text, "> tiling on 20KB of") + mk(th.text, "  heap is mostly a")
+    + mk(th.text, "  question of what") + mk(th.text, "  you refuse to draw.")
+    + mk(A[2], "  done 1.4s") + mk(A[3], "$ █") + '</div>';
+  if (app === "files") return '<div class="tc">'
+    + mk(th.accent, "/sd/buddy") + mk(th.text, " buddy.vox") + mk(th.text, " buddy.json")
+    + mk(th.muted, " themes/") + mk(th.muted, " web/") + '</div>';
+  if (app === "settings") return '<div class="tc">'
+    + mk(th.muted, "wifi     " ) + mk(th.text, " home-2.4g")
+    + mk(th.muted, "brain") + mk(th.text, " 192.168.0.139")
+    + mk(th.muted, "theme") + mk(th.accent, " " + th.__name) + '</div>';
+  if (app === "arcade") return '<div class="tc">'
+    + mk(th.accent, "▸ pac-man") + mk(th.muted, "  snake") + mk(th.muted, "  tetris")
+    + mk(th.muted, "  breakout") + mk(th.muted, "  invaders") + mk(th.muted, "  flappy") + '</div>';
+  if (app === "cpm") return '<div class="tc">' + mk(th.accent, "A> zork1") + '</div>';
+  return "";
+}
+
+/* ---------- panel render ---------- */
+function renderPanel(fig, i) {
+  const p = DATA.layouts[current][i], th = DATA.themes[current];
+  const C = th.colors, M = p.metrics;
+  const mono = p.w <= 128;
+  const OFFK = new Set(["bg","surface","overlay","bar_bg","border_unfocused"]);
+  const c = k => mono ? (OFFK.has(k) ? "#05070a" : "#cfe8d8") : C[k];
+  const pal = { accent:c("accent"), accent_alt:c("accent_alt"), bg:c("bg"),
+                muted:c("muted"), ok:c("ok"), text:c("text"),
+                ansi: mono ? Array(16).fill("#cfe8d8") : Object.values(th.ansi),
+                __name: current };
+
+  const scr = fig.querySelector(".screen");
+  scr.style.background = c("bg");
+  const cw = p.cw;   // the face the theme asked for, clamped by the panel
+  scr.style.fontSize = (cw / 0.6).toFixed(2) + "px";
+  let html = "";
+
+  html += '<div class="bar" style="width:'+p.w+'px;height:'+M.bar_h+'px;background:'+c("bar_bg")+'">';
+  for (const s of p.bar) {
+    const role = ROLE[s.role] || "bar_fg";
+    html += '<div class="seg" style="left:'+s.x+'px;width:'+s.w+'px;height:'+M.bar_h+'px;'
+         +  'display:flex;align-items:center;color:'+c(role)+'">'+s.t+'</div>';
+  }
+  html += '</div>';
+
+  const groups = new Set();
+  for (const t of p.tiles) {
+    if (t.tab_count > 1 && t.tab.w > 0 && !groups.has(t.tab_group)) {
+      groups.add(t.tab_group);
+      const mem = p.tiles.filter(x => x.tab_group === t.tab_group)
+                         .sort((a,b) => a.tab_index - b.tab_index);
+      html += '<div class="tabs" style="left:'+t.tab.x+'px;top:'+t.tab.y+'px;width:'+t.tab.w
+           +  'px;height:'+t.tab.h+'px">';
+      for (const m of mem)
+        html += '<span style="background:'+(m.visible ? c("tab_active") : c("surface"))
+             +  ';color:'+(m.visible ? c("bg") : c("tab_inactive"))+'">'+m.app+'</span>';
+      html += '</div>';
+    }
+    if (!t.visible) continue;
+    const bw = Math.max(1, M.border);
+    html += '<div class="tile" style="left:'+t.x+'px;top:'+t.y+'px;width:'+t.w+'px;height:'+t.h
+         +  'px;background:'+c("surface")+';border:'+bw+'px solid '
+         +  (t.focused ? c("border_focused") : c("border_unfocused"))
+         +  ';border-radius:'+Math.min(M.radius, 4)+'px">'
+         +  (t.app === "buddy"
+              ? '<canvas class="buddy" data-p="'+i+'" width="'+Math.max(8,(t.w-2*bw)*2)
+                + '" height="'+Math.max(8,(t.h-2*bw)*2)+'"></canvas>'
+              : tileBody(t.app, pal, t.w, t.h))
+         +  '<span class="tag" style="color:'+c("muted")+'">'+t.app+'</span></div>';
+  }
+  scr.innerHTML = html;
+}
+
+function buildGallery() {
+  const g = document.getElementById("gallery");
+  g.innerHTML = PANELS.map((p,i) => {
+    const notes = [
+      "Four windows. <b>files</b> and <b>settings</b> ran out of room, so they tabbed.",
+      "Tallest panel here, so it splits five ways without ever tabbing.",
+      "Only 172 pixels tall. <b>buddy</b> tabbed away behind the terminal.",
+      "Everything past the first window tabs. The bar keeps all seven segments by shrinking <b>brain qwen3.5:2b</b> down to <b>b</b>."
+    ][i];
+    return '<figure class="panel" data-i="'+i+'" style="--pw:'+p.w+';--ph:'+p.h+';--k:'+PREF[i]+'">'
+      + '<div class="bezel"><div class="screen"></div></div>'
+      + '<figcaption><div class="cap-t">'+p.label+'</div>'
+      + '<div class="cap-s"><span>'+p.panel+'</span><span>tier '+(i===2?1:0)+'</span></div>'
+      + '<div class="cap-n">'+notes+'</div></figcaption></figure>';
+  }).join("");
+  PANELS.forEach((_,i) => renderPanel(g.children[i], i));
+}
+
+function buildThemes() {
+  const bar = document.getElementById("themebar");
+  for (const name of THEMES) {
+    const t = DATA.themes[name], b = document.createElement("button");
+    b.className = "tbtn"; b.type = "button";
+    b.setAttribute("aria-pressed", String(name === current));
+    b.innerHTML = '<span class="sw">'
+      + ["bg","surface","accent","accent_alt","ok","err"]
+          .map(k => '<i style="background:'+t.colors[k]+'"></i>').join("")
+      + '</span>' + name;
+    b.dataset.theme = name;
+    b.onclick = () => {
+      current = name;
+      [...bar.querySelectorAll(".tbtn")].forEach(x =>
+        x.setAttribute("aria-pressed", String(x.dataset.theme === name)));
+      PANELS.forEach((_,i) =>
+        renderPanel(document.getElementById("gallery").children[i], i));
+    };
+    bar.appendChild(b);
+  }
+}
+
+const KEYS = [
+  ["super + return","new terminal"],["super + q","close window"],
+  ["super + h / v","force next split side-by-side / stacked"],
+  ["super + hjkl","move focus"],["super + shift + hjkl","move the window"],
+  ["super + 1…9","switch workspace"],["super + shift + 1…9","send window to workspace"],
+  ["super + tab","next window in a tab group"],["super + - / =","resize the focused tile"],
+  ["super + space","app launcher"],["super + b","toggle the bar"],
+  ["super + t","cycle theme"],["super + escape","lock / sleep"]
+];
+document.getElementById("keys").innerHTML =
+  KEYS.map(([k,d]) => '<div class="kb"><kbd>'+k+'</kbd><span>'+d+'</span></div>').join("");
+
+const STATUS = [
+  ["window manager","ok","268","BSP tree, workspaces, auto-tab collapse, directional focus"],
+  ["shell — keys + bar","ok","2201","Hyprland binds; two-pass bar fitting down to 128px"],
+  ["theme engine","ok","212","no-malloc JSON parser; a corrupt file can never block boot"],
+  ["megabrain client","ok","182","chunked stream parser, fuzzed on split boundaries"],
+  ["voxel avatar","ok","103",".vox parser fuzzed over 8,000 mutated files"],
+  ["board registry","ok","—","5 profiles + JSON schema + C header generator"],
+  ["HAL","wip","—","interfaces defined; no ESP-IDF backend behind them yet"],
+  ["companion web app","wip","—","written, never served from a board"],
+  ["universal flasher","wip","—","written, never run against real hardware"],
+  ["display backends","no","—","LVGL port and the tier-0 indexed compositor: not started"],
+  ["app layer","no","—","terminal, files, arcade, CP/M: not ported over yet"]
+];
+document.getElementById("status").innerHTML = STATUS.map(([n,s,c,d]) => {
+  const cls = s === "ok" ? "p-ok" : s === "wip" ? "p-wip" : "p-no";
+  const lbl = s === "ok" ? "verified" : s === "wip" ? "untested" : "not built";
+  return '<tr><td class="k">'+n+'</td><td><span class="pill '+cls+'">'+lbl
+    + '</span></td><td class="n">'+c+'</td><td class="d">'+d+'</td></tr>';
+}).join("");
+
+function fit() {
+  document.querySelectorAll(".panel").forEach(fig => {
+    const i = +fig.dataset.i, p = PANELS[i];
+    const avail = Math.min(fig.parentElement.clientWidth, 520) - 24;
+    const k = Math.max(0.75, Math.min(PREF[i], Math.floor(avail / p.w * 4) / 4));
+    fig.style.setProperty("--k", k);
+  });
+}
+
+buildThemes();
+buildGallery();
+fit();
+addEventListener("resize", fit);
+
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function frame(t) {
+  document.querySelectorAll("canvas.buddy").forEach(cv => {
+    const th = DATA.themes[current], mono = PANELS[+cv.dataset.p].w <= 128;
+    drawBuddy(cv, mono
+      ? { accent:"#cfe8d8", accent_alt:"#eaf6ee", bg:"#05070a", muted:"#7e9a8c", ok:"#cfe8d8" }
+      : { accent:th.colors.accent, accent_alt:th.colors.accent_alt, bg:th.colors.bg,
+          muted:th.colors.muted, ok:th.colors.ok }, t);
+  });
+  if (!reduce) requestAnimationFrame(frame);
+}
+if (reduce) frame(1200); else requestAnimationFrame(frame);
+</script>

@@ -1,0 +1,46 @@
+// catppuccin mocha. Hex values from catppuccin/catppuccin (the mocha palette),
+// ansi block is the flavour's published terminal mapping.
+{
+  "name": "catppuccin-mocha",
+  "font": "med",
+
+  "metrics": { "gap": 5, "border": 1, "bar_h": 16, "tab_h": 13, "radius": 6 },
+
+  "colors": {
+    "bg":               "#1e1e2e",
+    "surface":          "#313244",
+    "overlay":          "#45475a",
+    "text":             "#cdd6f4",
+    "muted":            "#6c7086",
+    "accent":           "#cba6f7",
+    "accent_alt":       "#89b4fa",
+    "ok":               "#a6e3a1",
+    "warn":             "#f9e2af",
+    "err":              "#f38ba8",
+    "border_focused":   "#cba6f7",
+    "border_unfocused": "#45475a",
+    "bar_bg":           "#181825",
+    "bar_fg":           "#cdd6f4",
+    "tab_active":       "#cba6f7",
+    "tab_inactive":     "#585b70"
+  },
+
+  "ansi": {
+    "black":          "#45475a",
+    "red":            "#f38ba8",
+    "green":          "#a6e3a1",
+    "yellow":         "#f9e2af",
+    "blue":           "#89b4fa",
+    "magenta":        "#f5c2e7",
+    "cyan":           "#94e2d5",
+    "white":          "#bac2de",
+    "bright_black":   "#585b70",
+    "bright_red":     "#f38ba8",
+    "bright_green":   "#a6e3a1",
+    "bright_yellow":  "#f9e2af",
+    "bright_blue":    "#89b4fa",
+    "bright_magenta": "#f5c2e7",
+    "bright_cyan":    "#94e2d5",
+    "bright_white":   "#a6adc8"
+  }
+}

@@ -1,0 +1,245 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "wavvy-ili9488-35",
+  "name": "wavvy 3.5in ILI9488 panel (plain ESP32 WROOM)",
+  "summary": "Electrically identical to the 4.0in board and differs in exactly one field: it is not stable at 80MHz.",
+  "chip": {
+    "target": "esp32",
+    "variant": "ESP32-WROOM-32",
+    "cores": 2,
+    "flash_size_mb": 4,
+    "psram": {
+      "present": false,
+      "type": "none",
+      "size_mb": 0
+    }
+  },
+  "render": {
+    "tier": 0,
+    "compositor": "indexed8",
+    "lvgl": false,
+    "palette_entries": 256,
+    "full_framebuffer": false,
+    "band_height": 16,
+    "min_tile_w": 80,
+    "min_tile_h": 40,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 65536,
+    "reason": "Same geometry and same arithmetic as the 4.0in board: 320x480 at 8 bits indexed is 153.6KB in one block, which the ESP32 will not give you with WiFi up, so the compositor works in 16-row bands. The halved clock costs roughly 3 fps on top, blit 35ms to 53ms for a 320x192 draw, which does not change the buffer strategy."
+  },
+  "display": {
+    "controller": "ILI9488",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
+    "native_width": 320,
+    "native_height": 480,
+    "rotation": 0,
+    "color_depth": 18,
+    "bytes_per_pixel": 3,
+    "color_order": "bgr",
+    "supports_16bit_pixels": false,
+    "pixel_format_reason": "The ILI9488 has no 16-bit SPI pixel mode. Every pixel is three bytes on the wire, using the top 6 bits of each channel. That is the hard ceiling on frame rate.",
+    "bus": "spi",
+    "spi_host": "VSPI",
+    "clock_hz": 40000000,
+    "clock_reason": "Measured, and the single most expensive fact in this registry. THIS BOARD IS NOT STABLE AT 80MHz. It renders structured block corruption: squares, lines, smearing, because whole bytes are lost mid-block rather than bits flipped at random. 40MHz fixes it at the cost of about 3 fps. The panel IS an ILI9488, same as the 4.0in board, verified with a labelled test card after the corruption pattern initially looked like an ST7796 being driven with 3-byte pixels. Do not raise this clock, and do not re-diagnose the corruption as a wrong-driver problem.",
+    "pins": {
+      "sck": 18,
+      "mosi": 23,
+      "miso": -1,
+      "dc": 2,
+      "cs": 5,
+      "rst": 4,
+      "sda": -1,
+      "scl": -1
+    },
+    "i2c_address": null,
+    "backlight": {
+      "pin": -1,
+      "active_low": false,
+      "pwm": false
+    },
+    "col_offset": 0,
+    "row_offset": 0,
+    "invert": false
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "No touch and no panel-side buttons, so a BLE keyboard is the only real input. NimBLE at 19KB rather than Bluedroid at 83KB, same as every other no-PSRAM board in the fleet."
+    },
+    "web_input": true,
+    "touch": {
+      "present": false,
+      "controller": null,
+      "bus": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": -1,
+        "sda": -1,
+        "scl": -1
+      },
+      "i2c_address": null,
+      "absent_reason": "Bare panel module wired to a plain ESP32 devkit. There is no touch layer on the glass and no touch controller on either board."
+    },
+    "buttons": [
+      {
+        "name": "boot",
+        "gpio": 0,
+        "active_low": true,
+        "pull": "up"
+      }
+    ]
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": false,
+      "kind": "none",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": -1,
+      "count": 0,
+      "active_low": false
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1
+    },
+    "sdcard": {
+      "present": false,
+      "bus": null,
+      "spi_host": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1
+      },
+      "max_clock_hz": 0,
+      "shares_display_bus": false,
+      "mount_point": null
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": "/dev/cu.usbserial-0001",
+    "usb_bridge": "CP2102",
+    "upload_baud": 230400,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [
+      {
+        "baud": 921600,
+        "reason": "Invalid head of packet (0xFF) on this CP2102 cable, including for plain esptool reads. It is the cable, not the board."
+      },
+      {
+        "baud": 460800,
+        "reason": "Same Invalid head of packet (0xFF) failure as 921600."
+      }
+    ],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "huge_app",
+    "app_partition_kb": 3072,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-D0WDQ6",
+      "flash_size_mb": 4,
+      "psram": false
+    },
+    "panel_id_register": {
+      "supported": false,
+      "register": "0xD3",
+      "reads_back": "00 7F DF",
+      "note": "Same read, same garbage, same conclusion as the 4.0in board: 0xD3 returns 00 7F DF, matching no known part. Identity comes from this file and a human, not from the panel."
+    },
+    "usb_serial": "0001",
+    "mac_allowlist": [],
+    "distinguishing_notes": [
+      "3.5 inch panel. That is the only difference from the 4.0in board: same chip, same flash, same controller, same wiring, same clone CP2102 reporting USB serial 0001.",
+      "If a board renders blocks, lines and static rather than a picture, it is this board running the 4.0in profile at 80MHz.",
+      "locationID in ioreg -r -c IOUSBHostDevice -l is unique per physical USB port and can tell two identical bridges apart if both are plugged in."
+    ],
+    "confirm_prompt": "Is this the 3.5 inch panel? It is the slower of the two identical-looking boards: 40MHz, not 80MHz. Getting this wrong gives structured block corruption that looks like a dead panel."
+  },
+  "unverified": [
+    "chip.variant",
+    "inputs.buttons",
+    "identification.esptool_reports.chip",
+    "flashing.flash_mode",
+    "flashing.flash_freq_mhz",
+    "render.heap_budget_bytes",
+    "peripherals.internal_fs.partition_label",
+    "render.min_tile_w",
+    "render.min_tile_h"
+  ],
+  "gotchas": [
+    {
+      "id": "not-stable-at-80mhz",
+      "severity": "critical",
+      "field": "display.clock_hz",
+      "text": "40MHz, not 80MHz. At 80MHz this specific module renders blocks, lines and static. The corruption is structured rather than speckled because whole bytes are lost mid-block, which is what tells you it is a clock problem and not a driver problem. The panel is an ILI9488 and that was verified visually; do not go looking for an ST7796."
+    },
+    {
+      "id": "three-bytes-per-pixel",
+      "severity": "critical",
+      "field": "display.supports_16bit_pixels",
+      "text": "No 16-bit SPI pixel mode. Three bytes per pixel, always. A full 320x480 frame is 460.8KB on the wire."
+    },
+    {
+      "id": "upload-baud-230400",
+      "severity": "critical",
+      "field": "flashing.upload_baud",
+      "text": "230400 only. 921600 and 460800 both fail with Invalid head of packet (0xFF) on this CP2102 cable, including for esptool reads."
+    },
+    {
+      "id": "miso-unbound-on-purpose",
+      "severity": "high",
+      "field": "display.pins.miso",
+      "text": "MISO is deliberately left unassigned even though GPIO19 is available. The panel is write-only, and the ESP32 SPI driver refuses to clock above 26.7MHz once a MISO pin is bound. On this board that would drop the clock below the 40MHz it needs."
+    },
+    {
+      "id": "no-full-framebuffer",
+      "severity": "high",
+      "field": "render.full_framebuffer",
+      "text": "153.6KB of indexed framebuffer will not come back as one contiguous allocation with WiFi up. Band rendering is the only thing that fits."
+    },
+    {
+      "id": "monitor-resets-board",
+      "severity": "note",
+      "field": "flashing.auto_reset",
+      "text": "Attaching a serial monitor resets the board through DTR/RTS. Anything streaming to it drops for a few seconds and reconnects."
+    },
+    {
+      "id": "duplicate-usb-serial",
+      "severity": "note",
+      "field": "identification.usb_serial",
+      "text": "Both CP2102 bridges in the fleet report USB serial 0001, so with both boards plugged in the /dev/cu.usbserial-* names collide. Flash one at a time, or match on locationID from ioreg."
+    }
+  ]
+}

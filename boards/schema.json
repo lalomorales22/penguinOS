@@ -1,0 +1,1181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://esp-os/boards/schema.json",
+  "title": "ESP-OS board profile",
+  "description": "One board, described completely enough to bring it up without touching the hardware first. Panel controllers are not reliably probeable - the ILI9488 answers register 0xD3 with 00 7F DF, which matches no known part - so board identity comes from this registry plus a one-time human confirmation, never from a register read. Everything a hard-won debugging session produced belongs in here as a field with a reason, so it is never rediscovered.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "summary",
+    "chip",
+    "render",
+    "display",
+    "inputs",
+    "peripherals",
+    "flashing",
+    "identification",
+    "unverified",
+    "gotchas"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "description": "Bumped only when a field changes meaning. Adding fields does not bump it."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 40,
+      "description": "Stable slug. Must equal the filename stem; the generated header is boards/generated/<id>.h and its include guard is derived from it."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What a human calls this board, including the variant letter when the variant is what bites you."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One line: what this board is for in ESP-OS."
+    },
+    "chip": {
+      "$ref": "#/$defs/chip"
+    },
+    "render": {
+      "$ref": "#/$defs/render"
+    },
+    "display": {
+      "$ref": "#/$defs/display"
+    },
+    "inputs": {
+      "$ref": "#/$defs/inputs"
+    },
+    "peripherals": {
+      "$ref": "#/$defs/peripherals"
+    },
+    "flashing": {
+      "$ref": "#/$defs/flashing"
+    },
+    "identification": {
+      "$ref": "#/$defs/identification"
+    },
+    "unverified": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/field_path"
+      },
+      "uniqueItems": true,
+      "description": "Dotted paths of fields whose value is a conservative default rather than something measured on the bench. Everything not listed here was proven on hardware. The generator lists these in a comment at the top of the header so nobody mistakes a guess for a fact."
+    },
+    "gotchas": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/gotcha"
+      },
+      "description": "Facts that cost debugging time. They are emitted as comments in the generated header, not as strings, so they cost no flash."
+    }
+  },
+  "$defs": {
+    "gpio": {
+      "type": "integer",
+      "minimum": -1,
+      "maximum": 48,
+      "description": "GPIO number, or -1 for not connected / not used. The generator range-checks against the chip target and rejects output roles bound to input-only pins."
+    },
+    "field_path": {
+      "type": "string",
+      "pattern": "^[a-z_]+(\\.[a-z_0-9]+)*$",
+      "description": "Dotted path into this profile, e.g. display.clock_hz. The generator fails if it does not resolve."
+    },
+    "gotcha": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "field",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Slug, unique within the profile."
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "high",
+            "note"
+          ],
+          "description": "critical = ignoring it produces a broken or bricked-looking board. high = it costs an afternoon. note = worth knowing."
+        },
+        "field": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/field_path"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The field this fact explains, or null when it is not about one field."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "chip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "variant",
+        "cores",
+        "flash_size_mb",
+        "psram"
+      ],
+      "properties": {
+        "target": {
+          "enum": [
+            "esp32",
+            "esp32c5",
+            "esp32s3"
+          ],
+          "description": "ESP-IDF target name, i.e. what idf.py set-target takes."
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact silicon esptool reports, e.g. ESP32-D0WD-V3. Two boards with the same target can differ here."
+        },
+        "cores": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "flash_size_mb": {
+          "enum": [
+            2,
+            4,
+            8,
+            16,
+            32
+          ]
+        },
+        "psram": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "type",
+            "size_mb"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "none",
+                "quad",
+                "octal"
+              ]
+            },
+            "size_mb": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "description": "PSRAM is the only thing on this board esptool can actually tell you for free, and it is the gate on render tier 2."
+        }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tier",
+        "compositor",
+        "lvgl",
+        "palette_entries",
+        "full_framebuffer",
+        "band_height",
+        "min_tile_w",
+        "min_tile_h",
+        "double_buffer",
+        "animations",
+        "heap_budget_bytes",
+        "reason"
+      ],
+      "properties": {
+        "tier": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "description": "0 = no PSRAM and a tight heap, software compositor, no LVGL. 1 = comfortable RAM, no PSRAM, LVGL 9 with partial buffers. 2 = PSRAM, LVGL 9 double buffered with animations."
+        },
+        "compositor": {
+          "enum": [
+            "indexed8",
+            "mono1",
+            "lvgl"
+          ],
+          "description": "indexed8 = 8-bit palette software compositor. mono1 = 1bpp packed. lvgl = LVGL owns the buffers."
+        },
+        "lvgl": {
+          "type": "boolean",
+          "description": "Must be false at tier 0 and true at tiers 1 and 2. Kept as its own field because it is the thing #if statements test."
+        },
+        "palette_entries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 256,
+          "description": "Palette size for the indexed8 compositor. Must be 0 for every other compositor."
+        },
+        "full_framebuffer": {
+          "type": "boolean",
+          "description": "True when the whole screen fits in one buffer. False means the compositor renders in horizontal bands and the draw list is walked once per band."
+        },
+        "band_height": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rows per band when full_framebuffer is false, or the LVGL draw buffer height when the compositor is lvgl. Must be 0 when full_framebuffer is true."
+        },
+        "min_tile_w": {
+          "type": "integer",
+          "minimum": 8,
+          "description": "Narrowest tile the window manager may create on this panel, in pixels after rotation. A COLS split that cannot give both children this width collapses into a tab group instead. Copied into eos_wm_cfg_t.min_tile_w. Belongs to the panel, not to the theme."
+        },
+        "min_tile_h": {
+          "type": "integer",
+          "minimum": 8,
+          "description": "Shortest tile the window manager may create, in pixels after rotation. A ROWS split that cannot give both children this height collapses into a tab group. Copied into eos_wm_cfg_t.min_tile_h."
+        },
+        "double_buffer": {
+          "type": "boolean",
+          "description": "Tier 2 only."
+        },
+        "animations": {
+          "type": "boolean",
+          "description": "Tier 2 only. Below that the frame budget goes on getting one clean frame out."
+        },
+        "heap_budget_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "description": "Ceiling on what ESP-OS may claim from the heap at boot, framebuffers included. A policy number, not a measurement: it is the line the OS agrees not to cross so the radios still have room. Must be at least the render buffers this profile implies. Put it in `unverified` until it has been checked against a real heap dump on the board."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this board lands on this tier, in numbers. Required, because a tier choice that is not justified gets relitigated."
+        }
+      }
+    },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controller",
+        "driver_source",
+        "bsp_component",
+        "bsp_version",
+        "native_width",
+        "native_height",
+        "rotation",
+        "color_depth",
+        "bytes_per_pixel",
+        "color_order",
+        "supports_16bit_pixels",
+        "pixel_format_reason",
+        "bus",
+        "spi_host",
+        "clock_hz",
+        "clock_reason",
+        "pins",
+        "i2c_address",
+        "backlight",
+        "col_offset",
+        "row_offset",
+        "invert"
+      ],
+      "properties": {
+        "controller": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ILI9341, ILI9488, ST7789, SSD1306. This is the field that cannot be probed - see identification.panel_id_register."
+        },
+        "driver_source": {
+          "enum": [
+            "esp_lcd",
+            "bsp",
+            "custom"
+          ],
+          "description": "esp_lcd = ESP-OS drives the panel through esp_lcd itself. bsp = a vendor BSP component owns panel init and the values here are advisory. custom = an ESP-OS driver."
+        },
+        "bsp_component": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Component registry name, required when driver_source is bsp and null otherwise."
+        },
+        "bsp_version": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "native_width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "native_height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "rotation": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "How the panel is physically mounted, not how big it is. Odd values swap width and height; the generator derives the active size rather than letting a profile state it twice and drift."
+        },
+        "color_depth": {
+          "enum": [
+            1,
+            16,
+            18,
+            24
+          ],
+          "description": "Bits per pixel as the controller sees them."
+        },
+        "bytes_per_pixel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Bytes on the wire per pixel: 0 when packed sub-byte, 2 for RGB565, 3 for 18-bit. The generator checks it against color_depth."
+        },
+        "color_order": {
+          "enum": [
+            "rgb",
+            "bgr",
+            "mono"
+          ]
+        },
+        "supports_16bit_pixels": {
+          "type": "boolean",
+          "description": "Whether the controller accepts RGB565 over SPI. False means every pixel costs three bytes, which is the hard ceiling on frame rate."
+        },
+        "pixel_format_reason": {
+          "type": "string",
+          "description": "Required and non-empty when supports_16bit_pixels is false. Says what the wire format actually costs."
+        },
+        "bus": {
+          "enum": [
+            "spi",
+            "i2c"
+          ]
+        },
+        "spi_host": {
+          "oneOf": [
+            {
+              "enum": [
+                "HSPI",
+                "VSPI",
+                "FSPI",
+                "SPI2",
+                "SPI3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Null for an I2C panel."
+        },
+        "clock_hz": {
+          "type": "integer",
+          "minimum": 10000,
+          "maximum": 80000000,
+          "description": "SPI clock, or I2C clock for an I2C panel."
+        },
+        "clock_reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required. A clock below the part's maximum is always the residue of a bug, and the next person will raise it back unless the symptom is written down here."
+        },
+        "pins": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sck",
+            "mosi",
+            "miso",
+            "dc",
+            "cs",
+            "rst",
+            "sda",
+            "scl"
+          ],
+          "properties": {
+            "sck": {
+              "$ref": "#/$defs/gpio"
+            },
+            "mosi": {
+              "$ref": "#/$defs/gpio"
+            },
+            "miso": {
+              "$ref": "#/$defs/gpio"
+            },
+            "dc": {
+              "$ref": "#/$defs/gpio"
+            },
+            "cs": {
+              "$ref": "#/$defs/gpio"
+            },
+            "rst": {
+              "$ref": "#/$defs/gpio"
+            },
+            "sda": {
+              "$ref": "#/$defs/gpio"
+            },
+            "scl": {
+              "$ref": "#/$defs/gpio"
+            }
+          },
+          "description": "SPI panels use sck/mosi/miso/dc/cs/rst and leave sda/scl at -1; I2C panels do the reverse. Binding miso on an SPI panel is not free - see the wavvy gotchas."
+        },
+        "i2c_address": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 119
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backlight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pin",
+            "active_low",
+            "pwm"
+          ],
+          "properties": {
+            "pin": {
+              "$ref": "#/$defs/gpio"
+            },
+            "active_low": {
+              "type": "boolean"
+            },
+            "pwm": {
+              "type": "boolean"
+            }
+          }
+        },
+        "col_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Controller RAM offsets. Panels smaller than the controller's frame memory (an ST7789 driving 172 columns of a 240-column part) need these or everything is shifted."
+        },
+        "invert": {
+          "type": "boolean"
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bluetooth_keyboard",
+        "web_input",
+        "touch",
+        "buttons"
+      ],
+      "properties": {
+        "bluetooth_keyboard": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "stack",
+            "reason"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "stack": {
+              "enum": [
+                "none",
+                "nimble",
+                "bluedroid"
+              ],
+              "description": "Which BLE stack the build links. The generator refuses bluedroid on a board without PSRAM: it is 83KB of heap against NimBLE's 19KB and it OOMs on boot."
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "web_input": {
+          "type": "boolean",
+          "description": "Whether the board serves a phone page that injects input events. It is the fallback on every board with no touch and no keyboard paired, which so far is all of them."
+        },
+        "touch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "controller",
+            "bus",
+            "pins",
+            "i2c_address",
+            "absent_reason"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "controller": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "bus": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "spi",
+                    "i2c"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pins": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sck",
+                "mosi",
+                "miso",
+                "cs",
+                "irq",
+                "sda",
+                "scl"
+              ],
+              "properties": {
+                "sck": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "mosi": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "miso": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "cs": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "irq": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "sda": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "scl": {
+                  "$ref": "#/$defs/gpio"
+                }
+              }
+            },
+            "i2c_address": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 3,
+                  "maximum": 119
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "absent_reason": {
+              "type": "string",
+              "description": "Required and non-empty when present is false. A module that looks like a touchscreen and has no touch chip will be re-probed once a year unless the probe result is written down."
+            }
+          }
+        },
+        "buttons": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "gpio",
+              "active_low",
+              "pull"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "gpio": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 48
+              },
+              "active_low": {
+                "type": "boolean"
+              },
+              "pull": {
+                "enum": [
+                  "none",
+                  "up",
+                  "down"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "peripherals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rgb_led",
+        "speaker",
+        "light_sensor",
+        "sdcard",
+        "internal_fs"
+      ],
+      "properties": {
+        "rgb_led": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "kind",
+            "pins",
+            "data_pin",
+            "count",
+            "active_low"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "gpio_rgb",
+                "ws2812"
+              ]
+            },
+            "pins": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "r",
+                "g",
+                "b"
+              ],
+              "properties": {
+                "r": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "g": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "b": {
+                  "$ref": "#/$defs/gpio"
+                }
+              },
+              "description": "Three discrete GPIOs for kind gpio_rgb, all -1 for ws2812."
+            },
+            "data_pin": {
+              "$ref": "#/$defs/gpio"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "active_low": {
+              "type": "boolean",
+              "description": "True on the CYD: driving the pin low lights the channel, so a naive off state glows white."
+            }
+          }
+        },
+        "speaker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "kind",
+            "pin"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "dac",
+                "pwm",
+                "i2s"
+              ]
+            },
+            "pin": {
+              "$ref": "#/$defs/gpio"
+            }
+          },
+          "description": "kind dac is only legal on the original esp32, and only on GPIO25 or GPIO26. The generator enforces both."
+        },
+        "light_sensor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "pin",
+            "adc_unit",
+            "adc_channel"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "pin": {
+              "$ref": "#/$defs/gpio"
+            },
+            "adc_unit": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "adc_channel": {
+              "type": "integer",
+              "minimum": -1,
+              "maximum": 9
+            }
+          }
+        },
+        "sdcard": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "bus",
+            "spi_host",
+            "pins",
+            "max_clock_hz",
+            "shares_display_bus",
+            "mount_point"
+          ],
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "bus": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "spi",
+                    "sdmmc"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "spi_host": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "HSPI",
+                    "VSPI",
+                    "FSPI",
+                    "SPI2",
+                    "SPI3"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "pins": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sck",
+                "mosi",
+                "miso",
+                "cs"
+              ],
+              "properties": {
+                "sck": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "mosi": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "miso": {
+                  "$ref": "#/$defs/gpio"
+                },
+                "cs": {
+                  "$ref": "#/$defs/gpio"
+                }
+              }
+            },
+            "max_clock_hz": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "shares_display_bus": {
+              "type": "boolean",
+              "description": "When true the card sits on the same SPI host as the panel and every card access must take the panel's bus lock. The generator only tolerates duplicated pins between the panel and the card when this is true."
+            },
+            "mount_point": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^/[a-z0-9]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where the card appears in the one storage namespace, conventionally /sd. Null when there is no slot."
+            }
+          }
+        },
+        "internal_fs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "present",
+            "kind",
+            "partition_label",
+            "mount_point"
+          ],
+          "description": "The filesystem in flash, which unlike the card is either there or the board is broken.",
+          "properties": {
+            "present": {
+              "type": "boolean"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "littlefs",
+                "spiffs",
+                "fatfs"
+              ]
+            },
+            "partition_label": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Label in the partition table. Must match the CSV the partition_scheme names."
+            },
+            "mount_point": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^/[a-z0-9]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Conventionally /int."
+            }
+          }
+        }
+      }
+    },
+    "flashing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "port_hint",
+        "usb_bridge",
+        "upload_baud",
+        "monitor_baud",
+        "bad_baud_rates",
+        "flash_mode",
+        "flash_freq_mhz",
+        "partition_scheme",
+        "app_partition_kb",
+        "ota_slots",
+        "auto_reset"
+      ],
+      "properties": {
+        "port_hint": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where this board usually shows up. A hint for the flasher's board picker, never a substitute for confirming which board is on the other end."
+        },
+        "usb_bridge": {
+          "enum": [
+            "CH340",
+            "CP2102",
+            "usb_serial_jtag",
+            "unknown"
+          ]
+        },
+        "upload_baud": {
+          "enum": [
+            115200,
+            230400,
+            460800,
+            921600,
+            1500000
+          ]
+        },
+        "monitor_baud": {
+          "enum": [
+            115200,
+            230400,
+            460800,
+            921600
+          ]
+        },
+        "bad_baud_rates": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "baud",
+              "reason"
+            ],
+            "properties": {
+              "baud": {
+                "type": "integer",
+                "minimum": 9600
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required. The exact failure, including the error text, so nobody retries it hoping for a different result."
+              }
+            }
+          },
+          "description": "Baud rates proven not to work on this board and cable. The flasher must never offer these."
+        },
+        "flash_mode": {
+          "enum": [
+            "qio",
+            "qout",
+            "dio",
+            "dout"
+          ]
+        },
+        "flash_freq_mhz": {
+          "enum": [
+            20,
+            26,
+            40,
+            80,
+            120
+          ]
+        },
+        "partition_scheme": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the partition layout the build selects. ESP-OS ships one CSV per scheme name."
+        },
+        "app_partition_kb": {
+          "type": "integer",
+          "minimum": 256
+        },
+        "ota_slots": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "auto_reset": {
+          "type": "boolean",
+          "description": "True when DTR/RTS puts the chip in download mode. It also means opening a serial monitor reboots the board, which looks like a crash and is not one."
+        }
+      }
+    },
+    "identification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auto_detectable",
+        "esptool_reports",
+        "panel_id_register",
+        "usb_serial",
+        "mac_allowlist",
+        "distinguishing_notes",
+        "confirm_prompt"
+      ],
+      "description": "How a human and a flasher tool decide this profile is the right one. The premise of the whole registry is that this cannot be done by probing.",
+      "properties": {
+        "auto_detectable": {
+          "const": false,
+          "description": "Always false. esptool can tell you chip type, flash size, PSRAM presence and MAC, and nothing else. The panel, the touch chip and the LED wiring are invisible to it."
+        },
+        "esptool_reports": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "chip",
+            "flash_size_mb",
+            "psram"
+          ],
+          "properties": {
+            "chip": {
+              "type": "string",
+              "minLength": 1
+            },
+            "flash_size_mb": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "psram": {
+              "type": "boolean"
+            }
+          },
+          "description": "What esptool will print for this board. The flasher uses it to rule profiles out, never to rule one in."
+        },
+        "panel_id_register": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "supported",
+            "register",
+            "reads_back",
+            "note"
+          ],
+          "properties": {
+            "supported": {
+              "type": "boolean",
+              "description": "Whether reading the controller's ID register returns anything trustworthy. False everywhere so far."
+            },
+            "register": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reads_back": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "What it actually returned when someone tried, e.g. 00 7F DF."
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "usb_serial": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "USB serial number of the bridge. Clone CP2102s all report 0001, so this does not disambiguate two identical boards."
+        },
+        "mac_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$"
+          },
+          "uniqueItems": true,
+          "description": "MACs of physical boards a human has confirmed as this profile, filled in once at first flash. This is the durable half of the one-time confirmation: after it, the flasher can pick the profile on its own."
+        },
+        "distinguishing_notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "What a human looks at to tell this board from the ones it is electrically identical to."
+        },
+        "confirm_prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact question the flasher asks before writing, phrased so that answering it wrongly is hard."
+        }
+      }
+    }
+  }
+}

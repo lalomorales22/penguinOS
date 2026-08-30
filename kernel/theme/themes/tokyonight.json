@@ -1,0 +1,46 @@
+// tokyonight, the "night" variant. Hex values as published by folke/tokyonight.nvim.
+// The ansi block is that project's own terminal mapping, unaltered.
+{
+  "name": "tokyonight",
+  "font": "med",
+
+  "metrics": { "gap": 4, "border": 1, "bar_h": 14, "tab_h": 12, "radius": 3 },
+
+  "colors": {
+    "bg":               "#1a1b26",
+    "surface":          "#24283b",
+    "overlay":          "#292e42",
+    "text":             "#c0caf5",
+    "muted":            "#565f89",
+    "accent":           "#7aa2f7",
+    "accent_alt":       "#bb9af7",
+    "ok":               "#9ece6a",
+    "warn":             "#e0af68",
+    "err":              "#f7768e",
+    "border_focused":   "#7aa2f7",
+    "border_unfocused": "#3b4261",
+    "bar_bg":           "#16161e",
+    "bar_fg":           "#a9b1d6",
+    "tab_active":       "#7aa2f7",
+    "tab_inactive":     "#414868"
+  },
+
+  "ansi": {
+    "black":          "#15161e",
+    "red":            "#f7768e",
+    "green":          "#9ece6a",
+    "yellow":         "#e0af68",
+    "blue":           "#7aa2f7",
+    "magenta":        "#bb9af7",
+    "cyan":           "#7dcfff",
+    "white":          "#a9b1d6",
+    "bright_black":   "#414868",
+    "bright_red":     "#f7768e",
+    "bright_green":   "#9ece6a",
+    "bright_yellow":  "#e0af68",
+    "bright_blue":    "#7aa2f7",
+    "bright_magenta": "#bb9af7",
+    "bright_cyan":    "#7dcfff",
+    "bright_white":   "#c0caf5"
+  }
+}
