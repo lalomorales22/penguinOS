@@ -73,14 +73,14 @@ means the draw list is walked once per band.
 ## Generating the header
 
 ```bash
-# one board, filling the runtime struct in kernel/hal/include/eos_board.h
-python3 tools/gen_board_header.py --hal boards/cyd-2432s024n.json boards/generated/cyd-2432s024n.h
+# one board
+python3 tools/gen_board_header.py boards/cyd-2432s024n.json boards/generated/cyd-2432s024n.h
 
 # all of them, into boards/generated/
-python3 tools/gen_board_header.py --all --hal
+python3 tools/gen_board_header.py --all
 
 # validate without writing anything
-python3 tools/gen_board_header.py --check --hal boards/cyd-2432s024n.json
+python3 tools/gen_board_header.py --check boards/cyd-2432s024n.json
 ```
 
 python3, standard library only. Exit 0 on success, 1 when a file cannot be read
@@ -89,32 +89,39 @@ is written when validation fails.
 
 `boards/generated/` is build output. Regenerate it; do not edit it.
 
-### Two emission modes
+### One type authority
 
-`--hal` fills the runtime `eos_board_t` declared in
-`kernel/hal/include/eos_board.h`, which is what the firmware build wants: the
-board component includes the generated header and returns `&eos_board` from
-`eos_board_get()`. The generated header includes `eos_board.h` and defines no
-types of its own.
+The header fills the `eos_board_t` declared in
+`kernel/hal/include/eos_board.h` and declares nothing itself. That header is the
+only definition of the struct and of the tier, SoC, panel, bus, touch, LED and
+audio enums.
 
-Without `--hal` the generator emits its own equivalent types alongside the data,
-so a header is self-contained and can be compiled and inspected with nothing but
-a C compiler. That mode is for testing the registry, not for the firmware build.
-`--no-types` sits in between: the data and the macros, no types, for when some
-other header owns them.
+It used to be a choice. The generator could emit its own equivalent types so a
+header would compile standalone, and that was the default. The two structs then
+drifted — 85 fields against 67 — and, worse, C puts all enumerators in one
+namespace, so `EOS_BUS_*`, `EOS_COMP_*` and `EOS_LED_*` collided outright:
+including `eos_board.h` and a generated header in one translation unit produced
+20 errors. That translation unit is the boot glue, which needs the HAL API and
+the board data at once, so the standalone mode had to go. It is gone, along with
+`--hal` and `--no-types`; there is one mode now.
 
-The coupling to the HAL is confined to the enum tables at the top of the `--hal`
-section in the generator (`HAL_SOC`, `HAL_PANEL`, `HAL_BUS`, `HAL_TOUCH`,
-`HAL_LED`, `HAL_AUDIO`, `HAL_SPI_HOST`). `--hal` runs an extra validation pass
-against them, so a controller with no `eos_panel_t`, a speaker kind with no
-`eos_audio_t`, or more buttons than `EOS_MAX_BUTTONS` is a loud error rather
-than a compile failure in generated code. If `eos_board.h` moves, those tables
-are the only thing to fix.
+The coupling to the HAL is confined to the enum tables in the generator
+(`HAL_SOC`, `HAL_PANEL`, `HAL_BUS`, `HAL_TOUCH`, `HAL_LED`, `HAL_AUDIO`,
+`HAL_SPI_HOST`). `hal_check()` runs against them on every generation, so a
+controller with no `eos_panel_t` or a speaker kind with no `eos_audio_t` is a
+loud error rather than a compile failure in generated code. If `eos_board.h`
+moves, those tables are the only thing to fix.
 
-One field the HAL wants is not derivable from hardware: `eos_button_t.key`, the
-`EOS_KEY_*` usage a button reports. The registry does not carry a keymap, so
-`--hal` emits `.key = 0` and the board component sets it. Everything else in the
-struct comes from the profile.
+Two struct fields are not in the registry and are emitted as documented
+defaults: `eos_button_t.key` — the `EOS_KEY_*` usage a button reports, which no
+profile carries a keymap for, so the board component sets it — and
+`eos_board_storage_t.sd_slot`, which only means anything on SDMMC and no profile
+uses SDMMC. Everything else in the struct comes from the profile.
+
+Registry facts with no struct field of their own stay macros, which is where the
+things that want them read them anyway: the IDF target string (`EOS_TARGET`),
+the controller and touch-controller names, the whole flashing block, and the
+derived buffer sizes the HAL recomputes from the panel instead of storing.
 
 The header carries three things:
 
@@ -123,10 +130,16 @@ The header carries three things:
   `EOS_LCD_H`, `EOS_LCD_PIN_*`, `EOS_FB_BYTES`, `EOS_HAS_TOUCH`,
   `EOS_BT_STACK_NIMBLE`, `EOS_UPLOAD_BAUD`, and so on. Macros cost nothing unless
   something references them.
-- **One `static const eos_board_t eos_board`**, for the code that wants to pass
-  the board around. Fixed-size arrays, string literals, no allocation anywhere.
-  Define `EOS_BOARD_NO_INSTANCE` to get only the `EOS_BOARD_INIT` initialiser.
-  Without `--hal` the types come with it, guarded by `EOS_BOARD_TYPES_DEFINED`.
+- **One `static const eos_board_t`**, for the code that wants to pass the board
+  around. Fixed-size arrays, string literals, no allocation anywhere. It is
+  named `eos_board_<id with underscores>` and the macro `EOS_BOARD` points at
+  it, so the board component says `&EOS_BOARD` and a test can hold all six
+  registry entries in one translation unit. Define `EOS_BOARD_NO_INSTANCE` to
+  get only the initialiser, which is named `EOS_BOARD_INIT_<ID>`.
+
+  The plain `EOS_*` macros are claimed by the FIRST generated header a
+  translation unit includes, and `EOS_BOARD_ACTIVE` says which board that was.
+  A firmware image includes exactly one, so this never comes up there.
 - **Comments** carrying the `gotchas` list and the `unverified` list, so the
   facts are in front of whoever opens the header, at zero flash cost.
 
@@ -204,13 +217,18 @@ list was proven on hardware. When a board misbehaves, check `unverified` first.
 6. Add at least one entry to `gotchas`. If nothing has bitten you yet, the board
    has not been used enough to have a profile.
 7. Run `python3 tools/gen_board_header.py --check boards/<new-id>.json` and fix
-   everything it prints. Then `--all` to regenerate the headers.
-8. Run `--check --hal` too. If the panel controller, the touch chip or the audio
-   kind is new, it needs an entry in the matching `eos_*_t` enum in
-   `kernel/hal/include/eos_board.h` and in the generator's mapping table.
+   everything it prints. Then `--all` to regenerate the headers. If the panel
+   controller, the touch chip or the audio kind is new, it needs an entry in the
+   matching `eos_*_t` enum in `kernel/hal/include/eos_board.h` and in the
+   generator's mapping table; `--check` says so by name.
+8. Add a row to the `registry` table in `kernel/test/test_integration.c` and run
+   the integration suite. That table is the registry read out by hand, and it is
+   what catches the generator reading the wrong field.
 9. If the board needs a field the schema does not have, add it to `schema.json`
-   *and* to the generator's validator and both emitters. Do not smuggle it into
-   an existing string field.
+   *and* to the generator's validator and to the emitter. If the runtime needs
+   it, it goes in `eos_board.h` too — that header is allowed to grow, and it is
+   the only place the type may be declared. Do not smuggle it into an existing
+   string field.
 
 If the new board's silicon target is not `esp32`, `esp32c5` or `esp32s3`, add it
 to `TARGETS` in `tools/gen_board_header.py` with its maximum GPIO, its input-only

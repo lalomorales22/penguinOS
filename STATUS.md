@@ -119,10 +119,11 @@ Things worth doing alongside, cheaply:
   stubs all 58 externs and fuzzes the geometry and path helpers, and it is the
   only thing standing between the HAL headers and silent rot. It currently
   exists only in a scratch directory.
-- Run `python3 tools/gen_board_header.py --all --hal --out-dir <dir>` and compile
-  the result against `kernel/hal/include` in CI. That is the check that caught
-  the last parallel-edit break, and `kernel/test/test_integration.c` cannot cover
-  it because generated headers are not in the tree.
+- Run `python3 tools/gen_board_header.py --all` in CI before the integration
+  suite. `kernel/test/test_integration.c` now includes all six generated headers
+  alongside `eos_board.h` and holds each descriptor against the registry, but it
+  reaches them through `__has_include` and fails with one loud check if they
+  were never generated.
 - Decide `wavvy-oled-c5`'s tier. It is a tier-1-class C5 running the tier-0
   `mono1` compositor because a 1024-byte page in the SSD1306's own layout does
   not want LVGL. Currently declared tier 0. Defensible, but it is the one place

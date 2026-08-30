@@ -1,0 +1,6 @@
+# mdns moved out of esp-idf core in v5.0. eos_brain.c's ESP_PLATFORM section
+# calls mdns_query_a() to find the host running the model, so the component is a
+# hard requirement of the kernel and not an optional extra. It is first-party
+# Espressif and pulls in nothing else.
+dependencies:
+  espressif/mdns: "^1.5"

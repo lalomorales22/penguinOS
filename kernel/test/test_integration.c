@@ -275,6 +275,482 @@ static void brain_drives_buddy(void)
 }
 
 // ---------------------------------------------------------------------------
+// The board registry against the descriptors generated from it.
+//
+// boards/*.json is the source of truth and tools/gen_board_header.py is the one
+// thing that reads it, so a mistake in the generator's field mapping — the
+// wrong pin off the wrong sub-object, a rotation applied twice, a byte count
+// that forgot the bytes — produces a header that compiles perfectly and drives
+// the wrong GPIO. The table below is that JSON, read out once by hand. It
+// disagrees with the descriptor exactly when the mapping has drifted.
+//
+// The waveshare-c6-lcd-13 row is the bring-up pinout: recovered from the GPIO
+// matrix over JTAG and then confirmed by drawing to the panel. Those numbers
+// are measurements, not datasheet values, and several published pinouts for
+// that board contradict them. Anything that disagrees with this row is wrong.
+#ifdef EOS_HAVE_BOARDS
+
+typedef struct {
+    const eos_board_t *b;
+    const char *id;
+
+    uint8_t     soc, cores, tier;
+    uint32_t    flash, psram;
+
+    uint8_t     panel, bus;
+    int16_t     nw, nh;
+    uint8_t     rot;
+    int16_t     sw, sh;                  /* native, after rotation */
+    uint8_t     depth, wire;
+    bool        bgr, invert;
+    uint32_t    hz;
+    int16_t     colo, rowo;
+    eos_pin_t   sck, mosi, miso, dc, cs, rst;
+    uint8_t     spi_host;
+    eos_pin_t   sda, scl;
+    uint8_t     i2c_addr;
+    bool        bl_low, bl_pwm;
+    eos_pin_t   bl;
+
+    uint8_t     comp;
+    bool        lvgl;
+    uint16_t    pal;
+    bool        full;
+    int16_t     band, mtw, mth;
+    uint32_t    heap;
+
+    bool        sd;
+    uint8_t     sd_bus;
+    const char *sd_point, *int_label, *int_point;
+    uint32_t    sd_hz;
+    bool        sd_shares;
+
+    uint8_t     led;
+    eos_pin_t   led_r, led_g, led_b, led_data;
+    uint8_t     led_n;
+    bool        led_low;
+
+    uint8_t     audio;
+    eos_pin_t   audio_pin, ldr;
+    uint8_t     ldr_unit;
+    int8_t      ldr_chan;
+
+    uint8_t     touch, touch_bus;
+    bool        ble, web;
+    uint8_t     btns;
+} regrow_t;
+
+static const regrow_t registry[] = {
+    { &eos_board_waveshare_c6_lcd_13, "waveshare-c6-lcd-13",
+      EOS_SOC_ESP32_C6, 1, EOS_TIER_LEAN, 4194304u, 0u,
+      EOS_PANEL_ST7789, EOS_BUS_SPI, 240, 240, 0, 240, 240,
+      16, 2, false, true, 40000000u, 0, 0,
+      7, 6, -1, 15, 14, 21, 1,
+      -1, -1, 0x00, false, true,
+      22,
+      EOS_COMP_LVGL, true, 0, false, 40, 80, 40, 425648u,
+      false, EOS_BUS_NONE, NULL, "int", "/int", 0u, false,
+      EOS_LED_WS2812, -1, -1, -1, 8, 1, false,
+      EOS_AUDIO_NONE, -1, -1, 0, -1,
+      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 0 },
+    { &eos_board_cyd_2432s024n, "cyd-2432s024n",
+      EOS_SOC_ESP32, 2, EOS_TIER_SOFT, 4194304u, 0u,
+      EOS_PANEL_ILI9341, EOS_BUS_SPI, 240, 320, 1, 320, 240,
+      16, 2, true, false, 40000000u, 0, 0,
+      14, 13, 12, 2, 15, -1, 1,
+      -1, -1, 0x00, false, true,
+      27,
+      EOS_COMP_INDEXED8, false, 256, true, 0, 80, 40, 98304u,
+      true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, false,
+      EOS_LED_GPIO_RGB, 4, 16, 17, -1, 1, true,
+      EOS_AUDIO_DAC, 26, 34, 1, 6,
+      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 1 },
+    { &eos_board_waveshare_c5_lcd_147, "waveshare-c5-lcd-147",
+      EOS_SOC_ESP32_C5, 1, EOS_TIER_LEAN, 4194304u, 0u,
+      EOS_PANEL_ST7789, EOS_BUS_SPI, 172, 320, 1, 320, 172,
+      16, 2, false, true, 40000000u, 34, 0,
+      7, 6, -1, 24, 23, 26, 1,
+      -1, -1, 0x00, false, true,
+      10,
+      EOS_COMP_LVGL, true, 0, false, 40, 80, 40, 131072u,
+      true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, true,
+      EOS_LED_WS2812, -1, -1, -1, 8, 1, false,
+      EOS_AUDIO_NONE, -1, -1, 0, -1,
+      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 0 },
+    { &eos_board_wavvy_ili9488_35, "wavvy-ili9488-35",
+      EOS_SOC_ESP32, 2, EOS_TIER_SOFT, 4194304u, 0u,
+      EOS_PANEL_ILI9488, EOS_BUS_SPI, 320, 480, 0, 320, 480,
+      18, 3, true, false, 40000000u, 0, 0,
+      18, 23, -1, 2, 5, 4, 2,
+      -1, -1, 0x00, false, false,
+      -1,
+      EOS_COMP_INDEXED8, false, 256, false, 16, 80, 40, 65536u,
+      false, EOS_BUS_NONE, NULL, "int", "/int", 0u, false,
+      EOS_LED_NONE, -1, -1, -1, -1, 0, false,
+      EOS_AUDIO_NONE, -1, -1, 0, -1,
+      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 1 },
+    { &eos_board_wavvy_ili9488_40, "wavvy-ili9488-40",
+      EOS_SOC_ESP32, 2, EOS_TIER_SOFT, 4194304u, 0u,
+      EOS_PANEL_ILI9488, EOS_BUS_SPI, 320, 480, 0, 320, 480,
+      18, 3, true, false, 80000000u, 0, 0,
+      18, 23, -1, 2, 5, 4, 2,
+      -1, -1, 0x00, false, false,
+      -1,
+      EOS_COMP_INDEXED8, false, 256, false, 16, 80, 40, 65536u,
+      false, EOS_BUS_NONE, NULL, "int", "/int", 0u, false,
+      EOS_LED_NONE, -1, -1, -1, -1, 0, false,
+      EOS_AUDIO_NONE, -1, -1, 0, -1,
+      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 1 },
+    { &eos_board_wavvy_oled_c5, "wavvy-oled-c5",
+      EOS_SOC_ESP32_C5, 1, EOS_TIER_SOFT, 4194304u, 0u,
+      EOS_PANEL_SSD1306, EOS_BUS_I2C, 128, 64, 0, 128, 64,
+      1, 0, false, false, 400000u, 0, 0,
+      -1, -1, -1, -1, -1, -1, 0,
+      23, 24, 0x3C, false, false,
+      -1,
+      EOS_COMP_MONO1, false, 0, true, 0, 60, 20, 49152u,
+      false, EOS_BUS_NONE, NULL, "int", "/int", 0u, false,
+      EOS_LED_NONE, -1, -1, -1, -1, 0, false,
+      EOS_AUDIO_NONE, -1, -1, 0, -1,
+      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 0 },
+};
+
+#define REGISTRY_COUNT ((int)(sizeof registry / sizeof registry[0]))
+
+static const char *ck_id = "";
+
+static void ckb(const char *what, int ok)
+{
+    checks++;
+    if (!ok) { failed++; printf("  FAIL  %s: %s\n", ck_id, what); }
+}
+
+static int streq(const char *a, const char *b)
+{
+    if (a == NULL || b == NULL) return a == b;
+    return strcmp(a, b) == 0;
+}
+
+// Everything the JSON says, held against what the header emitted.
+static void registry_row(const regrow_t *e)
+{
+    const eos_board_t *b = e->b;
+    ck_id = e->id;
+
+    ckb("id",           streq(b->id, e->id));
+    ckb("name is set",  b->name != NULL && b->name[0] != 0);
+    ckb("variant is set", b->variant != NULL && b->variant[0] != 0);
+    ckb("soc",          b->soc == e->soc);
+    ckb("cores",        b->cores == e->cores);
+    ckb("tier",         b->tier == e->tier);
+    ckb("flash_bytes",  b->flash_bytes == e->flash);
+    ckb("psram_bytes",  b->psram_bytes == e->psram);
+
+    ckb("panel",        b->panel.panel == e->panel);
+    ckb("panel bus",    b->panel.bus == e->bus);
+    ckb("native size",  b->panel.native_w == e->nw && b->panel.native_h == e->nh);
+    ckb("rotation",     b->panel.rotation == e->rot);
+    ckb("color_depth",  b->panel.color_depth == e->depth);
+    ckb("wire_bytes",   b->panel.wire_bytes == e->wire);
+    ckb("bgr",          b->panel.bgr == e->bgr);
+    ckb("invert",       b->panel.invert == e->invert);
+    ckb("bus clock",    b->panel.hz == e->hz);
+    ckb("ram offsets",  b->panel.col_offset == e->colo && b->panel.row_offset == e->rowo);
+    ckb("sck",          b->panel.sck == e->sck);
+    ckb("mosi",         b->panel.mosi == e->mosi);
+    ckb("miso",         b->panel.miso == e->miso);
+    ckb("dc",           b->panel.dc == e->dc);
+    ckb("cs",           b->panel.cs == e->cs);
+    ckb("rst",          b->panel.rst == e->rst);
+    ckb("spi_host",     b->panel.spi_host == e->spi_host);
+    ckb("sda",          b->panel.sda == e->sda);
+    ckb("scl",          b->panel.scl == e->scl);
+    ckb("i2c_addr",     b->panel.i2c_addr == e->i2c_addr);
+    ckb("backlight pin", b->panel.bl == e->bl);
+    ckb("backlight polarity", b->panel.bl_active_low == e->bl_low);
+    ckb("backlight pwm", b->panel.bl_pwm == e->bl_pwm);
+
+    ckb("compositor",   b->render.compositor == e->comp);
+    ckb("lvgl",         b->render.lvgl == e->lvgl);
+    ckb("palette_entries", b->render.palette_entries == e->pal);
+    ckb("full_framebuffer", b->render.full_framebuffer == e->full);
+    ckb("band_h",       b->render.band_h == e->band);
+    ckb("min tile",     b->render.min_tile_w == e->mtw && b->render.min_tile_h == e->mth);
+    ckb("heap_budget",  b->render.heap_budget == e->heap);
+
+    ckb("sd present",   b->storage.sd == e->sd);
+    ckb("sd bus",       b->storage.sd_bus == e->sd_bus);
+    ckb("sd clock",     b->storage.sd_hz == e->sd_hz);
+    ckb("sd shares the panel bus", b->storage.sd_shares_bus == e->sd_shares);
+    ckb("sd mount point", streq(b->storage.sd_point, e->sd_point));
+    ckb("internal fs",  streq(b->storage.int_label, e->int_label)
+                        && streq(b->storage.int_point, e->int_point));
+
+    ckb("led kind",     b->extras.led == e->led);
+    ckb("led pins",     b->extras.led_r == e->led_r && b->extras.led_g == e->led_g
+                        && b->extras.led_b == e->led_b && b->extras.led_data == e->led_data);
+    ckb("led count",    b->extras.led_count == e->led_n);
+    ckb("led polarity", b->extras.led_active_low == e->led_low);
+    ckb("audio",        b->extras.audio == e->audio && b->extras.audio_pin == e->audio_pin);
+    ckb("ldr",          b->extras.ldr == e->ldr && b->extras.ldr_adc_unit == e->ldr_unit
+                        && b->extras.ldr_adc_channel == e->ldr_chan);
+
+    ckb("touch",        b->input.touch == e->touch && b->input.touch_bus == e->touch_bus);
+    ckb("ble keyboard", b->input.ble_keyboard == e->ble);
+    ckb("web input",    b->input.web_input == e->web);
+    ckb("button count", b->input.button_count == e->btns);
+
+    // Not in the registry: the two fields the generator fills with a documented
+    // default. If either ever arrives from the JSON, this is where it shows up.
+    {
+        int i, zeroed = 1;
+        for (i = 0; i < (int)b->input.button_count; i++)
+            if (b->input.buttons[i].key != 0) zeroed = 0;
+        ckb("button keymap is left for the board component", zeroed);
+    }
+    ckb("sd_slot defaults to 0", b->storage.sd_slot == 0);
+    ckb("no board claims to identify itself", b->auto_detectable == false);
+    ckb("first boot has a question to ask",
+        b->confirm_prompt != NULL && b->confirm_prompt[0] != 0);
+}
+
+// Facts the descriptor has to satisfy whatever the JSON says. These are
+// computed, not transcribed, so they catch a generator that is consistently
+// wrong as well as one that is wrong in one place.
+static void registry_invariants(const regrow_t *e)
+{
+    const eos_board_t *b = e->b;
+    uint32_t w, h, rows, fb, band;
+    ck_id = e->id;
+
+    ckb("rotation lands the screen the right way round",
+        eos_board_screen_w(b) == e->sw && eos_board_screen_h(b) == e->sh);
+    {
+        eos_rect_t r = eos_board_screen(b);
+        ckb("the screen rect starts at the origin and is the screen",
+            r.x == 0 && r.y == 0 && r.w == e->sw && r.h == e->sh);
+    }
+
+    w = (uint32_t)e->sw;
+    h = (uint32_t)e->sh;
+    fb = (e->comp == EOS_COMP_MONO1) ? ((w + 7u) / 8u) * h : w * h;
+    rows = e->full ? h : (uint32_t)e->band;
+    band = (e->comp == EOS_COMP_MONO1) ? ((w + 7u) / 8u) * rows : w * rows;
+    ckb("fb_bytes is one screen of compositor pixels", eos_board_fb_bytes(b) == fb);
+    ckb("band_bytes is one strip of them", eos_board_band_bytes(b) == band);
+    ckb("the strip fits the heap budget", eos_board_band_bytes(b) <= b->render.heap_budget);
+
+    ckb("band_h is set exactly when the frame is banded",
+        b->render.full_framebuffer ? b->render.band_h == 0 : b->render.band_h > 0);
+    ckb("a palette exists exactly for the indexed compositor",
+        (b->render.compositor == EOS_COMP_INDEXED8) ? b->render.palette_entries == 256
+                                                    : b->render.palette_entries == 0);
+    ckb("lvgl and the compositor agree",
+        b->render.lvgl == (b->render.compositor == EOS_COMP_LVGL));
+    ckb("eos_board_has_lvgl reads the same flag", eos_board_has_lvgl(b) == b->render.lvgl);
+    ckb("two min tiles fit across the screen",
+        (int)b->render.min_tile_w * 2 <= eos_board_screen_w(b));
+    ckb("two min tiles fit down the screen",
+        (int)b->render.min_tile_h * 2 <= eos_board_screen_h(b));
+
+    ckb("wire_bytes follows color_depth",
+        b->panel.wire_bytes == (e->depth == 1 ? 0 : (e->depth == 16 ? 2 : 3)));
+    ckb("eos_board_is_mono agrees with the depth",
+        eos_board_is_mono(b) == (b->panel.color_depth == 1));
+    ckb("eos_board_panel_16bit agrees with the depth",
+        eos_board_panel_16bit(b) == (b->panel.color_depth == 16));
+    ckb("mono panels use the mono compositor",
+        eos_board_is_mono(b) == (b->render.compositor == EOS_COMP_MONO1));
+    ckb("eos_board_has_touch agrees with the touch enum",
+        eos_board_has_touch(b) == (b->input.touch != EOS_TOUCH_NONE));
+    ckb("only a RICH board claims psram",
+        (b->tier == EOS_TIER_RICH) == (b->psram_bytes != 0));
+
+    if (b->panel.bus == EOS_BUS_SPI) {
+        ckb("an spi panel has a clock and a data line",
+            eos_pin_ok(b->panel.sck) && eos_pin_ok(b->panel.mosi));
+        ckb("an spi panel names a host", b->panel.spi_host == 1 || b->panel.spi_host == 2);
+        ckb("an spi panel has no i2c wiring",
+            !eos_pin_ok(b->panel.sda) && !eos_pin_ok(b->panel.scl) && b->panel.i2c_addr == 0);
+    } else {
+        ckb("an i2c panel has both wires",
+            eos_pin_ok(b->panel.sda) && eos_pin_ok(b->panel.scl));
+        ckb("an i2c panel has an address", b->panel.i2c_addr != 0);
+        ckb("an i2c panel has no spi wiring",
+            !eos_pin_ok(b->panel.sck) && !eos_pin_ok(b->panel.mosi) && b->panel.spi_host == 0);
+    }
+
+    // Two panel signals on one pin is the failure that looks like a dead board.
+    {
+        eos_pin_t p[9];
+        int n = 0, i, j, dup = 0;
+        if (eos_pin_ok(b->panel.sck))  p[n++] = b->panel.sck;
+        if (eos_pin_ok(b->panel.mosi)) p[n++] = b->panel.mosi;
+        if (eos_pin_ok(b->panel.miso)) p[n++] = b->panel.miso;
+        if (eos_pin_ok(b->panel.dc))   p[n++] = b->panel.dc;
+        if (eos_pin_ok(b->panel.cs))   p[n++] = b->panel.cs;
+        if (eos_pin_ok(b->panel.rst))  p[n++] = b->panel.rst;
+        if (eos_pin_ok(b->panel.sda))  p[n++] = b->panel.sda;
+        if (eos_pin_ok(b->panel.scl))  p[n++] = b->panel.scl;
+        if (eos_pin_ok(b->panel.bl))   p[n++] = b->panel.bl;
+        for (i = 0; i < n; i++)
+            for (j = i + 1; j < n; j++)
+                if (p[i] == p[j]) dup = 1;
+        ckb("no two panel signals share a pin", !dup);
+    }
+
+    {
+        int ok;
+        switch (b->extras.led) {
+        case EOS_LED_NONE:
+            ok = !eos_pin_ok(b->extras.led_r) && !eos_pin_ok(b->extras.led_g)
+                 && !eos_pin_ok(b->extras.led_b) && !eos_pin_ok(b->extras.led_data);
+            break;
+        case EOS_LED_GPIO_RGB:
+            ok = eos_pin_ok(b->extras.led_r) && eos_pin_ok(b->extras.led_g)
+                 && eos_pin_ok(b->extras.led_b) && !eos_pin_ok(b->extras.led_data);
+            break;
+        default:
+            ok = eos_pin_ok(b->extras.led_data) && !eos_pin_ok(b->extras.led_r);
+            break;
+        }
+        ckb("led pins match the led kind", ok);
+    }
+
+    ckb("a card has a mount point exactly when it exists",
+        (b->storage.sd_point != NULL) == b->storage.sd);
+    ckb("the internal filesystem is always named",
+        b->storage.int_label != NULL && b->storage.int_point != NULL);
+
+    // eos_board_check is the only thing standing between a wrong flash and a
+    // confident boot on the wrong board, so it gets exercised per board.
+    {
+        eos_probe_t p;
+        memset(&p, 0, sizeof p);
+        p.soc = b->soc;
+        p.flash_bytes = b->flash_bytes;
+        p.psram_bytes = b->psram_bytes;
+        ckb("check passes against matching silicon", eos_board_check(b, &p) == 0);
+        p.soc = (uint8_t)(b->soc + 1u);
+        ckb("check catches the wrong soc",
+            (eos_board_check(b, &p) & EOS_MISMATCH_SOC) != 0);
+        p.soc = b->soc;
+        p.flash_bytes = b->flash_bytes / 2u;
+        ckb("check catches the wrong flash size",
+            (eos_board_check(b, &p) & EOS_MISMATCH_FLASH) != 0);
+        p.flash_bytes = b->flash_bytes;
+        p.psram_bytes = b->psram_bytes ? 0u : 8u * 1024u * 1024u;
+        ckb("check catches psram appearing or vanishing",
+            (eos_board_check(b, &p) & EOS_MISMATCH_PSRAM) != 0);
+    }
+}
+
+// The macros and the initialiser are two separate emitters walking the same
+// profile. They can only disagree if one of them read the wrong field, which is
+// the bug class this whole file exists for. Only the first header included in a
+// translation unit owns the unsuffixed names, so this covers that one board.
+static void registry_macros(void)
+{
+    const eos_board_t *b = &EOS_BOARD;
+    ck_id = EOS_BOARD_ACTIVE;
+
+    ckb("the active board is the one that took the macros", streq(b->id, EOS_BOARD_ID));
+    ckb("EOS_BOARD_ACTIVE names it", streq(EOS_BOARD_ACTIVE, EOS_BOARD_ID));
+    ckb("the header says it was generated", EOS_BOARD_GENERATED == 1);
+    ckb("name", streq(b->name, EOS_BOARD_NAME));
+    ckb("variant", streq(b->variant, EOS_CHIP_VARIANT));
+    ckb("cores", b->cores == EOS_CHIP_CORES);
+    ckb("flash", b->flash_bytes == (uint32_t)EOS_FLASH_MB * 1024u * 1024u);
+    ckb("psram", b->psram_bytes == (uint32_t)EOS_PSRAM_MB * 1024u * 1024u);
+    ckb("psram flag", (b->psram_bytes != 0) == (EOS_HAS_PSRAM != 0));
+    ckb("tier", b->tier == EOS_TIER);
+    ckb("compositor", b->render.compositor == EOS_COMPOSITOR);
+    ckb("lvgl", b->render.lvgl == (EOS_USE_LVGL != 0));
+    ckb("palette", b->render.palette_entries == EOS_PALETTE_ENTRIES);
+    ckb("full framebuffer", b->render.full_framebuffer == (EOS_FB_FULL != 0));
+    ckb("band height", b->render.band_h == EOS_BAND_H);
+    ckb("min tile", b->render.min_tile_w == EOS_MIN_TILE_W
+                    && b->render.min_tile_h == EOS_MIN_TILE_H);
+    ckb("double buffer", b->render.double_buffer == (EOS_DOUBLE_BUFFER != 0));
+    ckb("animations", b->render.animations == (EOS_ANIMATIONS != 0));
+
+    ckb("native size", b->panel.native_w == EOS_LCD_NATIVE_W
+                       && b->panel.native_h == EOS_LCD_NATIVE_H);
+    ckb("rotated size", eos_board_screen_w(b) == EOS_LCD_W
+                        && eos_board_screen_h(b) == EOS_LCD_H);
+    ckb("rotation", b->panel.rotation == EOS_LCD_ROTATION);
+    ckb("depth", b->panel.color_depth == EOS_LCD_DEPTH);
+    ckb("bytes per pixel", b->panel.wire_bytes == EOS_LCD_BPP);
+    ckb("16-bit pixels", eos_board_panel_16bit(b) == (EOS_LCD_16BIT != 0));
+    ckb("clock", b->panel.hz == EOS_LCD_CLOCK_HZ);
+    ckb("offsets", b->panel.col_offset == EOS_LCD_COL_OFFSET
+                   && b->panel.row_offset == EOS_LCD_ROW_OFFSET);
+    ckb("invert", b->panel.invert == (EOS_LCD_INVERT != 0));
+    ckb("sck", b->panel.sck == EOS_LCD_PIN_SCK);
+    ckb("mosi", b->panel.mosi == EOS_LCD_PIN_MOSI);
+    ckb("miso", b->panel.miso == EOS_LCD_PIN_MISO);
+    ckb("dc", b->panel.dc == EOS_LCD_PIN_DC);
+    ckb("cs", b->panel.cs == EOS_LCD_PIN_CS);
+    ckb("rst", b->panel.rst == EOS_LCD_PIN_RST);
+    ckb("backlight", b->panel.bl == EOS_LCD_PIN_BL
+                     && b->panel.bl_active_low == (EOS_LCD_BL_ACTIVE_LOW != 0)
+                     && b->panel.bl_pwm == (EOS_LCD_BL_PWM != 0));
+
+    ckb("buttons", b->input.button_count == EOS_BTN_COUNT);
+    ckb("touch", eos_board_has_touch(b) == (EOS_HAS_TOUCH != 0));
+    ckb("ble keyboard", b->input.ble_keyboard == (EOS_HAS_BT_KEYBOARD != 0));
+    ckb("card", b->storage.sd == (EOS_HAS_SD != 0));
+#ifdef EOS_LED_PIN_DATA
+    ckb("led data pin", b->extras.led_data == EOS_LED_PIN_DATA);
+    ckb("led count", b->extras.led_count == EOS_LED_COUNT);
+#endif
+#ifdef EOS_FLASH_PORT_HINT
+    ckb("port", streq(b->port, EOS_FLASH_PORT_HINT));
+#endif
+    ckb("upload baud", b->upload_baud == EOS_UPLOAD_BAUD);
+    ckb("monitor baud", b->monitor_baud == EOS_MONITOR_BAUD);
+    ckb("confirm prompt", streq(b->confirm_prompt, EOS_ID_CONFIRM_PROMPT));
+    ckb("auto detectable", b->auto_detectable == (EOS_ID_AUTO_DETECTABLE != 0));
+
+    // The derived byte counts, which live only as macros because the HAL
+    // computes them from the panel instead of storing them.
+    ckb("wire frame bytes",
+        (uint32_t)EOS_WIRE_FRAME_BYTES ==
+        (EOS_LCD_BPP ? (uint32_t)EOS_LCD_W * (uint32_t)EOS_LCD_H * (uint32_t)EOS_LCD_BPP
+                     : (uint32_t)((EOS_LCD_W + 7) / 8) * (uint32_t)EOS_LCD_H));
+    ckb("render ram is the framebuffer plus the staging buffer",
+        (uint32_t)EOS_RENDER_RAM_BYTES ==
+        (uint32_t)EOS_FB_BYTES + (uint32_t)EOS_BLIT_BYTES);
+}
+
+static void boards(void)
+{
+    int i;
+    printf("board registry -> eos_board_t (%d boards)\n", REGISTRY_COUNT);
+    for (i = 0; i < REGISTRY_COUNT; i++) registry_row(&registry[i]);
+    for (i = 0; i < REGISTRY_COUNT; i++) registry_invariants(&registry[i]);
+    registry_macros();
+    ck_id = "registry";
+    {
+        int j, dup = 0;
+        for (i = 0; i < REGISTRY_COUNT; i++)
+            for (j = i + 1; j < REGISTRY_COUNT; j++)
+                if (streq(registry[i].b->id, registry[j].b->id)) dup = 1;
+        ckb("no two descriptors carry the same id", !dup);
+    }
+}
+
+#else  /* !EOS_HAVE_BOARDS */
+
+static void boards(void)
+{
+    printf("board registry -> eos_board_t\n");
+    ck("boards/generated is present (run: python3 tools/gen_board_header.py --all)", 0);
+}
+
+#endif /* EOS_HAVE_BOARDS */
+
+// ---------------------------------------------------------------------------
 // Sizes that the tier-0 heap budget depends on. Not a correctness check so much
 // as a tripwire: these are the numbers the RAM arithmetic in the docs uses.
 static void footprints(void)
@@ -310,6 +786,7 @@ int main(void)
     theme_drives_wm();
     bar_roles();
     brain_drives_buddy();
+    boards();
     footprints();
     printf("\n=== %d checks, %d failed ===\n", checks, failed);
     return failed ? 1 : 0;
