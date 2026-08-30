@@ -236,15 +236,21 @@ static bool IRAM_ATTR color_done_cb(esp_lcd_panel_io_handle_t io,
 }
 #endif
 
+// The completion token comes from the panel's ISR, so a transfer that was never
+// queued is a token that never arrives. Counting an unqueued band would leave
+// eos_display_frame_end() waiting on it for the rest of the boot, with the
+// backlight up and one stale band on the glass — the hardest possible symptom
+// to read. So inflight only counts transfers the driver accepted, and a
+// refused band is a band that is simply not drawn.
 static void band_push(void)
 {
 #ifdef ESP_PLATFORM
-    esp_lcd_panel_draw_bitmap(st.panel,
-                              st.cur_band.x, st.cur_band.y,
-                              (int)st.cur_band.x + (int)st.cur_band.w,
-                              (int)st.cur_band.y + (int)st.cur_band.h,
-                              st.buf[st.cur]);
-    st.inflight++;
+    if (esp_lcd_panel_draw_bitmap(st.panel,
+                                  st.cur_band.x, st.cur_band.y,
+                                  (int)st.cur_band.x + (int)st.cur_band.w,
+                                  (int)st.cur_band.y + (int)st.cur_band.h,
+                                  st.buf[st.cur]) == ESP_OK)
+        st.inflight++;
 #endif
 }
 
@@ -620,7 +626,11 @@ static void panel_clear(uint16_t wire)
         int n = (int)st.info.h - y;
         if (n > rows) n = rows;
 #ifdef ESP_PLATFORM
-        esp_lcd_panel_draw_bitmap(st.panel, 0, y, (int)st.info.w, y + n, st.buf[0]);
+        // Same rule as band_push(): wait only for a transfer that was queued.
+        // A boot that hangs here is a board with a dark panel and no console
+        // line saying why.
+        if (esp_lcd_panel_draw_bitmap(st.panel, 0, y, (int)st.info.w, y + n,
+                                      st.buf[0]) != ESP_OK) return;
         xSemaphoreTake(st.done, portMAX_DELAY);   // buf[0] is reused next pass
 #else
         (void)n;

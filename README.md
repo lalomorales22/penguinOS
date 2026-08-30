@@ -228,8 +228,8 @@ ANSI colours, and a few scalars. Seven ship in `kernel/theme/themes/`: `carbon`,
   `min_tile_w`/`min_tile_h` deliberately are **not** in the theme — they belong to
   the panel and come from the board registry.
 - `font` names an `eos_font_id_t`, lowercased: `tiny` (4x6), `small` (6x8, the
-  workhorse), `med` (8x13), `big` (12x20). **The font tables are not written yet**,
-  so every name currently resolves to whatever the renderer defaults to.
+  workhorse), `med` (8x13), `big` (12x20). All four faces exist in
+  `kernel/font/` and render; an unrecognised name falls back to `small`.
 - `//` and `/* */` comments, trailing commas and a UTF-8 BOM are all tolerated,
   because these files get edited on an SD card in whatever editor is to hand.
 
