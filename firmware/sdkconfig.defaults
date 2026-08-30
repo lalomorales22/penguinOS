@@ -1,0 +1,65 @@
+# ESP-OS sdkconfig defaults, shared by every board.
+#
+# Per-target overrides live in sdkconfig.defaults.<target>, which IDF appends
+# after this file automatically. Anything that is true of all six boards belongs
+# here; anything that is a property of one SoC belongs there.
+#
+# These are DEFAULTS. `idf.py menuconfig` writes firmware/sdkconfig, which is
+# gitignored and wins. Delete sdkconfig to get back to this file.
+
+# ---------------------------------------------------------------- partitions
+# partitions.csv, not a preset: the presets have no "int" partition and the
+# LittleFS label is load-bearing. See the arithmetic in that file.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --------------------------------------------------------------------- flash
+# 4 MB on every board in boards/*.json, and the partition table is sized to
+# exactly that. A smaller setting silently truncates "int"; a larger one lets
+# the table validate against flash that is not there.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+# flashing.flash_mode "dio" and flash_freq_mhz 80 in all six profiles.
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# ----------------------------------------------------------------- scheduler
+# 1000 Hz, matching the verified probe app. The default 100 Hz gives a 10 ms
+# tick, which quantises a 30 fps frame loop into 33 ms of work plus up to 10 ms
+# of waiting and makes the panel visibly uneven. The cost is interrupt overhead
+# the C6 has to spare.
+CONFIG_FREERTOS_HZ=1000
+
+# ----------------------------------------------------------------- main task
+# 8 KB, up from the 3.5 KB default. app_main runs the boot sequence and then the
+# frame loop; eos_bar's snprintf formatting and the brain's request assembly are
+# both stack-resident by design (the kernel does not malloc), so the frame task
+# needs real stack rather than the minimum that gets a hello-world to print.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# ----------------------------------------------------------------------- log
+# INFO at build time so boot diagnostics survive into a release image; the
+# runtime level can still be lowered per tag with esp_log_level_set(). VERBOSE
+# would compile every ESP_LOGD in IDF into the image and cost flash for output
+# nobody reads over a 115200 console.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+
+# -------------------------------------------------------------- optimisation
+# -Os. The whole kernel is already required to build clean under -Wall -Wextra
+# -Werror -Os for both riscv32 and xtensa, and flash is the scarce resource on a
+# 4 MB part with a 3 MB app slot and LVGL still to come.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# ------------------------------------------------------------------- asserts
+# Assertions stay on. eos_wm and eos_theme are pure logic with fixed pools and
+# no allocation, so an assert here means a real invariant broke and a silent
+# wrong answer is worse than a panic with a backtrace.
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+
+# ------------------------------------------------------------------- radios
+# Wi-Fi and Bluetooth are OFF. Nothing in this run brings up a radio, and the
+# 425,648-byte free-heap figure the display tier decisions were made against was
+# measured with the radios down. Turning them on costs tens of KB and must be
+# done together with re-measuring, not as a config tweak.
+CONFIG_BT_ENABLED=n

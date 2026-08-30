@@ -257,11 +257,17 @@ ISR safety: `eos_input_push` only. Everything else is main-loop.
 ## Board identity
 
 `eos_board_t` is one flat const struct generated from `boards/<id>.json` into a
-header, living in flash. The board component returns a pointer to it and
-nothing ever writes to it. It is field for field with the registry minus the
-parts only the flashing tools need — `render`, `display`, `inputs`,
-`peripherals.sdcard`, the LED/audio/light peripherals, and the identity block
-all have a home in the struct.
+header, living in flash. The board component returns `&EOS_BOARD` and nothing
+ever writes to it. It is field for field with the registry minus the parts only
+the flashing tools need — `render`, `display`, `inputs`, `peripherals.sdcard`,
+the LED/audio/light peripherals, and the identity block all have a home in the
+struct.
+
+`eos_board.h` is the only declaration of that struct and of the tier, SoC,
+panel, bus, touch, LED and audio enums. The generated header includes it and
+emits data. When the registry grows something the runtime needs, the field is
+added here; a second declaration elsewhere is what made the boot glue
+impossible to write the first time.
 
 `render` is copied across rather than recomputed. The registry made that
 decision once with a heap measurement in hand; a backend that re-derives it at

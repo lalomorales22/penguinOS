@@ -97,7 +97,7 @@ apps/             EMPTY. The terminal, buddy, files, settings and arcade go here
 | `kernel/svc/eos_brain.c` | Talks to megabrain. Holds back at most 3 bytes so a UTF-8 character is never split across two callbacks. |
 | `tools/flash.sh` | Identify, confirm, build, flash. Writes nothing without a yes. |
 | `tools/detect.py` | esptool facts to registry candidates. Only chip, flash size and PSRAM may reject a profile. |
-| `tools/gen_board_header.py` | Validates a profile and emits its C header. Two modes: self-contained, or filling the HAL's `eos_board_t`. |
+| `tools/gen_board_header.py` | Validates a profile and emits its C header: macros and one `eos_board_t` initialiser, filling the type `eos_board.h` declares. It emits no types of its own. |
 
 ### What depends on what
 

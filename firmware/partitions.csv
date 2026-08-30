@@ -1,0 +1,35 @@
+# ESP-OS partition table. Every board in this fleet has 4 MB of flash and
+# ota_slots 0, so the whole 4 MB is spent once and there is no second app slot
+# to fall back on. The one non-obvious constraint: the data partition MUST stay
+# labelled "int", because that string is peripherals.internal_fs.partition_label
+# in all six boards/*.json and eos_board_storage_t.int_label carries it into the
+# firmware at compile time. Rename it here and eos_storage_mount() fails at boot
+# with no compile error anywhere.
+#
+# The arithmetic, 4 MB = 4,194,304 bytes = 0x400000:
+#
+#   0x000000  bootloader                          reserved up to 0x8000
+#   0x008000  partition table                      0x001000       4 KB
+#   0x009000  nvs                                  0x006000      24 KB
+#   0x00F000  phy_init                             0x001000       4 KB
+#   0x010000  factory                              0x300000   3,072 KB
+#   0x310000  int (littlefs)                       0x0F0000     960 KB
+#   0x400000  end of flash                        ------------------------
+#                                                 total        4,096 KB
+#
+# factory is 3 MB: that is flashing.app_partition_kb 3072 in every profile, the
+# brief's 2 MB floor with a megabyte of headroom for LVGL, and it is the same
+# app size as IDF's stock huge_app.csv, which is what the profiles name in
+# flashing.partition_scheme. What huge_app leaves as 960 KB of dead flash is
+# exactly what "int" claims here, so the table is huge_app plus a filesystem
+# and costs the app nothing.
+#
+# App offsets must be 64 KB aligned and data offsets 4 KB aligned; 0x010000 and
+# 0x310000 are both 64 KB aligned, so this table survives growing factory by any
+# whole number of 64 KB blocks as long as "int" shrinks to match.
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x6000,
+phy_init,   data, phy,      0xF000,   0x1000,
+factory,    app,  factory,  0x10000,  0x300000,
+int,        data, littlefs, 0x310000, 0xF0000,
