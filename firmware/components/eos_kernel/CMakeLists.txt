@@ -13,7 +13,10 @@
 # the ST7789 backend: it is where the esp_lcd, spi, ledc and gpio requirements
 # come from and it makes the single heap allocation in the whole image. It
 # still compiles for the host with ESP_PLATFORM unset, which is how its 109
-# checks run.
+# checks run. eos_storage_idf.c is the third: its mount and unmount call
+# joltwallet's littlefs component, which is where the REQUIRES on
+# joltwallet__littlefs comes from. Everything else in that file is POSIX and is
+# what the host suite runs against a directory in /tmp.
 
 set(_eos_kernel_srcs
     "${EOS_KERNEL_DIR}/wm/eos_wm.c"
@@ -30,7 +33,8 @@ set(_eos_kernel_srcs
     "${EOS_KERNEL_DIR}/font/eos_font.c"
     "${EOS_KERNEL_DIR}/qr/eos_qr.c"
     "${EOS_KERNEL_DIR}/hal/eos_input.c"
-    "${EOS_KERNEL_DIR}/hal/backend/esp_lcd/eos_display_st7789.c")
+    "${EOS_KERNEL_DIR}/hal/backend/esp_lcd/eos_display_st7789.c"
+    "${EOS_KERNEL_DIR}/hal/backend/storage/eos_storage_idf.c")
 
 idf_component_register(
     SRCS
@@ -61,6 +65,8 @@ idf_component_register(
         esp_driver_ledc  # driver/ledc.h, the backlight
         esp_driver_gpio  # the panel's CS/DC/RST pins, and eos_input's buttons
         bt               # NimBLE for eos_ble. Never Bluedroid: 83KB vs 19KB is an OOM.
+        joltwallet__littlefs   # eos_storage's "/int" mount. Third party, see idf_component.yml.
+        vfs              # eos_storage_idf.c is POSIX: open/read/opendir go through esp_vfs
 )
 
 # Which boards/generated/<id>.h everything downstream compiles against. PUBLIC,

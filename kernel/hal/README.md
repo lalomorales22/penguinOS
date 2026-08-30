@@ -272,6 +272,12 @@ when the user inserts one.
 Not in this HAL, on purpose: NVS. Boot-mode flags and pairing bonds are
 key/value, not files, and they belong to the components that own them.
 
+There is one backend: `backend/storage/eos_storage_idf.c`, LittleFS on the
+`int` partition through ESP-IDF's VFS, with `/sd` declared and answering
+`EOS_ERR_NODEV` because no board in the registry has verified card pins. All
+22 functions are implemented; `EOS_FS_FAT` is not. `backend/storage/README.md`
+carries the path rules, the pool sizes, the flash cost and the blocking table.
+
 ## Feature by tier
 
 | Feature | tier 0 SOFT | tier 1 LEAN | tier 2 RICH | SSD1306 (tier 0) |
@@ -312,7 +318,7 @@ exception, and only four calls block.
 | `eos_display_backlight` | no | briefly, on the LEDC peripheral |
 | every other `eos_display_*` | no | no |
 | `eos_input_*` | no | no |
-| `eos_storage_*` | no — fixed handle pools | **yes, all of them** |
+| `eos_storage_*` | no — fixed handle pools; IDF's VFS allocates behind `open`/`opendir` | **yes, all of them** — and a write turns the instruction cache off while it runs |
 | `eos_board_*` | no | `eos_board_probe` only |
 
 ISR safety: `eos_input_push` only. Everything else is main-loop.

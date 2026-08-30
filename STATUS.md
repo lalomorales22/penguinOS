@@ -20,7 +20,7 @@ pixel is now one `idf.py flash` and a human watching the panel.
 | `kernel/svc` | 2 + test | yes | **182 checks** | never | Parser verified against the live Mac mini over real sockets. The ESP-IDF half has never been compiled. |
 | `kernel/font` | 2 + data + test | yes | **418 checks** | never | All four faces: tiny 4x6, small 6x8, med 8x13, big 12x20. 6,597 B of flash. |
 | `kernel/test` | 1 | yes | **635 checks** | n/a | Cross-component contracts, plus every generated board header held against the registry. |
-| `kernel/hal` | 4 headers + ST7789 backend + test | yes | **109 checks** | never | The banded RGB565 ST7789 backend is implemented and cross-compiles. Storage and input are still 0 of their declared functions. |
+| `kernel/hal` | 4 headers + ST7789 backend + test | yes | **109 checks** | never | The banded RGB565 ST7789 backend and the LittleFS storage backend are both implemented and cross-compile. Storage adds **264 checks** and 35,516 B of flash; `EOS_FS_FAT` is not implemented, because no board has verified card pins. |
 | `boards/` | schema + 6 profiles | yes | validator + generator | n/a | All 6 validate; all 6 generate headers that compile, link and run against the real HAL, and regeneration is byte-reproducible. |
 | `tools/` | flasher, detector, prober, generator | yes | `--list` / `--identify` exercised | partially | Identification works today. There is now an image to flash; the flash itself has not been run. |
 | `web/` | 4 served files | yes | `node --check` only | never | Contract is documented and self-consistent. It has never spoken to a board. |
