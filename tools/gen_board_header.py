@@ -9,6 +9,15 @@
 # or that the SD card is quietly sharing three wires with the panel. Those checks
 # live here and they are the point of the tool.
 #
+# The header it writes contains DATA and nothing else: the EOS_* macros and one
+# initialiser for the eos_board_t declared in kernel/hal/include/eos_board.h. It
+# used to be able to emit its own copy of those types so a header would compile
+# standalone, and that copy is what made the boot glue impossible to write - one
+# translation unit cannot hold two eos_board_t definitions, and the enumerators
+# clashed on top of that. The HAL header is the authority now; when the registry
+# grows a field the runtime needs, it goes there and the tables in the HAL MODE
+# section below map the registry's strings onto its enums.
+#
 # The one non-obvious constraint: nothing the header emits may allocate. Every
 # string is a literal, every array is fixed length, and the macros cost nothing
 # at all unless something references them - which matters, because the tightest
@@ -24,7 +33,12 @@ import re
 import sys
 
 SCHEMA_VERSION = 1
-MAX_BUTTONS = 8
+# Mirrors EOS_MAX_BUTTONS in kernel/hal/include/eos_board.h. That array is the
+# real limit; this constant only exists so the failure is a validation message
+# instead of a compile error in generated code. Raise it there first.
+MAX_BUTTONS = 6
+# Bad baud rates never reach the runtime struct - they are flasher advice and
+# live only as macros - so this cap is the generator's own.
 MAX_BAD_BAUDS = 4
 
 # What each silicon target will actually let you do. input_only pins can be read
@@ -434,8 +448,8 @@ class Validator:
         btns = self.get("inputs.buttons", list)
         if btns is not None:
             if len(btns) > MAX_BUTTONS:
-                self.err("inputs.buttons", "%d buttons, but the generated struct holds %d"
-                         % (len(btns), MAX_BUTTONS))
+                self.err("inputs.buttons", "%d buttons, but eos_board_t's buttons[] "
+                         "holds %d" % (len(btns), MAX_BUTTONS))
             seen = set()
             for i, b in enumerate(btns):
                 base = "inputs.buttons.%d" % i
@@ -616,7 +630,7 @@ class Validator:
         if bad is not None:
             if len(bad) > MAX_BAD_BAUDS:
                 self.err("flashing.bad_baud_rates",
-                         "%d entries, but the generated struct holds %d" % (len(bad), MAX_BAD_BAUDS))
+                         "%d entries, but the header emits at most %d" % (len(bad), MAX_BAD_BAUDS))
             seen = set()
             for i, e in enumerate(bad):
                 base = "flashing.bad_baud_rates.%d" % i
@@ -845,6 +859,12 @@ def cbool(v):
     return "true" if v else "false"
 
 
+def csuffix(board_id):
+    """The board id as a C identifier fragment. ID_RE already limits ids to
+    lowercase, digits and hyphens, so this only has to move the hyphens."""
+    return re.sub(r"[^A-Za-z0-9]", "_", board_id)
+
+
 def wrap(text, width, prefix):
     words, lines, cur = text.split(), [], ""
     for wd in words:
@@ -893,115 +913,7 @@ class Out:
         return "\n".join(self.lines).rstrip() + "\n"
 
 
-TYPES = """
-#ifndef EOS_BOARD_TYPES_DEFINED
-#define EOS_BOARD_TYPES_DEFINED
-
-#define EOS_BOARD_MAX_BUTTONS   %d
-#define EOS_BOARD_MAX_BAD_BAUDS %d
-
-typedef enum { EOS_BUS_NONE = 0, EOS_BUS_SPI = 1, EOS_BUS_I2C = 2 } eos_board_bus_t;
-typedef enum { EOS_COMP_INDEXED8 = 0, EOS_COMP_MONO1 = 1, EOS_COMP_LVGL = 2 } eos_board_comp_t;
-typedef enum { EOS_LED_NONE = 0, EOS_LED_GPIO_RGB = 1, EOS_LED_WS2812 = 2 } eos_board_led_t;
-typedef enum { EOS_SPK_NONE = 0, EOS_SPK_DAC = 1, EOS_SPK_PWM = 2, EOS_SPK_I2S = 3 } eos_board_spk_t;
-typedef enum { EOS_BT_NONE = 0, EOS_BT_NIMBLE = 1, EOS_BT_BLUEDROID = 2 } eos_board_bt_t;
-
-typedef struct { const char *name; int8_t gpio; bool active_low; bool pull_up; } eos_board_button_t;
-
-// Kept in the descriptor so the on-device flasher UI can refuse a baud rate it
-// has no business offering, and say why.
-typedef struct { int32_t baud; const char *reason; } eos_board_bad_baud_t;
-
-typedef struct {
-    const char *controller;
-    int16_t  native_w, native_h;
-    uint8_t  rotation;
-    int16_t  w, h;              // after rotation; what everything above the driver sees
-    uint8_t  depth;             // bits per pixel as the controller sees them
-    uint8_t  bytes_per_pixel;   // bytes on the wire; 0 when packed sub-byte
-    bool     supports_16bit;
-    uint8_t  bus;               // eos_board_bus_t
-    int32_t  clock_hz;
-    int8_t   sck, mosi, miso, dc, cs, rst, sda, scl;   // -1 = not wired
-    uint8_t  i2c_addr;
-    int8_t   bl;
-    bool     bl_active_low, bl_pwm;
-    int16_t  col_offset, row_offset;
-    bool     invert;
-} eos_board_display_t;
-
-typedef struct {
-    uint8_t  tier;
-    uint8_t  compositor;        // eos_board_comp_t
-    bool     lvgl;
-    uint16_t palette_entries;
-    bool     full_framebuffer;
-    int16_t  band_h;
-    bool     double_buffer, animations;
-    uint32_t fb_bytes;          // compositor buffer; 0 when LVGL owns it
-    uint32_t blit_bytes;        // staging buffer; 0 when the compositor buffer is wire format
-} eos_board_render_t;
-
-typedef struct {
-    bool     bt_keyboard;
-    uint8_t  bt_stack;          // eos_board_bt_t
-    bool     touch;
-    const char *touch_controller;
-    uint8_t  button_count;
-    eos_board_button_t button[EOS_BOARD_MAX_BUTTONS];
-} eos_board_inputs_t;
-
-typedef struct {
-    uint8_t  led_kind;          // eos_board_led_t
-    int8_t   led_r, led_g, led_b, led_data;
-    uint8_t  led_count;
-    bool     led_active_low;
-    uint8_t  speaker_kind;      // eos_board_spk_t
-    int8_t   speaker_pin;
-    int8_t   light_pin;
-    uint8_t  light_adc_unit;
-    int8_t   light_adc_channel;
-    bool     sd;
-    int8_t   sd_sck, sd_mosi, sd_miso, sd_cs;
-    int32_t  sd_clock_hz;
-    bool     sd_shares_display_bus;
-} eos_board_periph_t;
-
-typedef struct {
-    const char *port_hint;      // NULL when the board has no usual port
-    const char *usb_bridge;
-    int32_t  upload_baud, monitor_baud;
-    const char *flash_mode;
-    uint8_t  flash_freq_mhz;
-    const char *partition_scheme;
-    int32_t  app_partition_kb;
-    uint8_t  ota_slots;
-    bool     auto_reset;
-    uint8_t  bad_baud_count;
-    eos_board_bad_baud_t bad_baud[EOS_BOARD_MAX_BAD_BAUDS];
-} eos_board_flashing_t;
-
-typedef struct {
-    const char *id;
-    const char *name;
-    const char *target;
-    const char *chip_variant;
-    uint8_t  cores;
-    uint16_t flash_mb;
-    bool     psram;
-    uint16_t psram_mb;
-    eos_board_render_t   render;
-    eos_board_display_t  display;
-    eos_board_inputs_t   inputs;
-    eos_board_periph_t   periph;
-    eos_board_flashing_t flashing;
-} eos_board_t;
-
-#endif /* EOS_BOARD_TYPES_DEFINED */
-""".strip("\n") % (MAX_BUTTONS, MAX_BAD_BAUDS)
-
-
-def emit(d, src, digest, with_types=True, hal=False):
+def emit(d, src, digest):
     dv = derive(d)
     o = Out()
     disp, ren, inp, per, fl, ident = (d["display"], d["render"], d["inputs"],
@@ -1009,7 +921,9 @@ def emit(d, src, digest, with_types=True, hal=False):
     bt = inp["bluetooth_keyboard"]
     touch = inp["touch"]
     led, spk, light, sd = per["rgb_led"], per["speaker"], per["light_sensor"], per["sdcard"]
-    guard = "EOS_BOARD_%s_H" % re.sub(r"[^A-Z0-9]", "_", d["id"].upper())
+    guard = "EOS_BOARD_%s_H" % csuffix(d["id"]).upper()
+    obj = "eos_board_" + csuffix(d["id"]).lower()
+    init = "EOS_BOARD_INIT_" + csuffix(d["id"]).upper()
 
     o.raw("// Generated by tools/gen_board_header.py from %s - do not edit."
           % (os.path.relpath(src) if src else "a board profile"))
@@ -1052,8 +966,23 @@ def emit(d, src, digest, with_types=True, hal=False):
     o.raw("#include <stdint.h>")
     o.raw("#include <stdbool.h>")
     o.raw("#include <stddef.h>   /* NULL */")
-    if hal:
-        o.raw("#include \"eos_board.h\"   /* the runtime type lives in kernel/hal */")
+    o.raw()
+    o.comment("eos_board_t and every enum it is built from are declared once, in "
+              "kernel/hal/include/eos_board.h. This file is data: macros, one "
+              "initialiser, one const instance. It declares no types of its own, so "
+              "it composes with the rest of the HAL instead of colliding with it.")
+    o.raw("#include \"eos_board.h\"")
+
+    o.section("the unsuffixed names")
+    o.raw()
+    o.comment("A firmware image includes exactly one of these headers, so the plain "
+              "EOS_* names describe its board and nothing else has a claim on them. A "
+              "test that wants all six registry entries at once includes six headers "
+              "in one translation unit; the first one included takes the plain names, "
+              "the rest contribute only their suffixed data below. EOS_BOARD_ACTIVE "
+              "says which board won, so the ambiguity is never silent.")
+    o.raw("#ifndef EOS_BOARD_ACTIVE")
+    o.raw("#define EOS_BOARD_ACTIVE %s" % cstr(d["id"]))
 
     o.section("identity")
     o.d("EOS_BOARD_GENERATED", 1)
@@ -1193,6 +1122,9 @@ def emit(d, src, digest, with_types=True, hal=False):
     o.d("EOS_BAD_BAUD_COUNT", len(fl["bad_baud_rates"]))
     for i, bb in enumerate(fl["bad_baud_rates"]):
         o.d("EOS_BAD_BAUD%d" % i, bb["baud"])
+        # The reason travels with the rate. It is what an operator needs when a
+        # flash fails, and it costs nothing until something prints it.
+        o.d("EOS_BAD_BAUD%d_REASON" % i, cstr(bb["reason"]))
 
     o.section("identification (for the flasher, not for the firmware)")
     o.d("EOS_ID_AUTO_DETECTABLE", 0)
@@ -1202,139 +1134,48 @@ def emit(d, src, digest, with_types=True, hal=False):
     for i, m in enumerate(ident["mac_allowlist"]):
         o.d("EOS_ID_MAC%d" % i, cstr(m))
 
-    if with_types and not hal:
-        o.section("types")
-        o.raw()
-        o.raw(TYPES)
+    o.section("aliases onto this board's suffixed data")
+    o.d("EOS_BOARD", obj)
+    o.d("EOS_BOARD_INIT", init)
+    o.raw()
+    o.raw("#endif /* EOS_BOARD_ACTIVE */")
 
     o.section("the board")
     o.raw()
-    o.raw("#define EOS_BOARD_INIT { \\")
-    body = hal_init(d, dv) if hal else board_init(d, dv)
-    for i, ln in enumerate(body):
-        o.raw("    %s%s" % (ln, " \\" if i < len(body) - 1 else " \\"))
+    o.comment("Suffixed with the board id, so six of these can share a translation "
+              "unit. The board component says &EOS_BOARD and never spells the suffix.")
+    o.raw("#define %s { \\" % init)
+    body = hal_init(d, dv)
+    for ln in body:
+        o.raw("    %s \\" % ln)
     o.raw("}")
     o.raw()
-    o.comment("One copy, in rodata. Define EOS_BOARD_NO_INSTANCE and use EOS_BOARD_INIT "
+    o.comment("One copy, in rodata. Define EOS_BOARD_NO_INSTANCE and use the initialiser "
               "yourself if a translation unit wants the descriptor somewhere else.")
     o.raw("#ifndef EOS_BOARD_NO_INSTANCE")
-    o.raw("static const eos_board_t eos_board = EOS_BOARD_INIT;")
+    o.raw("static const eos_board_t %s = %s;" % (obj, init))
     o.raw("#endif")
     o.raw()
     o.raw("#endif /* %s */" % guard)
     return o.text()
 
 
-def board_init(d, dv):
-    disp, ren, inp, per, fl = (d["display"], d["render"], d["inputs"],
-                               d["peripherals"], d["flashing"])
-    bt, touch = inp["bluetooth_keyboard"], inp["touch"]
-    led, spk, light, sd = per["rgb_led"], per["speaker"], per["light_sensor"], per["sdcard"]
-    p = disp["pins"]
-    L = []
-    L.append(".id = %s," % cstr(d["id"]))
-    L.append(".name = %s," % cstr(d["name"]))
-    L.append(".target = %s," % cstr(d["chip"]["target"]))
-    L.append(".chip_variant = %s," % cstr(d["chip"]["variant"]))
-    L.append(".cores = %d," % d["chip"]["cores"])
-    L.append(".flash_mb = %d," % d["chip"]["flash_size_mb"])
-    L.append(".psram = %s," % cbool(d["chip"]["psram"]["present"]))
-    L.append(".psram_mb = %d," % d["chip"]["psram"]["size_mb"])
-    L.append(".render = {")
-    L.append("    .tier = %d, .compositor = %s, .lvgl = %s,"
-             % (ren["tier"],
-                {"indexed8": "EOS_COMP_INDEXED8", "mono1": "EOS_COMP_MONO1",
-                 "lvgl": "EOS_COMP_LVGL"}[ren["compositor"]],
-                cbool(ren["lvgl"])))
-    L.append("    .palette_entries = %d," % ren["palette_entries"])
-    L.append("    .full_framebuffer = %s, .band_h = %d,"
-             % (cbool(ren["full_framebuffer"]), ren["band_height"]))
-    L.append("    .double_buffer = %s, .animations = %s,"
-             % (cbool(ren["double_buffer"]), cbool(ren["animations"])))
-    L.append("    .fb_bytes = %du, .blit_bytes = %du," % (dv["fb_bytes"], dv["blit_bytes"]))
-    L.append("},")
-    L.append(".display = {")
-    L.append("    .controller = %s," % cstr(disp["controller"]))
-    L.append("    .native_w = %d, .native_h = %d, .rotation = %d,"
-             % (disp["native_width"], disp["native_height"], disp["rotation"]))
-    L.append("    .w = %d, .h = %d," % (dv["w"], dv["h"]))
-    L.append("    .depth = %d, .bytes_per_pixel = %d, .supports_16bit = %s,"
-             % (disp["color_depth"], disp["bytes_per_pixel"],
-                cbool(disp["supports_16bit_pixels"])))
-    L.append("    .bus = %s, .clock_hz = %d,"
-             % ("EOS_BUS_SPI" if disp["bus"] == "spi" else "EOS_BUS_I2C", disp["clock_hz"]))
-    L.append("    .sck = %d, .mosi = %d, .miso = %d, .dc = %d," % (p["sck"], p["mosi"], p["miso"], p["dc"]))
-    L.append("    .cs = %d, .rst = %d, .sda = %d, .scl = %d," % (p["cs"], p["rst"], p["sda"], p["scl"]))
-    L.append("    .i2c_addr = 0x%02X," % (disp["i2c_address"] or 0))
-    L.append("    .bl = %d, .bl_active_low = %s, .bl_pwm = %s,"
-             % (disp["backlight"]["pin"], cbool(disp["backlight"]["active_low"]),
-                cbool(disp["backlight"]["pwm"])))
-    L.append("    .col_offset = %d, .row_offset = %d, .invert = %s,"
-             % (disp["col_offset"], disp["row_offset"], cbool(disp["invert"])))
-    L.append("},")
-    L.append(".inputs = {")
-    L.append("    .bt_keyboard = %s, .bt_stack = %s,"
-             % (cbool(bt["present"]),
-                {"none": "EOS_BT_NONE", "nimble": "EOS_BT_NIMBLE",
-                 "bluedroid": "EOS_BT_BLUEDROID"}[bt["stack"]]))
-    L.append("    .touch = %s, .touch_controller = %s,"
-             % (cbool(touch["present"]),
-                cstr(touch["controller"]) if touch["controller"] else "NULL"))
-    L.append("    .button_count = %d," % len(inp["buttons"]))
-    if inp["buttons"]:
-        L.append("    .button = {")
-        for b in inp["buttons"]:
-            L.append("        { %s, %d, %s, %s },"
-                     % (cstr(b["name"]), b["gpio"], cbool(b["active_low"]),
-                        cbool(b["pull"] == "up")))
-        L.append("    },")
-    L.append("},")
-    L.append(".periph = {")
-    L.append("    .led_kind = %s,"
-             % {"none": "EOS_LED_NONE", "gpio_rgb": "EOS_LED_GPIO_RGB",
-                "ws2812": "EOS_LED_WS2812"}[led["kind"]])
-    L.append("    .led_r = %d, .led_g = %d, .led_b = %d, .led_data = %d,"
-             % (led["pins"]["r"], led["pins"]["g"], led["pins"]["b"], led["data_pin"]))
-    L.append("    .led_count = %d, .led_active_low = %s,"
-             % (led["count"], cbool(led["active_low"])))
-    L.append("    .speaker_kind = %s, .speaker_pin = %d,"
-             % ({"none": "EOS_SPK_NONE", "dac": "EOS_SPK_DAC", "pwm": "EOS_SPK_PWM",
-                 "i2s": "EOS_SPK_I2S"}[spk["kind"]], spk["pin"]))
-    L.append("    .light_pin = %d, .light_adc_unit = %d, .light_adc_channel = %d,"
-             % (light["pin"], light["adc_unit"], light["adc_channel"]))
-    L.append("    .sd = %s," % cbool(sd["present"]))
-    L.append("    .sd_sck = %d, .sd_mosi = %d, .sd_miso = %d, .sd_cs = %d,"
-             % (sd["pins"]["sck"], sd["pins"]["mosi"], sd["pins"]["miso"], sd["pins"]["cs"]))
-    L.append("    .sd_clock_hz = %d, .sd_shares_display_bus = %s,"
-             % (sd["max_clock_hz"], cbool(sd["shares_display_bus"])))
-    L.append("},")
-    L.append(".flashing = {")
-    L.append("    .port_hint = %s," % (cstr(fl["port_hint"]) if fl["port_hint"] else "NULL"))
-    L.append("    .usb_bridge = %s," % cstr(fl["usb_bridge"]))
-    L.append("    .upload_baud = %d, .monitor_baud = %d," % (fl["upload_baud"], fl["monitor_baud"]))
-    L.append("    .flash_mode = %s, .flash_freq_mhz = %d," % (cstr(fl["flash_mode"]), fl["flash_freq_mhz"]))
-    L.append("    .partition_scheme = %s," % cstr(fl["partition_scheme"]))
-    L.append("    .app_partition_kb = %d, .ota_slots = %d, .auto_reset = %s,"
-             % (fl["app_partition_kb"], fl["ota_slots"], cbool(fl["auto_reset"])))
-    L.append("    .bad_baud_count = %d," % len(fl["bad_baud_rates"]))
-    if fl["bad_baud_rates"]:
-        L.append("    .bad_baud = {")
-        for bb in fl["bad_baud_rates"]:
-            L.append("        { %d, %s }," % (bb["baud"], cstr(bb["reason"])))
-        L.append("    },")
-    L.append("},")
-    return L
-
-
-# ----------------------------------------------------------------- HAL mode
+# -------------------------------------------------------- the HAL descriptor
 #
-# kernel/hal/include/eos_board.h declares the runtime eos_board_t and names this
-# tool as the thing that fills it. Its field names line up with the registry
-# almost one for one, but not entirely - it groups the card and the internal
-# filesystem into one storage block, keeps the LED, speaker and light sensor in
-# "extras", and names panels and SoCs with enums instead of strings. So --hal is
-# a separate emitter rather than a rename, and the enum tables below are the
-# whole of the coupling: if that header moves, this is the part to fix.
+# kernel/hal/include/eos_board.h declares eos_board_t and names this tool as the
+# thing that fills it. Its field names line up with the registry almost one for
+# one, but not entirely - it groups the card and the internal filesystem into
+# one storage block, keeps the LED, speaker and light sensor in "extras", and
+# names panels and SoCs with enums instead of strings. So the initialiser is
+# written out field by field rather than mechanically, and the tables below are
+# the whole of the coupling: if that header moves, this is the part to fix.
+#
+# Two fields are not in the registry and are emitted as documented defaults:
+# eos_button_t.key (there is no keymap in the JSON; the board component sets it)
+# and eos_board_storage_t.sd_slot (no profile uses SDMMC). Registry facts with
+# no struct field of their own - the IDF target string, the controller and touch
+# controller names, the flashing block, and the derived framebuffer sizes - stay
+# as EOS_* macros, which is where the flasher and the build system read them.
 
 HAL_SOC = {"esp32": "EOS_SOC_ESP32", "esp32c5": "EOS_SOC_ESP32_C5",
            "esp32c6": "EOS_SOC_ESP32_C6", "esp32s3": "EOS_SOC_ESP32_S3"}
@@ -1352,12 +1193,11 @@ HAL_LED = {"none": "EOS_LED_NONE", "gpio_rgb": "EOS_LED_GPIO_RGB",
            "ws2812": "EOS_LED_WS2812"}
 HAL_AUDIO = {"none": "EOS_AUDIO_NONE", "dac": "EOS_AUDIO_DAC", "i2s": "EOS_AUDIO_I2S"}
 HAL_SPI_HOST = {"HSPI": 1, "SPI2": 1, "FSPI": 1, "VSPI": 2, "SPI3": 2, None: 0}
-HAL_MAX_BUTTONS = 6
-
 
 def hal_check(d):
-    """Everything --hal can fail on that plain generation cannot, because the
-    HAL uses enums where the registry uses strings."""
+    """What the schema cannot catch, because the HAL uses enums where the
+    registry uses free strings. A controller with no eos_panel_t is a loud
+    error here rather than an undefined identifier in generated code."""
     e = []
     t = d["chip"]["target"]
     if t not in HAL_SOC:
@@ -1375,10 +1215,6 @@ def hal_check(d):
     if sk not in HAL_AUDIO:
         e.append(("peripherals.speaker.kind",
                   "the HAL has no eos_audio_t for %r; it knows none, dac and i2s" % sk))
-    n = len(d["inputs"]["buttons"])
-    if n > HAL_MAX_BUTTONS:
-        e.append(("inputs.buttons", "%d buttons, but the HAL's EOS_MAX_BUTTONS is %d"
-                  % (n, HAL_MAX_BUTTONS)))
     for role, host in (("display.spi_host", d["display"]["spi_host"]),
                        ("peripherals.sdcard.spi_host", d["peripherals"]["sdcard"]["spi_host"])):
         if host not in HAL_SPI_HOST:
@@ -1523,15 +1359,13 @@ def report(path, errors):
     print("", file=sys.stderr)
 
 
-def process(src, dst, with_types, write=True, hal=False):
+def process(src, dst, write=True):
     data, digest = load(src)
-    errors = Validator(data, src).check()
-    if not errors and hal:
-        errors = hal_check(data)
+    errors = Validator(data, src).check() or hal_check(data)
     if errors:
         report(src, errors)
         return None
-    text = emit(data, src, digest, with_types=with_types, hal=hal)
+    text = emit(data, src, digest)
     if not write:
         return text
     parent = os.path.dirname(os.path.abspath(dst))
@@ -1561,17 +1395,11 @@ def main(argv=None):
                     help="where the profiles live (default: the boards/ dir next to this tool)")
     ap.add_argument("--out-dir", default=None, metavar="DIR",
                     help="where --all writes (default: <boards-dir>/generated)")
-    ap.add_argument("--no-types", action="store_true",
-                    help="omit the eos_board_t type definitions, for when a component owns them")
-    ap.add_argument("--hal", action="store_true",
-                    help="fill the runtime eos_board_t from kernel/hal/include/eos_board.h "
-                         "instead of this tool's own struct (implies --no-types)")
     args = ap.parse_args(argv)
 
     here = os.path.dirname(os.path.abspath(__file__))
     boards_dir = args.boards_dir or os.path.join(os.path.dirname(here), "boards")
     out_dir = args.out_dir or os.path.join(boards_dir, "generated")
-    with_types = not (args.no_types or args.hal)
 
     try:
         if args.all:
@@ -1589,8 +1417,7 @@ def main(argv=None):
             for f in profiles:
                 src = os.path.join(boards_dir, f)
                 dst = os.path.join(out_dir, os.path.splitext(f)[0] + ".h")
-                if process(src, dst, with_types, write=not args.check,
-                           hal=args.hal) is None:
+                if process(src, dst, write=not args.check) is None:
                     bad += 1
             if bad:
                 print("%d of %d profiles failed; nothing further was written."
@@ -1614,9 +1441,7 @@ def main(argv=None):
                     print(str(e), file=sys.stderr)
                     unreadable += 1
                     continue
-                errors = Validator(data, src).check()
-                if not errors and args.hal:
-                    errors = hal_check(data)
+                errors = Validator(data, src).check() or hal_check(data)
                 if errors:
                     report(src, errors)
                     invalid += 1
@@ -1629,7 +1454,7 @@ def main(argv=None):
         if len(args.paths) != 2:
             ap.error("expected PROFILE.json OUTPUT.h (got %d argument(s)); "
                      "or use --all, or --check" % len(args.paths))
-        if process(args.paths[0], args.paths[1], with_types, hal=args.hal) is None:
+        if process(args.paths[0], args.paths[1]) is None:
             print("nothing was written.", file=sys.stderr)
             return 2
         return 0
