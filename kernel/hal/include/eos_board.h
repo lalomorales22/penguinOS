@@ -10,6 +10,16 @@
 // tools need. Everything here is readable at runtime by settings screens and
 // by the display backend deciding how much framebuffer it can afford.
 //
+// This file is the ONLY definition of eos_board_t and of the tier, SoC, panel,
+// bus, touch, LED and audio enums. A generated board header includes this one
+// and emits data — the EOS_* macros and one initialiser — and no types at all.
+// It used to declare a second, near-identical eos_board_t of its own so that it
+// would compile standalone, which meant the boot glue could include the HAL API
+// or the board data but never both: C puts all enumerators in one namespace, so
+// EOS_BUS_*, EOS_COMP_* and EOS_LED_* collided outright. If a field is missing
+// for something the registry expresses, it gets added here. Nothing gets a
+// second declaration anywhere else.
+//
 // The one thing to understand: almost none of this is discoverable. The
 // runtime can tell you the SoC, the flash size, whether PSRAM answered, and
 // the MAC. That is the entire list. The panel controller cannot be probed —
@@ -250,7 +260,10 @@ typedef struct {
     eos_pin_t pin;
     bool      active_low;
     bool      pull_up;        // internal pull the driver must enable
-    uint8_t   key;            // the EOS_KEY_* usage this button reports
+    // The EOS_KEY_* usage this button reports. The registry carries no keymap,
+    // so the generator emits 0 here and the board component fills it in; it is
+    // the one field in the whole descriptor that does not come from the JSON.
+    uint8_t   key;
 } eos_button_t;
 
 typedef struct {
@@ -272,7 +285,9 @@ typedef struct {
     uint8_t     sd_bus;          // eos_bus_t: SPI or SDMMC
     uint8_t     sd_spi_host;     // 1 = SPI2/HSPI, 2 = SPI3/VSPI
     eos_pin_t   sd_sck, sd_mosi, sd_miso, sd_cs;
-    uint8_t     sd_slot;         // SDMMC slot index when sd_bus is EOS_BUS_SDMMC
+    // SDMMC slot index when sd_bus is EOS_BUS_SDMMC. No board in the registry
+    // uses SDMMC and the JSON has no field for it, so the generator emits 0.
+    uint8_t     sd_slot;
     uint32_t    sd_hz;           // 20 MHz is the safe ceiling on these cheap slots
     bool        sd_shares_bus;   // true means take the panel's bus lock around every access
     const char *sd_point;        // mount point, conventionally "/sd"
@@ -327,8 +342,12 @@ typedef struct {
     uint32_t    monitor_baud;
 } eos_board_t;
 
-// The generated board header defines exactly one const eos_board_t in flash;
-// the board component returns a pointer to it. Never NULL in a linked image.
+// Each generated board header defines one const eos_board_t in flash, named
+// eos_board_<id_with_underscores>, and points the macro EOS_BOARD at it. The
+// board component returns &EOS_BOARD. The name carries the board id so that a
+// test can hold all six registry entries in one translation unit; a firmware
+// image includes exactly one header and never sees the difference.
+// Never NULL in a linked image.
 const eos_board_t *eos_board_get(void);
 
 // ------------------------------------------------------- derived geometry
@@ -358,6 +377,13 @@ static inline eos_rect_t eos_board_screen(const eos_board_t *b)
 static inline bool eos_board_has_lvgl(const eos_board_t *b) { return b->render.lvgl; }
 static inline bool eos_board_has_touch(const eos_board_t *b) { return b->input.touch != EOS_TOUCH_NONE; }
 static inline bool eos_board_is_mono(const eos_board_t *b) { return b->panel.color_depth == 1; }
+
+// The registry's display.supports_16bit_pixels, which is not a second fact: the
+// generator refuses a profile where it disagrees with color_depth. It is here
+// because it is the question a driver actually asks — the ILI9488 over SPI has
+// no 16-bit pixel mode at all, so RGB565 has to be expanded to three bytes on
+// the way out, and that is the whole reason wire_bytes exists.
+static inline bool eos_board_panel_16bit(const eos_board_t *b) { return b->panel.color_depth == 16; }
 
 // Bytes a full-screen compositor framebuffer would cost. This is the
 // arithmetic behind render.full_framebuffer, kept here so the number can be

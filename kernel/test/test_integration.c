@@ -13,15 +13,20 @@
 // not compile, two components have collided. If it compiles and fails, two
 // components disagree.
 //
-// The one non-obvious constraint: this test may only use what is checked in.
-// The board registry's C headers are generated build output and are deliberately
-// not in the tree, so the registry-to-eos_board_t half of the contract is not
-// covered here. That half is a separate command, recorded in STATUS.md.
+// The one non-obvious constraint: the board registry's C headers are generated
+// build output and are not in the tree, so this file reaches them through
+// __has_include and fails loudly when they are absent rather than skipping.
+// Not covering that seam is what let a second eos_board_t live in the generated
+// headers for as long as it did: every component compiled, every suite passed,
+// and the one translation unit that needed both the HAL API and the board data
+// — the boot glue — was the only thing that could not be written.
 //
-// Build:
-//   cc -std=c99 -Wall -Wextra -O1 \
+// Build (regenerate the board headers first):
+//   python3 tools/gen_board_header.py --all
+//   cc -std=c99 -Wall -Wextra -pedantic -O1 \
 //      -Ikernel/wm/include -Ikernel/hal/include -Ikernel/theme/include \
 //      -Ikernel/avatar/include -Ikernel/shell/include -Ikernel/svc/include \
+//      -Iboards/generated \
 //      kernel/test/test_integration.c kernel/wm/eos_wm.c kernel/theme/eos_theme.c \
 //      kernel/shell/eos_bar.c -o t && ./t
 
@@ -44,6 +49,26 @@
 #include "eos_wm.h"
 #include "eos_wm.h"      /* twice, on purpose */
 #include "eos_display.h" /* twice, on purpose */
+
+// The registry, all six of it, in the same translation unit as the HAL that
+// declares the type they fill. This is the include that used to be impossible.
+// The bring-up board comes first, so it is the one that owns the plain EOS_*
+// macros and the one the macro cross-check below reads.
+#if defined(__has_include)
+#  if __has_include("waveshare-c6-lcd-13.h")
+#    define EOS_HAVE_BOARDS 1
+#  endif
+#endif
+
+#ifdef EOS_HAVE_BOARDS
+#include "waveshare-c6-lcd-13.h"
+#include "cyd-2432s024n.h"
+#include "waveshare-c5-lcd-147.h"
+#include "wavvy-ili9488-35.h"
+#include "wavvy-ili9488-40.h"
+#include "wavvy-oled-c5.h"
+#include "waveshare-c6-lcd-13.h"   /* twice, on purpose */
+#endif
 
 static int checks = 0, failed = 0;
 
