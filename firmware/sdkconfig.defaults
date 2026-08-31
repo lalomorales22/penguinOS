@@ -88,3 +88,28 @@ CONFIG_BT_NIMBLE_NVS_PERSIST=y
 
 # The GAP name this host advertises to a peripheral during pairing.
 CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME="esp-os"
+
+# ---------------------------------------------------------------- littlefs
+# joltwallet/littlefs backs eos_storage's "/int" mount on the 960 KB partition
+# above. These three are pinned rather than left to the component's own
+# defaults because they are the whole of the filesystem's heap footprint, and
+# kernel/hal/backend/storage/README.md publishes that footprint as a number.
+# They happen to equal 1.22.3's defaults today; pinning them means a component
+# update cannot move the number without moving this file.
+#
+# 512 B cache, twice at mount (read + program) and once more inside every open
+# file, so four open files is 2 KB of it. Halving it to 256 halves that and
+# doubles the number of page programs a large write costs - and a page program
+# is a stall of the whole chip, not of one task. 512 is the trade this board
+# wants: it has the RAM and it cannot spare the stalls.
+CONFIG_LITTLEFS_CACHE_SIZE=512
+
+# 128 B of lookahead is 1024 blocks tracked per scan. The partition has 240.
+CONFIG_LITTLEFS_LOOKAHEAD_SIZE=128
+
+# web/README.md's /api/fs/list carries an mtime per entry and eos_stat_t has a
+# field for it. Without this LittleFS keeps none and every file reads back 0.
+# Note that the clock is 1970 until SNTP runs, so a file written early in a
+# boot is stamped 1970 permanently - that is the clock's problem, not the
+# filesystem's.
+CONFIG_LITTLEFS_USE_MTIME=y

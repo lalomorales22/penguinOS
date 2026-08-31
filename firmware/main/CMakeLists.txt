@@ -15,10 +15,13 @@ idf_component_register(
     SRCS
         "main.c"
         "eos_boot_theme.c"
+        "eos_brain_bridge.c"
+        "eos_buddy_model.c"
         "eos_shell_draw.c"
         "eos_shell_input.c"
         "eos_setup_screen.c"
         "eos_web_embed.c"
+        "eos_settings_bind.c"
     REQUIRES
         eos_kernel
         esp_timer
@@ -32,6 +35,6 @@ idf_component_register(
         "${CMAKE_CURRENT_LIST_DIR}/../../web/voxel-editor.js"
 )
 
-# Same promise the kernel makes. These five files are kernel code that happens
-# to live next to app_main, and they compile clean for riscv32 and xtensa.
+# Same promise the kernel makes. These files are kernel code that happens to
+# live next to app_main, and they compile clean for riscv32 and xtensa.
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)

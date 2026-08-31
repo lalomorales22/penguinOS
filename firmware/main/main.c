@@ -23,6 +23,10 @@
 //   theme before eos_wm    gap, bar_h and tab_h are the theme's, min_tile_w and
 //                          min_tile_h are the board's, and eos_wm_cfg_t wants
 //                          all five at once.
+//   theme before buddy     the avatar's shade table maps model colours onto
+//                          DISPLAY palette indices, so it can only be built
+//                          once the theme's palette is the one loaded. That is
+//                          also why a live theme switch rebuilds it.
 //   BLE before WiFi        the NimBLE controller wants a large contiguous block
 //                          and the WiFi stack fragments the heap. On the tighter
 //                          boards this order is the difference between booting
@@ -46,6 +50,8 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -65,11 +71,18 @@
 #include "eos_ble.h"
 #include "eos_net.h"
 #include "eos_httpd.h"
+#include "eos_apps.h"
+
+#include "eos_buddy.h"
+#include "eos_buddy_model.h"
 
 #include "eos_boot_theme.h"
+#include "eos_brain_bridge.h"
 #include "eos_shell_draw.h"
 #include "eos_shell_input.h"
 #include "eos_setup_screen.h"
+#include "eos_settings.h"
+#include "eos_settings_bind.h"
 #include "eos_web_embed.h"
 
 static const char *TAG = "eos";
@@ -84,6 +97,13 @@ static const char *TAG = "eos";
 // tile ticks in seconds, so a quarter of that is enough to never miss one and
 // still leave the CPU idle for 96% of the time.
 #define IDLE_TICK_MS 250
+
+// And how long it sleeps while the avatar's tile is visible. The buddy bobs,
+// blinks and turns; 4 fps reads as a stutter and 10 fps does not. It buys that
+// with about 20 KB of SPI per frame — the tile's own rect, not a full-width
+// band — and nothing else on this board animates, so the rate goes back to
+// IDLE_TICK_MS the moment the buddy is behind a tab.
+#define BUDDY_TICK_MS 100
 
 // The shell state lives for the life of the image and is not small
 // (eos_wm_t alone is about 900 bytes), so it is static rather than stacked on
@@ -101,6 +121,40 @@ static eos_bar_status_t  bar;
 static eos_net_t   net;
 static eos_httpd_t httpd;
 static bool        httpd_up;
+
+// The persisted settings. About 440 bytes of values plus its ports; it holds no
+// buffer of its own, so the document it is written from is eos_settings.c's
+// single BSS scratch and not this file's.
+static eos_settings_store_t settings;
+
+// The avatar. It drives two things: the bar's mood glyph, which is
+// eos_buddy_state_t by another name, and the EOS_APP_BUDDY window, which is
+// what the whole project is named for.
+//
+// The model is whichever of two exists. A buddy.vox on /int wins; with none
+// there — which is every board that has not been given one — the compiled-in
+// shape in eos_buddy_model.c is adopted instead, so the tile is never empty
+// and the Buddy tab's "there is no model yet, build one" is an offer rather
+// than an apology.
+static eos_buddy_t buddy;
+static char        brain_model[EOS_BRAIN_MODEL_MAX];
+
+// The files, console, buddy and apps endpoints. eos_apps_t does not exist:
+// that component owns one upload handle, one log ring and one buddy image-wide,
+// because eos_httpd serialises dispatch and a second of any of them could not
+// be in flight anyway. What is here is only what the boot glue has to hold.
+//
+// buddy_gen is how a model uploaded through /api/fs/write reaches the avatar
+// without a reboot. The reload happens on an HTTP worker; the state machine is
+// ticked on this task. Re-adopting the model HERE, when the generation moves,
+// is what stops a swap landing inside a half-drawn frame.
+static uint32_t buddy_gen;
+
+// The console's `reboot`. Armed from an HTTP worker, performed from the loop:
+// esp_restart() inside a handler drops the 202 the person is waiting on, and
+// they are left unable to tell a reboot from a crash.
+static volatile bool     reboot_armed;
+static volatile uint32_t reboot_at_ms;
 
 static char board_soc[24];
 static char board_mem[24];
@@ -218,25 +272,65 @@ static void board_lines(const eos_board_t *b, eos_shell_view_t *v,
     v->board_line[3] = board_bus;
 }
 
-// Four windows on workspace 1 and one on workspace 2. The count and the order
+// Five windows on workspace 1 and one on workspace 2. The count and the order
 // are chosen to produce the layout this board is meant to demonstrate: the
 // third split cannot give both children min_tile_w (80 px in a 117 px tile),
 // so it COLLAPSES INTO A TAB GROUP, which is the one rule that makes tiling
 // usable on a 2.4 inch panel and the one thing a screenshot has to show.
+//
+// The buddy is opened LAST, and that is deliberate on both counts. Last means
+// it lands in that tab group as the visible tab, so the avatar is on the glass
+// from the first frame without anybody pressing anything; and it means the
+// four windows that were verified on hardware keep the rects they had, because
+// a fifth window here only lengthens the tab strip.
+//
+// win_of[] is what sys.autostart focuses. It is filled here rather than
+// re-derived from a layout later, because eos_wm_focus_win() takes the window
+// handle eos_wm_open() returned and there is no other way back to it.
+static int win_of[EOS_APP_COUNT];
+
 static void open_windows(const eos_board_t *b)
 {
     eos_rect_t screen = eos_board_screen(b);
+    int i;
 
-    eos_wm_open(&wm, EOS_APP_CLOCK, screen);   // full width
-    eos_wm_open(&wm, EOS_APP_BOARD, screen);   // splits it side by side
-    eos_wm_open(&wm, EOS_APP_HEAP,  screen);   // stacks under "board"
-    eos_wm_open(&wm, EOS_APP_KEYS,  screen);   // too narrow to split: tabs
+    for (i = 0; i < EOS_APP_COUNT; i++) win_of[i] = -1;
+
+    win_of[EOS_APP_CLOCK] = eos_wm_open(&wm, EOS_APP_CLOCK, screen); // full width
+    win_of[EOS_APP_BOARD] = eos_wm_open(&wm, EOS_APP_BOARD, screen); // splits it side by side
+    win_of[EOS_APP_HEAP]  = eos_wm_open(&wm, EOS_APP_HEAP,  screen); // stacks under "board"
+    win_of[EOS_APP_KEYS]  = eos_wm_open(&wm, EOS_APP_KEYS,  screen); // too narrow to split: tabs
+    win_of[EOS_APP_BUDDY] = eos_wm_open(&wm, EOS_APP_BUDDY, screen); // and the face of it
 
     // Workspace 2 gets one window so the bar's pips have something to show
     // besides the workspace you are standing on.
     eos_wm_goto_workspace(&wm, 1);
     eos_wm_open(&wm, EOS_APP_CLOCK, screen);
     eos_wm_goto_workspace(&wm, 0);
+}
+
+// sys.autostart. web/README.md calls it "an id from /api/apps, or empty", and
+// on a board whose windows are all open from boot the honest meaning of that
+// is which one you are looking at when the desktop appears — not launching a
+// process, because nothing here has one to launch.
+//
+// An id that names no window is left alone rather than reported: the setting is
+// marked (reboot) in the contract, so the page has already been told the value
+// took, and a boot that refused it would leave the store and the board
+// disagreeing with nothing on screen to say so. It goes in the log instead.
+static void apply_autostart(const char *id)
+{
+    const char *const *names = eos_shell_app_names();
+    int i;
+
+    if (!id || !id[0]) return;
+    for (i = 0; i < EOS_APP_COUNT; i++) {
+        if (strcmp(id, names[i]) != 0 || win_of[i] < 0) continue;
+        eos_wm_focus_win(&wm, win_of[i]);
+        ESP_LOGI(TAG, "start  autostart focuses \"%s\" (window %d)", id, win_of[i]);
+        return;
+    }
+    ESP_LOGW(TAG, "start  sys.autostart \"%s\" names no window on this board", id);
 }
 
 // Everything in the bar that changes while the board sits there. The clock is
@@ -254,7 +348,182 @@ static void refresh_status(uint32_t now_ms)
     bar.clock_valid = true;
     bar.wifi       = (uint8_t)eos_net_bar_wifi(&net);
 
+    // The two segments that were hardcoded false and IDLE until megabrain was
+    // wired up. brain_model is a copy rather than a borrow: the bar holds the
+    // pointer for the length of a build and the brain task can rewrite its
+    // live config between two frames.
+    bar.brain_up    = eos_brain_bridge_reachable();
+    bar.brain_model = brain_model[0] ? brain_model : NULL;
+    bar.mood        = (eos_bar_mood_t)eos_buddy_state(&buddy);
+
     eos_shell_status_sync(&wm, &bar, eos_shell_app_names(), EOS_APP_COUNT);
+}
+
+// -------------------------------------------------------------- the buddy
+
+// Picks the model the avatar wears and rebuilds everything downstream of it.
+//
+// Called at boot, on every /api/buddy/reload, and after a live theme switch.
+// The theme is in that list because the shade table maps model colours onto
+// DISPLAY palette indices, and a theme switch reprograms the display palette
+// under it: without this the buddy would keep wearing the old theme's nearest
+// colours until something uploaded a new model.
+//
+// The state machine survives: eos_buddy_init() resets it, so the state is read
+// out first and put back. A model swap is a change of clothes, not amnesia —
+// re-adopting mid-reply must not drop the buddy out of THINKING and leave the
+// glass claiming the mini went quiet.
+static void buddy_adopt(void)
+{
+    eos_vox_model_t     *m   = eos_apps_buddy_model();
+    const eos_vox_pal_t *pal = eos_apps_buddy_palette();
+    const eos_buddy_cfg_t *from = eos_apps_buddy_cfg();
+    eos_buddy_state_t was = eos_buddy_state(&buddy);
+    eos_buddy_cfg_t cfg;
+
+    if (m && m->count) {
+        // buddy.json's fields, whichever of them it carried.
+        if (from) cfg = *from;
+        else      eos_buddy_default_cfg(&cfg);
+    } else {
+        m   = eos_buddy_model_default();
+        pal = eos_buddy_model_default_palette();
+        eos_buddy_model_default_cfg(&cfg);
+    }
+    if (!pal) pal = m->pal;
+
+    eos_shell_buddy_shade(pal, &cfg);
+    eos_buddy_init(&buddy, m, &cfg);
+    eos_buddy_set_state(&buddy, was);
+}
+
+// ------------------------------------------------------------ megabrain
+
+// The avatar, driven from the request lifecycle, and the two facts the bar
+// reads. It runs on EVERY pass of the loop and not only on the desktop: the
+// buddy's TALKING state lapses on a 900 ms timer and THINKING has no timer at
+// all, so a machine ticked only while its glyph happens to be visible would be
+// right by accident. Returns true when the mood changed, which is a redraw the
+// one-second bar refresh would otherwise be up to a second late for.
+static uint32_t brain_last_tick;
+
+static bool brain_tick(uint32_t now)
+{
+    uint8_t before = (uint8_t)eos_buddy_state(&buddy);
+    int ev;
+
+    // Drained in a loop, not one per frame. A fast model produces hundreds of
+    // chunks between two frames; the queue coalesces those but keeps every
+    // state change, and a caller that read one at a time would fall a whole
+    // reply behind.
+    while ((ev = eos_brain_bridge_next_event()) >= 0)
+        eos_buddy_event(&buddy, (eos_buddy_event_t)ev);
+
+    if (brain_last_tick && now > brain_last_tick)
+        eos_buddy_tick(&buddy, now - brain_last_tick);
+    brain_last_tick = now;
+
+    // No health probe until there is a network to probe over. In SETUP every
+    // candidate would time out in turn and the only thing that would buy is
+    // eleven seconds of a task walking a list nothing is on.
+    eos_brain_bridge_set_online(eos_net_mode(&net) == EOS_NET_STA);
+    eos_brain_bridge_model(brain_model, sizeof brain_model);
+
+    return (uint8_t)eos_buddy_state(&buddy) != before;
+}
+
+// -------------------------------------------------------------- eos_apps
+
+// The console's seven read-only commands, answered from the things only this
+// file can reach. One function rather than seven ports: the whole point of a
+// closed table is that adding a topic is adding a line here, in the file that
+// already knows what a heap and a radio are.
+//
+// A topic this board cannot answer returns negative and the console says so.
+// That is not an error: an image built without megabrain still runs `brain`.
+static int apps_describe(void *ctx, const char *topic, char *out, int cap)
+{
+    const eos_board_t *b = eos_board_get();
+
+    (void)ctx;
+    if (strcmp(topic, "board") == 0)
+        return snprintf(out, (size_t)cap, "board %s, %s, %" PRIu32 "MB flash, tier %s",
+                        b->id, eos_soc_name(b->soc),
+                        b->flash_bytes / (1024u * 1024u), eos_tier_name(b->tier));
+
+    if (strcmp(topic, "heap") == 0)
+        return snprintf(out, (size_t)cap, "heap %" PRIu32 " free, %" PRIu32 " largest block",
+                        heap_free(), heap_largest());
+
+    if (strcmp(topic, "wifi") == 0) {
+        char ip[16];
+        if (eos_net_mode(&net) != EOS_NET_STA)
+            return snprintf(out, (size_t)cap, "wifi %s, ap \"%s\"",
+                            eos_net_mode_name(eos_net_mode(&net)), eos_net_ap_ssid(&net));
+        eos_net_ip_str(eos_net_ip(&net), ip, sizeof ip);
+        return snprintf(out, (size_t)cap, "wifi \"%s\" %ddBm, %s, %s.local",
+                        eos_net_ssid(&net), (int)eos_net_rssi(&net), ip,
+                        eos_net_hostname(&net));
+    }
+
+    if (strcmp(topic, "theme") == 0)
+        return snprintf(out, (size_t)cap, "theme \"%s\", font %s, bright %u",
+                        theme.name, eos_theme_font(&theme),
+                        (unsigned)settings.v.ui_bright);
+
+    if (strcmp(topic, "brain") == 0)
+        return snprintf(out, (size_t)cap, "brain %s, model %s",
+                        eos_brain_bridge_reachable() ? "reachable" : "not reachable",
+                        brain_model[0] ? brain_model : "none");
+
+    return -1;
+}
+
+static void apps_reboot(void *ctx, uint32_t in_ms)
+{
+    (void)ctx;
+    reboot_at_ms = (uint32_t)(esp_timer_get_time() / 1000) + in_ms;
+    reboot_armed = true;
+}
+
+// What /api/apps reports, and it is the four windows open_windows() actually
+// opens. The ids are eos_shell_app_names() rather than a second list, because
+// sys.autostart carries one of them back and two spellings of the same id is
+// how an autostart picker offers a window that cannot be opened.
+//
+// The summaries are here and not in eos_shell_draw.c because a tab label has
+// nineteen cells on this panel and these are sentences; they exist for the web
+// page and would never fit the glass.
+static const char *const APP_SUMMARY[EOS_APP_COUNT] = {
+    "uptime, in the large face",
+    "what this board is, or its address once it has joined",
+    "free heap and largest block, live",
+    "the compiled-in keymap",
+    "the voxel avatar, and the mood megabrain has put it in",
+};
+
+static eos_apps_app_t app_catalog[EOS_APP_COUNT];
+
+static void build_app_catalog(const eos_board_t *b)
+{
+    const char *const *names = eos_shell_app_names();
+    int i;
+
+    for (i = 0; i < EOS_APP_COUNT; i++) {
+        app_catalog[i].id       = names[i];
+        app_catalog[i].name     = names[i];
+        app_catalog[i].summary  = APP_SUMMARY[i];
+        // Every window on this board draws with eos_display and eos_font and
+        // nothing else, so all five run at tier 0 — the buddy included: its
+        // renderer is a software rasteriser writing 8-bit indices into a
+        // buffer this file owns, and it asks the panel for nothing a text
+        // window does not. The field is here because the picker shows it and
+        // because the first window that needs a compositor will be the one
+        // that has to say so.
+        app_catalog[i].tier_min = 0;
+    }
+    (void)b;
+    eos_apps_set_apps(app_catalog, EOS_APP_COUNT);
 }
 
 // ------------------------------------------------------- pairing passkey
@@ -350,7 +619,26 @@ void app_main(void)
     uint32_t heap_boot, last_sec = 0;
     screen_t screen = SCREEN_SETUP, last_screen = SCREEN_PASSKEY;
     uint32_t last_passkey = 0;
-    bool dirty, net_ok;
+    bool dirty, net_ok, mood_moved;
+    // Whether the avatar's tile was on screen last pass: it sets both the
+    // redraw rate and whether the tile is damaged at all, and it is false the
+    // moment the buddy goes behind a tab or on to another workspace.
+    bool buddy_shown = false;
+
+    // 0. The console ring, before anything logs. It is BSS and touches no
+    //    hardware, and installing the log hook here is the difference between
+    //    the Console tab showing this whole boot and showing only whatever was
+    //    typed into it afterwards. It also registers the files, console, buddy
+    //    and apps routes with eos_httpd, which is why it is before the server
+    //    rather than next to it.
+    {
+        eos_apps_ports_t aports;
+        memset(&aports, 0, sizeof aports);
+        aports.describe = apps_describe;
+        aports.reboot   = apps_reboot;
+        eos_apps_init(&aports, NULL);
+        eos_apps_log_install();
+    }
 
     log_identity(b);
 
@@ -396,11 +684,49 @@ void app_main(void)
                      (unsigned long long)used, (unsigned long long)total);
         }
     }
+    // The avatar, off the filesystem. Absent on every board that exists, which
+    // is why a 404 here is a log line and not a warning: the editor's whole
+    // first-run flow is "there is no buddy.vox on the card yet, build one".
+    {
+        eos_err_t be = eos_apps_buddy_reload();
+        if (be == EOS_OK)
+            ESP_LOGI(TAG, "buddy  \"%s\" %u voxels, %s",
+                     eos_apps_buddy_name()[0] ? eos_apps_buddy_name() : "unnamed",
+                     (unsigned)eos_apps_buddy_model()->count,
+                     eos_apps_idle_name(eos_apps_buddy_behaviour()));
+        else if (be == EOS_ERR_NOTFOUND)
+            ESP_LOGI(TAG, "buddy  none on %s yet - the Buddy tab builds one",
+                     EOS_APPS_BUDDY_DIR);
+        else
+            ESP_LOGW(TAG, "buddy  %s: %s", eos_strerr(be),
+                     eos_apps_buddy_error() ? eos_apps_buddy_error() : "");
+    }
     heap_step("storage");
+
+    // 2b. The settings. Between storage and theme because it names the theme,
+    //     and before the network because it names the mDNS host. A file that is
+    //     truncated, garbled, empty or missing leaves the store holding
+    //     defaults and the board booting - the same guarantee kernel/theme
+    //     makes, for the same reason: the board whose config file is bad is the
+    //     board that needs a serial cable.
+    eos_settings_bind_ports(&settings, b, &theme);
+    {
+        eos_settings_err_t se = eos_settings_load(&settings);
+        ESP_LOGI(TAG, "config %s (%s), theme \"%s\", bright %u, tz \"%s\"",
+                 EOS_SETTINGS_PATH, eos_settings_strerror(se),
+                 settings.v.ui_theme, (unsigned)settings.v.ui_bright,
+                 settings.v.sys_tz[0] ? settings.v.sys_tz : "UTC");
+        if (settings.bad_fields)
+            ESP_LOGW(TAG, "config %u keys were unusable and kept their defaults",
+                     (unsigned)__builtin_popcount(settings.bad_fields));
+    }
+    if (settings.v.sys_tz[0]) { setenv("TZ", settings.v.sys_tz, 1); tzset(); }
+    eos_display_backlight((uint8_t)(((unsigned)settings.v.ui_bright * 100u + 127u) / 255u));
 
     // 3. The theme, and the palette it implies. A missing or corrupt file is a
     //    log line, never a stop - eos_theme.h guarantees the caller is left
     //    holding a usable theme whatever happened.
+    eos_boot_theme_prefer(settings.v.ui_theme);
     src = eos_boot_theme_load(b, &theme);
     eos_boot_theme_upload(&theme);
     ESP_LOGI(TAG, "theme  \"%s\" from %s (gap %d, border %d, bar %d, tab %d, font %s)",
@@ -455,6 +781,10 @@ void app_main(void)
     //    is this board's.
     eos_net_idf_defaults(&ncfg);
     ncfg.on_event = on_net_event;
+    // net.host. Empty leaves eos_net's own rule in place, which derives the
+    // label from the MAC so six boards do not all claim esp-os.local.
+    if (settings.v.net_host[0])
+        snprintf(ncfg.hostname, sizeof ncfg.hostname, "%s", settings.v.net_host);
     nerr = eos_net_init(&net, &ncfg);
     net_ok = (nerr == EOS_NET_OK);
     if (!net_ok)
@@ -494,6 +824,50 @@ void app_main(void)
     // service that was never initialised.
     eos_httpd_idf_bind(&httpd, net_ok ? &net : NULL);
     eos_web_embed_bind(&httpd);   // the app lives in flash, not on a card
+    // And then eos_apps in front of it, which is what turns the comment above
+    // into the rule web/README.md states: a real file on /int is preferred, the
+    // embedded copy answers when there is not one, and the board is never left
+    // with nothing to serve. It is also what /api/fs/read streams through -
+    // with the fallback switched off, so a GET for a file that is not there is
+    // a 404 and not the contents of a same-named asset in the image.
+    eos_apps_bind_files(&httpd);
+    build_app_catalog(b);
+
+    // 8a. The settings, system and theme ports. After both binds above for the
+    //     same reason megabrain's are: eos_httpd_idf_bind() assigns the whole
+    //     port table by value and would wipe anything set before it.
+    eos_settings_bind(&httpd, &settings, b, &theme, net_ok ? &net : NULL);
+
+    // 8b. Megabrain. It goes in after both binds above because
+    //     eos_httpd_idf_bind() assigns the whole port table by value and would
+    //     wipe these four; it goes in before the server starts so that the
+    //     first request cannot arrive at a half-wired table.
+    //
+    //     The five brain.* keys are "live" in web/README.md, and this is the
+    //     first half of what makes that true: the store's values are handed
+    //     over HERE at boot, so a configured mini survives a reboot. The other
+    //     half is eos_settings_bind.c's apply hook, which calls the same
+    //     function on every POST /api/settings that touches one of them.
+    //     eos_brain_bridge_from_settings() starts from the compiled-in
+    //     defaults and overwrites only the fields the store actually holds, so
+    //     a settings file that names two of the five cannot blank the rest.
+    {
+        eos_brain_bridge_cfg_t bcfg;
+        eos_brain_bridge_defaults(&bcfg);
+        if (eos_brain_bridge_start() == 0) {
+            eos_brain_bridge_from_settings(&settings.v);
+            eos_brain_bridge_bind(&httpd);
+            eos_brain_bridge_model(brain_model, sizeof brain_model);
+            ESP_LOGI(TAG, "brain  client up, host %s:%u, model %s",
+                     settings.v.brain_host[0] ? settings.v.brain_host : bcfg.host,
+                     (unsigned)(settings.v.brain_port ? settings.v.brain_port : bcfg.port),
+                     brain_model[0] ? brain_model : bcfg.model);
+        } else {
+            ESP_LOGE(TAG, "brain  client refused to start - the bar stays \"no brain\"");
+        }
+    }
+    heap_step("brain");
+
     if (eos_httpd_start(&httpd) == 0) {
         httpd_up = true;
         ESP_LOGI(TAG, "httpd  up on port %u in %s mode", (unsigned)hcfg.port,
@@ -503,14 +877,24 @@ void app_main(void)
     }
     heap_step("httpd");
 
-    ESP_LOGI(TAG, "heap   boot cost %" PRId32 " B of the %" PRIu32 " free at app_main; "
-                  "%" PRIu32 " left, largest block %" PRIu32,
-             (int32_t)heap_boot - (int32_t)heap_free(), heap_boot,
-             heap_free(), heap_largest());
-
     // 9. The scene the desktop draws when it is the one on screen.
     eos_bar_status_init(&bar);
-    bar.brain_up = false;
+    // The avatar. buddy_adopt() takes whichever model exists — the one
+    // eos_apps_buddy_reload() found on /int back at step 2, or the compiled-in
+    // one — and builds the shade table against the palette the theme just
+    // uploaded, which is why it is here and not next to the reload.
+    buddy_gen = eos_apps_buddy_generation();
+    buddy_adopt();
+    // The buddy window claims no heap at all — the box, the shade table and the
+    // compiled-in model are BSS, taken before app_main ran. heap_step("buddy")
+    // below will therefore report ~0, which is the point; this line is the one
+    // that says where the static kilobytes went.
+    ESP_LOGI(TAG, "buddy  %s model, %u voxels, %ux%u px box, %" PRIu32 " B of BSS",
+             eos_apps_buddy_model() ? "flash" : "compiled-in",
+             (unsigned)(buddy.model ? buddy.model->count : 0u),
+             (unsigned)EOS_SHELL_BUDDY_PX, (unsigned)EOS_SHELL_BUDDY_PX,
+             eos_shell_buddy_bytes());
+    bar.brain_up = eos_brain_bridge_reachable();
     bar.mood     = EOS_MOOD_IDLE;
 
     memset(&view, 0, sizeof view);
@@ -518,7 +902,21 @@ void app_main(void)
     view.wm    = &wm;
     view.bar   = &bar;
     view.keys  = &keys;
+    view.buddy = &buddy;
     board_lines(b, &view, &net);
+
+    // sys.autostart, after the windows exist and before the first frame. It
+    // moves the focus, which changes which tab of the collapsed group is
+    // visible, so doing it later would show one window for a frame and then
+    // another.
+    apply_autostart(settings.v.sys_autostart);
+    heap_step("buddy");
+
+    ESP_LOGI(TAG, "heap   boot cost %" PRId32 " B of the %" PRIu32 " free at app_main; "
+                  "%" PRIu32 " left, largest block %" PRIu32,
+             (int32_t)heap_boot - (int32_t)heap_free(), heap_boot,
+             heap_free(), heap_largest());
+
 
     // 10. And the one SETUP draws. The QR payload is generated once: the AP name
     //     and password do not change while the board is up, and eos_net keeps
@@ -558,6 +956,42 @@ void app_main(void)
         // and not on an HTTP worker.
         if (httpd_up) eos_httpd_pump(&httpd, now);
 
+        // The upload handle nobody came back to, and the console's clock. Here
+        // rather than in a handler because an upload times out precisely while
+        // no request is arriving.
+        eos_apps_tick(now);
+
+        // A model uploaded through /api/fs/write and reloaded on an HTTP worker
+        // is adopted HERE, on the task that ticks the state machine and draws
+        // it, so the swap cannot land inside a frame. That is the whole
+        // synchronisation and it is enough: one writer, one reader, and a
+        // generation counter between them.
+        if (eos_apps_buddy_generation() != buddy_gen) {
+            buddy_gen = eos_apps_buddy_generation();
+            buddy_adopt();
+            ESP_LOGI(TAG, "buddy  reloaded: %s model, %u voxels",
+                     eos_apps_buddy_model() ? "flash" : "compiled-in",
+                     (unsigned)(buddy.model ? buddy.model->count : 0u));
+        }
+        // One writer, on this task, so /api/buddy reports the state the panel
+        // is actually in rather than a second machine that drifts from it.
+        eos_apps_buddy_set_state(eos_buddy_state(&buddy));
+
+        if (reboot_armed && (int32_t)(now - reboot_at_ms) >= 0) {
+            ESP_LOGW(TAG, "reboot from the console");
+            esp_restart();
+        }
+
+        // The debounced settings write and the armed reboot. Both are here and
+        // not on an HTTP worker: a LittleFS sync is a sector erase with the
+        // instruction cache off, and a restart inside a handler drops the
+        // response the person is waiting on.
+        eos_settings_bind_pump(now);
+
+        // The avatar and the two bar segments megabrain owns. Not inside the
+        // desktop branch: see brain_tick().
+        mood_moved = brain_tick(now);
+
         eos_ble_status(&bst);
         if (bst.passkey_shown)                       screen = SCREEN_PASSKEY;
         else if (eos_net_mode(&net) == EOS_NET_SETUP) screen = SCREEN_SETUP;
@@ -591,8 +1025,17 @@ void app_main(void)
             setup.status = status;
             if (dirty) {
                 eos_setup_screen_draw(&setup);
-                ESP_LOGI(TAG, "setup  ap \"%s\" pass \"%s\" at %s, qr %s: %s",
-                         setup.ap_ssid, setup.ap_psk, url,
+                // The passphrase is on the GLASS and in the QR code and it is
+                // deliberately not here. eos_apps_log_install() puts every log
+                // line into the console ring, and GET /api/console/log serves
+                // that ring to anybody who can reach the board - which in SETUP
+                // is anyone on this access point and in RUN is anyone on the
+                // house network. There is no login on a device provisioned by
+                // pointing a camera at a QR code, so the ring is public, and a
+                // credential that reaches it is a credential that stays
+                // readable for the rest of the boot.
+                ESP_LOGI(TAG, "setup  ap \"%s\" at %s, qr %s: %s",
+                         setup.ap_ssid, url,
                          eos_setup_screen_had_qr() ? "on screen" : "TEXT ONLY",
                          status);
             }
@@ -600,6 +1043,9 @@ void app_main(void)
 
         case SCREEN_DESKTOP:
         default:
+            // Asked once, used twice: it decides whether the avatar's tile is
+            // damaged at all and how long the loop sleeps afterwards.
+            buddy_shown = eos_shell_app_visible(&view, EOS_APP_BUDDY);
             refresh_status(now);
             view.uptime_ms    = now;
             board_lines(b, &view, &net);
@@ -611,15 +1057,40 @@ void app_main(void)
                 // whole screen is declared rather than guessed at rect by rect.
                 eos_shell_damage_all();
                 dirty = true;
+            } else if (eos_settings_bind_take_redraw()) {
+                // A live theme switch reprogrammed the CLUT. Every pixel on the
+                // glass is a palette index into it, so the whole screen changed
+                // colour and none of it declared damage.
+                //
+                // The buddy is the one thing on screen that does NOT follow
+                // for free: its shade table was resolved against the old
+                // palette and holds indices, not colours, so it has to be
+                // rebuilt or the avatar keeps wearing the previous theme.
+                buddy_adopt();
+                eos_shell_damage_all();
+                dirty = true;
             } else if (dirty) {
                 eos_shell_damage_all();     // arriving from another screen
-            } else if (sec != last_sec || net_dirty) {
-                // The three things that move on their own: the bar, the clock
-                // window, and the WiFi glyph. Declaring them separately is what
-                // keeps an idle board pushing 27 KB a second instead of 115 KB.
-                eos_shell_damage_bar(&view);
-                eos_shell_damage_app(&view, EOS_APP_CLOCK);
-                dirty = true;
+            } else {
+                // The things that move on their own: the bar, the clock window,
+                // the WiFi glyph, and the avatar. Declaring them separately is
+                // what keeps an idle board pushing 27 KB a second instead of
+                // 115 KB.
+                if (sec != last_sec || net_dirty || mood_moved) {
+                    eos_shell_damage_bar(&view);
+                    eos_shell_damage_app(&view, EOS_APP_CLOCK);
+                    dirty = true;
+                }
+                // The buddy bobs, blinks and eases its yaw, so its tile is
+                // damaged on every pass it is visible rather than once a
+                // second. The band engine sizes its strips from the damage
+                // rect, so this costs the tile's own 114x91 and not a
+                // full-width band: about 20 KB of SPI, which is why the loop
+                // is allowed to run faster while it is up.
+                if (buddy_shown) {
+                    eos_shell_damage_app(&view, EOS_APP_BUDDY);
+                    dirty = true;
+                }
             }
             net_dirty = false;
 
@@ -641,6 +1112,12 @@ void app_main(void)
             while (eos_shell_input_next(&drop)) { }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(IDLE_TICK_MS));
+        // The avatar is the only thing on this board that animates, so it is
+        // the only thing that earns a faster loop. A tile-sized damage rect is
+        // cheap; a whole screen at 10 Hz would not be, and neither would the
+        // setup screen at 10 Hz, so this is gated on the buddy actually being
+        // on the glass.
+        vTaskDelay(pdMS_TO_TICKS((screen == SCREEN_DESKTOP && buddy_shown)
+                                 ? BUDDY_TICK_MS : IDLE_TICK_MS));
     }
 }

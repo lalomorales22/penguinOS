@@ -654,6 +654,36 @@ static const struct {
     { "/api/ble/pair",     "POST", EOS_ROUTE_BLE_PAIR     },
     { "/api/ble/status",   "GET",  EOS_ROUTE_BLE_STATUS   },
     { "/api/ble/forget",   "POST", EOS_ROUTE_BLE_FORGET   },
+    // megabrain
+    { "/api/brain/status", "GET",  EOS_ROUTE_BRAIN_STATUS },
+    { "/api/brain/ask",    "POST", EOS_ROUTE_BRAIN_ASK    },
+    { "/api/brain/cancel", "POST", EOS_ROUTE_BRAIN_CANCEL },
+    // settings, system and themes. /api/settings is the one path in the whole
+    // contract that answers two methods, which is why the scan below keeps
+    // looking after a path match instead of settling for the first row.
+    { "/api/settings",      "GET",  EOS_ROUTE_SETTINGS_GET   },
+    { "/api/settings",      "POST", EOS_ROUTE_SETTINGS_SET   },
+    { "/api/system",        "GET",  EOS_ROUTE_SYSTEM         },
+    { "/api/system/health", "GET",  EOS_ROUTE_SYSTEM_HEALTH  },
+    { "/api/system/reboot", "POST", EOS_ROUTE_SYSTEM_REBOOT  },
+    { "/api/themes",        "GET",  EOS_ROUTE_THEMES         },
+    // files, console, buddy and apps. Answered by kernel/svc/eos_apps.c
+    // through the pointer eos_httpd_set_api() holds; named here because there
+    // is one route table.
+    { "/api/fs/list",         "GET",  EOS_ROUTE_FS_LIST      },
+    { "/api/fs/stat",         "GET",  EOS_ROUTE_FS_STAT      },
+    { "/api/fs/read",         "GET",  EOS_ROUTE_FS_READ      },
+    { "/api/fs/usage",        "GET",  EOS_ROUTE_FS_USAGE     },
+    { "/api/fs/write",        "POST", EOS_ROUTE_FS_WRITE     },
+    { "/api/fs/upload/abort", "POST", EOS_ROUTE_FS_ABORT     },
+    { "/api/fs/mkdir",        "POST", EOS_ROUTE_FS_MKDIR     },
+    { "/api/fs/remove",       "POST", EOS_ROUTE_FS_REMOVE    },
+    { "/api/fs/rename",       "POST", EOS_ROUTE_FS_RENAME    },
+    { "/api/console/log",     "GET",  EOS_ROUTE_CONSOLE_LOG  },
+    { "/api/console/exec",    "POST", EOS_ROUTE_CONSOLE_EXEC },
+    { "/api/buddy",           "GET",  EOS_ROUTE_BUDDY        },
+    { "/api/buddy/reload",    "POST", EOS_ROUTE_BUDDY_RELOAD },
+    { "/api/apps",            "GET",  EOS_ROUTE_APPS         },
 };
 #define N_ROUTES ((int)(sizeof ROUTES / sizeof ROUTES[0]))
 
@@ -725,10 +755,19 @@ eos_route_t eos_httpd_route(const char *method, const char *uri)
 
     api = strncmp(path, "/api/", 5) == 0;
 
-    for (int i = 0; i < N_ROUTES; i++) {
-        if (strcmp(path, ROUTES[i].path) != 0) continue;
-        if (strcmp(method, ROUTES[i].method) == 0) return (eos_route_t)ROUTES[i].route;
-        return EOS_ROUTE_METHOD;
+    // A path may appear more than once — /api/settings takes both a GET and a
+    // POST — so a row whose method does not match is remembered and the scan
+    // continues. Settling for the first row would 405 the GET on a path whose
+    // POST happened to be listed first, which is a bug that only appears once
+    // somebody reorders the table.
+    {
+        bool path_seen = false;
+        for (int i = 0; i < N_ROUTES; i++) {
+            if (strcmp(path, ROUTES[i].path) != 0) continue;
+            if (strcmp(method, ROUTES[i].method) == 0) return (eos_route_t)ROUTES[i].route;
+            path_seen = true;
+        }
+        if (path_seen) return EOS_ROUTE_METHOD;
     }
 
     // A typo under /api/ is a 404, never a file. Falling through to the
@@ -940,6 +979,34 @@ static int fail_err(eos_httpd_t *h, eos_httpd_resp_t *r, int e, const char *deta
 {
     return fail(h, r, err_status(e), err_code(e), detail);
 }
+
+// The same five, exported, so kernel/svc/eos_apps.c stages its errors through
+// this table rather than through a second copy of it. See eos_httpd.h.
+const char *eos_httpd_err_code(int e)   { return err_code(e); }
+int         eos_httpd_err_status(int e) { return err_status(e); }
+
+int eos_httpd_reply_json(eos_httpd_t *h, eos_httpd_resp_t *r, int status,
+                         const eos_json_t *j)
+{
+    return reply_json(h, r, status, j);
+}
+
+int eos_httpd_fail(eos_httpd_t *h, eos_httpd_resp_t *r, int status,
+                   const char *code, const char *detail)
+{
+    return fail(h, r, status, code, detail);
+}
+
+int eos_httpd_fail_err(eos_httpd_t *h, eos_httpd_resp_t *r, int e, const char *detail)
+{
+    return fail_err(h, r, e, detail);
+}
+
+// The second route file, registered rather than called. NULL in an image that
+// links no eos_apps.c, which is what those routes answering 501 means.
+static eos_httpd_api_fn s_api;
+
+void eos_httpd_set_api(eos_httpd_api_fn fn) { s_api = fn; }
 
 // ==========================================================================
 // The radio interlock
@@ -1549,6 +1616,641 @@ static int h_ble_forget(eos_httpd_t *h, eos_httpd_resp_t *r)
 }
 
 // ==========================================================================
+// Megabrain
+// ==========================================================================
+//
+// Three endpoints over the four brain ports. The shape of the answer is
+// web/README.md's "Megabrain" section, and the one decision that is not in it
+// is how a reply that takes seconds reaches a browser.
+//
+// It is a single chunked text/plain response, drained here and flushed as the
+// bytes decode. The alternatives were weighed and both lose:
+//
+//   SSE          costs the same socket for the same duration and adds framing
+//                the client does not want — app.js reads r.body.getReader()
+//                directly, not an EventSource — so it would buy nothing and
+//                cost a second parser at both ends.
+//   polling      is what every other slow thing on this board does, and is
+//                wrong here alone. A poll still needs the ring buffer, because
+//                the tokens arrive between polls whatever the client does; on
+//                top of that it spends a worker AND the dispatch lock two to
+//                five times a second for the whole reply, and delivers the
+//                text in lumps. Strictly more machinery for a worse result.
+//
+// The cost of the choice is one worker held for the length of one reply.
+// eos_brain allows one request in flight and a second ask is refused with 409
+// before it can take a second worker, so three of the four are always free —
+// which is more than the two concurrent requests the web app holds itself to.
+//
+// The three ways that worker is released, all of them bounded: the reply ends;
+// the client vanishes, which fails the next send_chunk and cancels the request
+// rather than leaving the model talking into a ring nobody drains; or nothing
+// arrives for EOS_HTTPD_STREAM_IDLE_MS. There is no path on which a worker
+// waits on the model forever.
+
+// -------------------------------------------------------- GET /api/brain/status
+
+static int h_brain_status(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_httpd_brain_t b;
+    eos_json_t j;
+
+    if (!h->ports.brain_status)
+        return fail_err(h, r, -7, "this board has no megabrain client");
+
+    memset(&b, 0, sizeof b);
+    if (!h->ports.brain_status(h->ctx, &b))
+        return fail_err(h, r, -3, "the megabrain client did not answer");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_str (&j, "host", b.host);
+    eos_json_kv_int (&j, "port", b.port);
+    eos_json_kv_str (&j, "model", b.model);
+
+    eos_json_key(&j, "models");
+    eos_json_arr_open(&j);
+    for (int i = 0; i < b.model_count && b.models; i++)
+        if (b.models[i]) eos_json_str(&j, b.models[i]);
+    eos_json_arr_close(&j);
+
+    eos_json_kv_bool(&j, "reachable", b.reachable);
+    eos_json_kv_bool(&j, "busy", b.busy);
+    if (b.last_error) eos_json_kv_str(&j, "last_error", b.last_error);
+    else              eos_json_kv_null(&j, "last_error");
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// -------------------------------------------------------- POST /api/brain/ask
+
+// The settings range for brain.max, applied here as a clamp rather than a
+// refusal. The web app puts this on a number input the owner types into, and a
+// 400 on a typo in a field that is not the question is a worse answer than the
+// nearest legal value.
+#define ASK_MAX_LO 16
+#define ASK_MAX_HI 2048
+
+static int h_brain_ask(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp_t *r)
+{
+    eos_httpd_ask_t ask;
+    eos_json_find_t f;
+    long v = 0;
+    int n = 0, e;
+
+    if (!h->ports.brain_ask || !h->ports.brain_read)
+        return fail_err(h, r, -7, "this board has no megabrain client");
+    if (req->body_truncated)
+        return fail_err(h, r, -9, "the question is larger than this board accepts");
+    if (!req->body || req->body_len <= 0)
+        return fail_err(h, r, -1, "the request body must be a JSON object with a q");
+
+    h->ask_q[0] = h->ask_model[0] = h->ask_system[0] = '\0';
+
+    f = eos_json_get_str(req->body, req->body_len, "q",
+                         h->ask_q, (int)sizeof h->ask_q, &n);
+    if (f == EOS_JSON_TOOBIG)
+        return fail_err(h, r, -9, "the question is longer than this board can hold");
+    if (f != EOS_JSON_FOUND || n <= 0)
+        return fail_err(h, r, -1, "the request body must carry a non-empty q");
+
+    f = eos_json_get_str(req->body, req->body_len, "model",
+                         h->ask_model, (int)sizeof h->ask_model, &n);
+    if (f == EOS_JSON_TOOBIG)
+        return fail_err(h, r, -9, "that model name does not fit");
+    if (f == EOS_JSON_BAD)
+        return fail_err(h, r, -1, "the request body is not a JSON object");
+
+    f = eos_json_get_str(req->body, req->body_len, "system",
+                         h->ask_system, (int)sizeof h->ask_system, &n);
+    if (f == EOS_JSON_TOOBIG)
+        return fail_err(h, r, -9, "that system prompt does not fit");
+
+    ask.q          = h->ask_q;
+    ask.model      = h->ask_model;
+    ask.system     = h->ask_system;
+    ask.max_tokens = 0;
+    if (eos_json_get_int(req->body, req->body_len, "max", &v) == EOS_JSON_FOUND) {
+        if (v < ASK_MAX_LO) v = ASK_MAX_LO;
+        if (v > ASK_MAX_HI) v = ASK_MAX_HI;
+        ask.max_tokens = (int)v;
+    }
+
+    e = h->ports.brain_ask(h->ctx, &ask);
+    if (e < 0)
+        return fail_err(h, r, e, e == -8
+            ? "megabrain is already answering something; stop that first"
+            : "the question could not be sent");
+
+    // From here the response is 200 and everything else is text. An error the
+    // model raises after this point arrives as a line beginning "! ", because
+    // the status is already on the wire — see web/README.md.
+    r->kind          = EOS_HTTPD_BODY_STREAM;
+    r->status        = 200;
+    r->content_type  = "text/plain; charset=utf-8";
+    r->cache_control = "no-store";
+    r->body          = NULL;
+    r->body_len      = 0;
+    return 200;
+}
+
+// ----------------------------------------------------- POST /api/brain/cancel
+
+static int h_brain_cancel(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    bool had;
+
+    if (!h->ports.brain_cancel)
+        return fail_err(h, r, -7, "this board has no megabrain client");
+
+    // Never an error. Cancelling nothing is the normal outcome of a stop button
+    // pressed a moment after the reply finished, and a 409 there would make the
+    // web app show a failure for something that worked.
+    had = h->ports.brain_cancel(h->ctx);
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "cancelled", had);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// ==========================================================================
+// Settings, system and themes
+// ==========================================================================
+//
+// Four endpoints and one rule they share: none of them blocks. A settings save
+// mutates RAM and marks a store dirty — the flash write happens on the OS loop,
+// debounced, because a LittleFS sync is a sector erase with the instruction
+// cache off and this chip has one core running the panel, the radio and this
+// server. A reboot is scheduled rather than performed, because a restart that
+// races its own HTTP response looks like a crash to whoever clicked the button.
+//
+// Everything specific to the twelve settings keys lives in eos_settings. What
+// is here is the JSON shape web/README.md fixed and nothing else.
+
+// Keys enumerated from the store before the loop gives up. Larger than
+// eos_settings' twelve so a key added there needs no change here, and small
+// enough that the reboot_required bitmask below is one word.
+#define SETTINGS_KEY_LIMIT 32
+
+// Mounts reported by GET /api/system. Two on every board there is; the loop
+// stops at the port's own false, so this is only a bound on a misbehaving one.
+#define EOS_MOUNTS_REPORTED 4
+
+// kv.key is reused on every pass of the patch loop, so the key that failed has
+// to be copied out rather than pointed at. Copying the wrong one is a detail
+// string that names an innocent field, which is worse than no detail at all.
+#define KEEP_KEY(dst, src) do { snprintf((dst), sizeof (dst), "%s", (src)); } while (0)
+
+const char *const eos_httpd_role_names[EOS_HTTPD_THEME_ROLES] = {
+    "bg", "surface", "overlay", "text", "muted", "accent", "accent_alt",
+    "ok", "warn", "err", "border_focused", "border_unfocused",
+    "bar_bg", "bar_fg", "tab_active", "tab_inactive"
+};
+
+// ----------------------------------------------------------- the settings object
+
+// Written by both the GET and the POST: the POST answers with the whole object
+// as well, because web/README.md makes the board the single source of truth and
+// the page re-renders from what comes back rather than from what it sent.
+static void settings_object(eos_httpd_t *h, eos_json_t *j)
+{
+    eos_httpd_kv_t kv;
+    int i;
+
+    eos_json_key(j, "settings");
+    eos_json_obj_open(j);
+    for (i = 0; i < SETTINGS_KEY_LIMIT; i++) {
+        memset(&kv, 0, sizeof kv);
+        if (!h->ports.settings_get(h->ctx, i, &kv)) break;
+        if (!kv.key[0]) continue;      // a key the store declines to report
+        switch (kv.type) {
+        case EOS_HTTPD_VAL_INT:  eos_json_kv_int(j, kv.key, kv.n);        break;
+        case EOS_HTTPD_VAL_BOOL: eos_json_kv_bool(j, kv.key, kv.n != 0);  break;
+        default:                 eos_json_kv_str(j, kv.key, kv.s);        break;
+        }
+    }
+    eos_json_obj_close(j);
+}
+
+// ------------------------------------------------------- GET /api/settings
+
+static int h_settings_get(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+
+    if (!h->ports.settings_get)
+        return fail_err(h, r, -7, "this board has no settings store");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    settings_object(h, &j);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// ------------------------------------------------------ POST /api/settings
+
+// The body carries only the keys the page actually changed, so the scan is the
+// other way round from what a JSON parser wants: for every key the store knows,
+// ask whether the body mentions it. That is what lets the whole thing run
+// through eos_json_get_*, which finds one key at a time and never builds a
+// document tree — the same reader the settings file itself is parsed with.
+//
+// A key in the body that the store does not know is ignored rather than
+// refused, which is eos_theme's rule and is here for the same reason: a page
+// from a newer build must not be able to make an older board reject a save
+// outright. The response restates the whole object, so nothing silently
+// pretends to have applied.
+static int h_settings_set(eos_httpd_t *h, const eos_httpd_req_t *req,
+                          eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    eos_httpd_kv_t kv;
+    uint32_t reboot_bits = 0;
+    char err_key[EOS_HTTPD_KEY_MAX];
+    int i, n_keys = 0;
+    int first_err = 0;
+
+    err_key[0] = '\0';
+    if (!h->ports.settings_get || !h->ports.settings_set)
+        return fail_err(h, r, -7, "this board has no settings store");
+    if (req->body_truncated)
+        return fail_err(h, r, -9, "the settings patch is larger than this board accepts");
+    if (!req->body || req->body_len <= 0)
+        return fail(h, r, 400, "bad_argument", "no settings in the body");
+
+    for (i = 0; i < SETTINGS_KEY_LIMIT; i++) {
+        eos_json_find_t f;
+        char val[EOS_HTTPD_VALUE_MAX];
+        long num = 0;
+        bool is_num = false, reboot = false;
+        int rc;
+
+        memset(&kv, 0, sizeof kv);
+        if (!h->ports.settings_get(h->ctx, i, &kv)) break;
+        n_keys++;
+        if (!kv.key[0]) continue;
+
+        val[0] = '\0';
+        f = eos_json_get_str(req->body, req->body_len, kv.key,
+                             val, (int)sizeof val, NULL);
+        if (f == EOS_JSON_BAD)
+            return fail(h, r, 400, "bad_argument", "the settings patch is not a JSON object");
+        if (f == EOS_JSON_TOOBIG) {
+            if (!first_err) { first_err = -9; KEEP_KEY(err_key, kv.key); }
+            continue;
+        }
+        if (f == EOS_JSON_TYPE) {
+            // Present and not a string. A number is what the page sends for
+            // brain.port, brain.max and ui.bright; a bool is nobody's, but
+            // reading it costs one comparison and turns a 500 into a 400.
+            if (eos_json_get_int(req->body, req->body_len, kv.key, &num) == EOS_JSON_FOUND) {
+                is_num = true;
+            } else {
+                bool b = false;
+                if (eos_json_get_bool(req->body, req->body_len, kv.key, &b) == EOS_JSON_FOUND) {
+                    is_num = true;
+                    num = b ? 1 : 0;
+                } else {
+                    if (!first_err) { first_err = -1; KEEP_KEY(err_key, kv.key); }
+                    continue;
+                }
+            }
+        } else if (f != EOS_JSON_FOUND) {
+            continue;                       // ABSENT: the page did not change it
+        }
+
+        rc = h->ports.settings_set(h->ctx, kv.key, val, is_num, num, &reboot);
+        if (rc < 0) {
+            if (!first_err) { first_err = rc; KEEP_KEY(err_key, kv.key); }
+            continue;
+        }
+        if (reboot && i < 32) reboot_bits |= (uint32_t)1u << i;
+    }
+
+    // Always, and even after a failure: this is what hands a staged WiFi pair
+    // to eos_net and what wipes a passphrase that is not going to be used.
+    if (h->ports.settings_commit) h->ports.settings_commit(h->ctx);
+
+    if (first_err) {
+        char detail[64];
+        snprintf(detail, sizeof detail, "%s was refused", err_key);
+        return fail_err(h, r, first_err, detail);
+    }
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    settings_object(h, &j);
+
+    eos_json_key(&j, "reboot_required");
+    eos_json_arr_open(&j);
+    for (i = 0; i < n_keys && i < 32; i++) {
+        if (!(reboot_bits & ((uint32_t)1u << i))) continue;
+        memset(&kv, 0, sizeof kv);
+        if (!h->ports.settings_get(h->ctx, i, &kv)) break;
+        if (kv.key[0]) eos_json_str(&j, kv.key);
+    }
+    eos_json_arr_close(&j);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// --------------------------------------------------------- GET /api/system
+
+static void sys_fs_array(eos_httpd_t *h, eos_json_t *j)
+{
+    eos_httpd_fs_t m;
+    int i;
+
+    if (!h->ports.fs_info) return;      // a group the page skips rather than blanks
+
+    eos_json_key(j, "fs");
+    eos_json_arr_open(j);
+    for (i = 0; i < EOS_MOUNTS_REPORTED; i++) {
+        memset(&m, 0, sizeof m);
+        if (!h->ports.fs_info(h->ctx, i, &m)) break;
+        eos_json_obj_open(j);
+        eos_json_kv_str (j, "point",     m.point);
+        eos_json_kv_str (j, "fs",        m.fs);
+        eos_json_kv_bool(j, "mounted",   m.mounted);
+        eos_json_kv_bool(j, "writable",  m.writable);
+        eos_json_kv_bool(j, "removable", m.removable);
+        // Sizes are bytes and a card is gigabytes, so they are emitted through
+        // the same 32-bit-safe path as everything else by clamping: a listing
+        // that says 4 GB on an 8 GB card is wrong in a way nobody acts on, and
+        // a 64-bit printf in this writer would be a second number formatter.
+        eos_json_kv_int (j, "total", (long)(m.total > 0x7FFFFFFFULL ? 0x7FFFFFFFULL : m.total));
+        eos_json_kv_int (j, "used",  (long)(m.used  > 0x7FFFFFFFULL ? 0x7FFFFFFFULL : m.used));
+        eos_json_obj_close(j);
+    }
+    eos_json_arr_close(j);
+}
+
+static void sys_net_group(eos_httpd_t *h, eos_json_t *j)
+{
+    eos_httpd_net_t n;
+    char mdns[40];
+
+    if (!h->ports.net_status || !h->ports.net_status(h->ctx, &n)) return;
+
+    eos_json_key(j, "net");
+    eos_json_obj_open(j);
+    eos_json_kv_str (j, "ip",       n.ip);
+    eos_json_kv_str (j, "hostname", n.host);
+    snprintf(mdns, sizeof mdns, "%s.local", n.host);
+    eos_json_kv_str (j, "mdns",     n.host[0] ? mdns : "");
+    eos_json_kv_strn(j, "ssid",     (const char *)n.ssid, n.ssid_len);
+    eos_json_kv_int (j, "rssi",     n.rssi);
+    eos_json_kv_bool(j, "up",       n.state == EOS_HTTPD_NET_UP);
+    eos_json_obj_close(j);
+}
+
+static int h_system(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_httpd_sys_t s;
+    eos_json_t j;
+    char mac[18];
+
+    if (!h->ports.sys_info)
+        return fail_err(h, r, -7, "this board does not describe itself");
+
+    memset(&s, 0, sizeof s);
+    if (!h->ports.sys_info(h->ctx, &s))
+        return fail_err(h, r, -3, "the board description could not be read");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+
+    eos_json_key(&j, "board");
+    eos_json_obj_open(&j);
+    eos_json_kv_str(&j, "id",      s.board_id);
+    eos_json_kv_str(&j, "name",    s.board_name);
+    eos_json_kv_str(&j, "summary", s.board_summary);
+    eos_json_obj_close(&j);
+
+    write_mac(mac, s.mac);
+    eos_json_key(&j, "chip");
+    eos_json_obj_open(&j);
+    eos_json_kv_str(&j, "target",   s.chip_target);
+    eos_json_kv_str(&j, "variant",  s.chip_variant);
+    eos_json_kv_int(&j, "cores",    s.chip_cores);
+    eos_json_kv_int(&j, "rev",      s.chip_rev);
+    eos_json_kv_int(&j, "flash_mb", (long)s.flash_mb);
+    eos_json_key(&j, "psram");
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "present", s.psram_present);
+    eos_json_kv_str (&j, "type",    s.psram_present ? s.psram_type : "none");
+    eos_json_kv_int (&j, "size_mb", (long)s.psram_mb);
+    eos_json_obj_close(&j);
+    eos_json_kv_str(&j, "mac", mac);
+    eos_json_obj_close(&j);
+
+    eos_json_key(&j, "render");
+    eos_json_obj_open(&j);
+    eos_json_kv_int (&j, "tier",       s.render_tier);
+    eos_json_kv_str (&j, "compositor", s.compositor);
+    eos_json_kv_bool(&j, "lvgl",       s.lvgl);
+    eos_json_obj_close(&j);
+
+    eos_json_key(&j, "display");
+    eos_json_obj_open(&j);
+    eos_json_kv_str (&j, "controller", s.disp_controller);
+    eos_json_kv_int (&j, "w",          s.disp_w);
+    eos_json_kv_int (&j, "h",          s.disp_h);
+    eos_json_kv_int (&j, "rotation",   s.disp_rotation);
+    eos_json_kv_str (&j, "bus",        s.disp_bus);
+    eos_json_kv_int (&j, "clock_hz",   (long)s.disp_clock_hz);
+    eos_json_kv_bool(&j, "backlight",  s.backlight);
+    eos_json_obj_close(&j);
+
+    eos_json_key(&j, "heap");
+    eos_json_obj_open(&j);
+    eos_json_kv_int(&j, "free",           (long)s.heap_free);
+    eos_json_kv_int(&j, "min_free",       (long)s.heap_min_free);
+    eos_json_kv_int(&j, "largest_block",  (long)s.heap_largest);
+    eos_json_kv_int(&j, "total",          (long)s.heap_total);
+    eos_json_obj_close(&j);
+
+    sys_fs_array(h, &j);
+    sys_net_group(h, &j);
+
+    eos_json_kv_int(&j, "uptime_ms", (long)s.uptime_ms);
+
+    eos_json_key(&j, "time");
+    eos_json_obj_open(&j);
+    eos_json_kv_int (&j, "epoch",  (long)s.epoch);
+    eos_json_kv_str (&j, "tz",     s.tz);
+    eos_json_kv_bool(&j, "synced", s.time_synced);
+    eos_json_obj_close(&j);
+
+    eos_json_key(&j, "fw");
+    eos_json_obj_open(&j);
+    eos_json_kv_str(&j, "version", s.fw_version);
+    eos_json_kv_str(&j, "idf",     s.fw_idf);
+    eos_json_kv_str(&j, "built",   s.fw_built);
+    eos_json_obj_close(&j);
+
+    // The one group the client changes behaviour on. Everything above it is
+    // informational; chunk_max is what bounds every upload the Files tab sends.
+    eos_json_key(&j, "limits");
+    eos_json_obj_open(&j);
+    eos_json_kv_int(&j, "chunk_max",  s.chunk_max);
+    eos_json_kv_int(&j, "path_max",   s.path_max);
+    eos_json_kv_int(&j, "name_max",   s.name_max);
+    eos_json_kv_int(&j, "list_max",   s.list_max);
+    eos_json_kv_int(&j, "open_files", s.open_files);
+    eos_json_obj_close(&j);
+
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// -------------------------------------------------- GET /api/system/health
+
+// The cheap liveness probe. The web app never calls it; a script watching a
+// board over a weekend does, and it is three fields instead of two kilobytes.
+static int h_system_health(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_httpd_sys_t s;
+    eos_json_t j;
+
+    if (!h->ports.sys_info)
+        return fail_err(h, r, -7, "this board does not describe itself");
+
+    memset(&s, 0, sizeof s);
+    (void)h->ports.sys_info(h->ctx, &s);
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "ok",        true);
+    eos_json_kv_int (&j, "uptime_ms", (long)s.uptime_ms);
+    eos_json_kv_int (&j, "heap_free", (long)s.heap_free);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// -------------------------------------------------- POST /api/system/reboot
+
+// The delay is the whole endpoint. The port schedules; something on the OS
+// loop restarts once the deadline passes, by which time this response has been
+// written and the socket closed. Restarting inside the handler would drop the
+// connection mid-response and the page would report a network failure for a
+// reboot that worked perfectly.
+#define REBOOT_DELAY_MS 500
+
+static int h_system_reboot(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    int rc;
+
+    if (!h->ports.reboot)
+        return fail_err(h, r, -7, "this board cannot restart itself");
+
+    rc = h->ports.reboot(h->ctx, REBOOT_DELAY_MS);
+    if (rc < 0) return fail_err(h, r, rc, "the restart was refused");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "ok",    true);
+    eos_json_kv_int (&j, "in_ms", REBOOT_DELAY_MS);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// --------------------------------------------------------- GET /api/themes
+
+// Themes the picker may offer beyond the active one. Bounded because the
+// response is built in one pass into a fixed buffer and a card with fifty theme
+// files must produce a short list rather than a truncated document.
+#define THEMES_REPORTED 16
+
+static void theme_entry(eos_json_t *j, const eos_httpd_theme_t *t)
+{
+    int k;
+
+    eos_json_obj_open(j);
+    eos_json_kv_str(j, "name", t->name);
+    eos_json_kv_str(j, "path", t->path);
+
+    // Colours only for the theme the board is actually wearing. The web app
+    // reads them from that entry alone — it writes them straight into CSS
+    // custom properties so the page wears the same theme as the panel — and
+    // parsing every file on the card to fill in the rest would mean a 4 KB read
+    // buffer and a 700-byte theme struct on a 5 KB worker stack.
+    if (t->has_colors) {
+        eos_json_key(j, "colors");
+        eos_json_obj_open(j);
+        for (k = 0; k < EOS_HTTPD_THEME_ROLES; k++)
+            eos_json_kv_str(j, eos_httpd_role_names[k], t->color[k]);
+        eos_json_obj_close(j);
+
+        eos_json_key(j, "metrics");
+        eos_json_obj_open(j);
+        eos_json_kv_int(j, "gap",    t->gap);
+        eos_json_kv_int(j, "border", t->border);
+        eos_json_kv_int(j, "bar_h",  t->bar_h);
+        eos_json_kv_int(j, "tab_h",  t->tab_h);
+        eos_json_kv_int(j, "radius", t->radius);
+        eos_json_obj_close(j);
+    }
+    eos_json_obj_close(j);
+}
+
+static int h_themes(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_httpd_theme_t t;
+    eos_json_t j;
+    char active[sizeof t.name];
+    int i, listed = 0;
+
+    if (!h->ports.theme_active)
+        return fail_err(h, r, -7, "this board has no theme service");
+
+    memset(&t, 0, sizeof t);
+    if (!h->ports.theme_active(h->ctx, &t))
+        return fail_err(h, r, -3, "the active theme could not be read");
+    snprintf(active, sizeof active, "%s", t.name);
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_str(&j, "active", active);
+    eos_json_key(&j, "themes");
+    eos_json_arr_open(&j);
+
+    // The active theme first and always, even when no file for it exists. That
+    // is the "the picker is never empty" rule: a board whose filesystem is
+    // blank still offers the theme it is wearing, which came out of the image.
+    theme_entry(&j, &t);
+    listed++;
+
+    for (i = 0; h->ports.theme_list && listed < THEMES_REPORTED; i++) {
+        int need;
+        memset(&t, 0, sizeof t);
+        if (!h->ports.theme_list(h->ctx, i, &t)) break;
+        if (!t.name[0]) continue;
+        if (strcmp(t.name, active) == 0) continue;      // already emitted, with colours
+
+        // Room for this entry, checked before it is written rather than
+        // discovered afterwards: the writer's overflow is sticky and has no
+        // rollback, so one entry too many would cost the whole document.
+        need = eos_json_escaped_len(t.name, (int)strlen(t.name))
+             + eos_json_escaped_len(t.path, (int)strlen(t.path)) + 32;
+        if (j.len + need > j.cap - 16) break;
+
+        t.has_colors = false;
+        theme_entry(&j, &t);
+        listed++;
+    }
+
+    eos_json_arr_close(&j);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// ==========================================================================
 // Static files and the portal
 // ==========================================================================
 
@@ -1770,6 +2472,35 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_BLE_STATUS:   h->req_api++; return h_ble_status(h, r);
     case EOS_ROUTE_BLE_FORGET:   h->req_api++; return h_ble_forget(h, r);
 
+    // megabrain
+    case EOS_ROUTE_BRAIN_STATUS: h->req_api++; return h_brain_status(h, r);
+    case EOS_ROUTE_BRAIN_ASK:    h->req_api++; return h_brain_ask(h, req, r);
+    case EOS_ROUTE_BRAIN_CANCEL: h->req_api++; return h_brain_cancel(h, r);
+
+    // ---- kernel/svc/eos_apps.c: files, console, buddy, apps --------------
+    // All fourteen go to one call. Listing them rather than range-checking the
+    // enum is deliberate: three people append to eos_route_t and a range is the
+    // thing that silently swallows the next route somebody inserts.
+    case EOS_ROUTE_FS_LIST:      case EOS_ROUTE_FS_STAT:
+    case EOS_ROUTE_FS_READ:      case EOS_ROUTE_FS_USAGE:
+    case EOS_ROUTE_FS_WRITE:     case EOS_ROUTE_FS_ABORT:
+    case EOS_ROUTE_FS_MKDIR:     case EOS_ROUTE_FS_REMOVE:
+    case EOS_ROUTE_FS_RENAME:    case EOS_ROUTE_CONSOLE_LOG:
+    case EOS_ROUTE_CONSOLE_EXEC: case EOS_ROUTE_BUDDY:
+    case EOS_ROUTE_BUDDY_RELOAD: case EOS_ROUTE_APPS:
+        h->req_api++;
+        if (!s_api)
+            return fail_err(h, r, -7, "this image was built without the files, "
+                                      "console and buddy API");
+        return s_api(h, (int)route, req, r);
+
+    case EOS_ROUTE_SETTINGS_GET:   h->req_api++; return h_settings_get(h, r);
+    case EOS_ROUTE_SETTINGS_SET:   h->req_api++; return h_settings_set(h, req, r);
+    case EOS_ROUTE_SYSTEM:         h->req_api++; return h_system(h, r);
+    case EOS_ROUTE_SYSTEM_HEALTH:  h->req_api++; return h_system_health(h, r);
+    case EOS_ROUTE_SYSTEM_REBOOT:  h->req_api++; return h_system_reboot(h, r);
+    case EOS_ROUTE_THEMES:         h->req_api++; return h_themes(h, r);
+
     case EOS_ROUTE_CAPTIVE:
         // In RUN mode the board is a host on somebody's LAN, not a portal.
         // Redirecting a probe there would tell every device on the network that
@@ -1853,6 +2584,92 @@ static const char *status_line(int s)
     }
 }
 
+// ------------------------------------------------------- the brain stream
+//
+// Runs with the dispatch lock RELEASED, which is the whole reason it can take
+// seconds. Nothing below touches h->resp, h->path or h->uripath; the only
+// server state it reads is the port table, which does not change while the
+// server is up, and the ring behind brain_read has its own lock.
+
+// The FreeRTOS tick rather than esp_timer, so this file keeps the same
+// component dependencies it had before megabrain arrived. It is only ever used
+// for two deadlines measured in tens of seconds, and it wraps in 49 days at
+// 1 kHz — which unsigned subtraction handles and nothing here spans anyway.
+static uint32_t ms_now(void)
+{
+    return (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+}
+
+// An error the model raised after the 200 was already on the wire. web/README.md
+// spells this: a line beginning "! ", then close the stream.
+static void stream_bang(httpd_req_t *rq, const char *why, bool sent_any)
+{
+    char line[128];
+    int n = snprintf(line, sizeof line, "%s! %s\n", sent_any ? "\n" : "",
+                     why ? why : "megabrain stopped answering");
+    if (n > 0) (void)httpd_resp_send_chunk(rq, line, (size_t)n);
+}
+
+static esp_err_t send_stream(httpd_req_t *rq, eos_httpd_t *h)
+{
+    char     buf[EOS_HTTPD_STREAM_CHUNK];
+    uint32_t t0 = ms_now(), t_last = t0;
+    long     sent = 0;
+    bool     sent_any = false, clean = false;
+
+    if (!h->ports.brain_read) return ESP_FAIL;
+
+    for (;;) {
+        int n = h->ports.brain_read(h->ctx, buf, (int)sizeof buf);
+
+        if (n > 0) {
+            t_last = ms_now();
+            if (httpd_resp_send_chunk(rq, buf, (size_t)n) != ESP_OK) {
+                // The client is gone. Stop the model rather than let it talk
+                // into a ring nobody is draining, and let the worker go.
+                ESP_LOGW(TAG, "brain  client left after %ld B; cancelling", sent);
+                if (h->ports.brain_cancel) h->ports.brain_cancel(h->ctx);
+                return ESP_FAIL;
+            }
+            sent_any = true;
+            sent += n;
+            continue;
+        }
+        if (n == EOS_HTTPD_STREAM_END) { clean = true; break; }
+        if (n == EOS_HTTPD_STREAM_FAIL) {
+            eos_httpd_brain_t st;
+            const char *why = NULL;
+            memset(&st, 0, sizeof st);
+            if (h->ports.brain_status && h->ports.brain_status(h->ctx, &st))
+                why = st.last_error;
+            stream_bang(rq, why, sent_any);
+            break;
+        }
+
+        // Nothing decoded yet. Both deadlines exist because a model that has
+        // stopped talking must not hold a worker for the length of a session.
+        if ((ms_now() - t_last) >= EOS_HTTPD_STREAM_IDLE_MS) {
+            if (h->ports.brain_cancel) h->ports.brain_cancel(h->ctx);
+            stream_bang(rq, "megabrain went quiet", sent_any);
+            break;
+        }
+        if ((ms_now() - t0) >= EOS_HTTPD_STREAM_TOTAL_MS) {
+            if (h->ports.brain_cancel) h->ports.brain_cancel(h->ctx);
+            stream_bang(rq, "megabrain took too long", sent_any);
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(EOS_HTTPD_STREAM_POLL_MS));
+    }
+
+    // Only a clean END leaves the client's side of the reply released. On every
+    // other exit the last read was not the one that finished it, so say so
+    // once: it is the difference between the next ask working and the next ask
+    // being 409 until the binding notices for itself.
+    if (!clean && h->ports.brain_cancel) h->ports.brain_cancel(h->ctx);
+
+    return httpd_resp_send_chunk(rq, NULL, 0);
+}
+
 static esp_err_t send_resp(httpd_req_t *rq, eos_httpd_t *h, eos_httpd_resp_t *r)
 {
     esp_err_t err = ESP_OK;
@@ -1865,6 +2682,9 @@ static esp_err_t send_resp(httpd_req_t *rq, eos_httpd_t *h, eos_httpd_resp_t *r)
     // The setup page is same-origin and the SoftAP is WPA2, but the API is
     // still reachable from any page the phone has open, so say no.
     httpd_resp_set_hdr(rq, "X-Content-Type-Options", "nosniff");
+
+    if (r->kind == EOS_HTTPD_BODY_STREAM)
+        return send_stream(rq, h);
 
     if (r->kind != EOS_HTTPD_BODY_FILE)
         return httpd_resp_send(rq, r->body ? r->body : "", r->body_len);
@@ -1897,7 +2717,7 @@ static esp_err_t on_request(httpd_req_t *rq)
     eos_httpd_req_t req;
     eos_httpd_resp_t resp;
     esp_err_t err;
-    bool oversize = false;
+    bool oversize = false, streaming = false;
     int blen = 0;
 
     // The body lives here, on this worker's stack, and is read before the lock
@@ -1937,9 +2757,20 @@ static esp_err_t on_request(httpd_req_t *rq)
     if (h->lock) xSemaphoreTake((SemaphoreHandle_t)h->lock, portMAX_DELAY);
 
     eos_httpd_dispatch(h, &req, &resp);
+
+    // A megabrain reply is seconds long. Holding the dispatch lock across it
+    // would park the other three workers behind one chat request — the web app
+    // polls /api/net/status and /api/console/log the whole time — so the lock
+    // goes back the moment the response is staged. It is safe because a stream
+    // reads none of the shared buffers the lock exists to protect: it drains a
+    // ring that has its own. Every other response still holds it, because they
+    // all point at h->resp.
+    streaming = (resp.kind == EOS_HTTPD_BODY_STREAM);
+    if (streaming && h->lock) xSemaphoreGive((SemaphoreHandle_t)h->lock);
+
     err = send_resp(rq, h, &resp);
 
-    if (h->lock) xSemaphoreGive((SemaphoreHandle_t)h->lock);
+    if (!streaming && h->lock) xSemaphoreGive((SemaphoreHandle_t)h->lock);
 
     // An oversized body was never drained, so the socket still holds it and the
     // next request on this keep-alive connection would start mid-JSON. Answer

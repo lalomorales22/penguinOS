@@ -20,10 +20,14 @@ same files are compiled by six host suites with a plain `cc` and a copy under
 | `partitions.csv` | the partition table, with the 4 MB arithmetic |
 | `main/main.c` | `app_main`: the boot path, the mode choice, and the frame loop |
 | `main/eos_boot_theme.c` | theme search — sd, internal fs, embedded, default |
-| `main/eos_shell_draw.c` | the scene: tiles, tab strips, status bar. No IDF calls |
+| `main/eos_brain_bridge.c` | the one task that owns `eos_brain`, and the ring the HTTP workers drain |
+| `main/eos_settings_bind.c` | `/api/settings`, `/api/system`, `/api/themes`: the board's answers |
+| `main/eos_buddy_model.c` | the buddy compiled into the image, for a board with no `buddy.vox` |
+| `main/eos_shell_draw.c` | the scene: tiles, tab strips, status bar, the avatar. No IDF calls |
 | `main/eos_shell_input.c` | keybind dispatch, over the HAL's event ring |
 | `main/eos_setup_screen.c` | the three full-screen scenes: setup, passkey, message. No IDF calls |
 | `main/test/test_setup_screen.c` | host test: renders those scenes and checks the QR module for module |
+| `main/test/test_shell_draw.c` | host test: renders the desktop, and writes it as a PPM |
 | `components/eos_kernel/` | the kernel as an IDF component |
 | `components/eos_kernel/eos_board_active.c` | `eos_board_get()` and `eos_board_probe()` |
 
@@ -32,20 +36,24 @@ same files are compiled by six host suites with a plain `cc` and a copy under
 
 ## The boot path
 
-`app_main` does nine things, in an order that is load-bearing rather than
+`app_main` does twelve things, in an order that is load-bearing rather than
 alphabetical.
 
 | # | Step | Why it is where it is |
 |---|---|---|
+| 0 | `eos_apps_init()` + `eos_apps_log_install()` | **before anything logs.** It is BSS and touches no hardware, and installing the log hook here is the difference between the Console tab showing this whole boot and showing only what was typed into it afterwards. It also registers the files, console, buddy and apps routes |
 | 1 | `eos_board_get()`, `eos_board_probe()`, `eos_board_check()` | board identity is not probeable; the three facts that are get checked before anything is driven |
 | 2 | `eos_display_init()` | the only call in the image that takes heap and keeps it. Seeds its own LUT from `eos_theme_default()`, so a board that finds no theme still draws in real colours |
-| 3 | `eos_boot_theme_load()` + `eos_boot_theme_upload()` | after the display, because the upload is an update to a LUT that already holds something usable |
-| 4 | `eos_wm_init()`, `eos_keys_defaults()`, five `eos_wm_open()` calls | after the theme, because `eos_wm_cfg_t` wants `min_tile_w`/`min_tile_h` from the BOARD and `gap`/`bar_h`/`tab_h` from the THEME at the same moment. The windows are opened here even when SETUP is what gets drawn: a banded backend fixes its bands when the frame opens |
-| 5 | `eos_setup_screen_message()` | **before anything slow.** Step 7 blocks for up to fifteen seconds and a black panel for that long reads as a dead board |
-| 6 | `eos_ble_on_passkey()` + `eos_input_init()` | brings up the NimBLE HID host. Before WiFi: the controller wants a large contiguous block and the WiFi stack fragments the heap |
-| 7 | `eos_net_idf_defaults()`, `eos_net_init()`, `eos_net_start()` | the three-state boot in `docs/provisioning.md`. Returns OK in both landing states — reaching SETUP because a join failed is an outcome, not an error |
-| 8 | `eos_httpd_init()`, `eos_httpd_idf_bind()`, `eos_httpd_start()` | last, because it binds to both radios and reads `eos_ble_status()` to decide whether the four BLE endpoints exist |
-| 9 | frame loop | picks one of three screens per pass, and pumps input, net and httpd |
+| 3 | `eos_storage_init()` + `eos_apps_buddy_reload()` | **after the panel and before everything that reads a file.** A first boot formats a blank 960 KB partition and that is a stall the glass should be lit for. A mount that fails is a log line naming the partition, never a stop: every caller above storage falls back to something compiled in |
+| 4 | `eos_settings_load()`, then TZ and backlight | between storage and theme because it names the theme, and before the network because it names the mDNS host. A truncated, garbled, empty or missing file leaves the store holding defaults and the board booting |
+| 5 | `eos_boot_theme_prefer()` + `eos_boot_theme_load()` + `eos_boot_theme_upload()` | after the display, because the upload is an update to a LUT that already holds something usable; after settings, because `ui.theme` is what it goes looking for |
+| 6 | `eos_wm_init()`, `eos_keys_defaults()`, five `eos_wm_open()` calls | after the theme, because `eos_wm_cfg_t` wants `min_tile_w`/`min_tile_h` from the BOARD and `gap`/`bar_h`/`tab_h` from the THEME at the same moment. The windows are opened here even when SETUP is what gets drawn: a banded backend fixes its bands when the frame opens |
+| 7 | `eos_setup_screen_message()` | **before anything slow.** Step 9 blocks for up to fifteen seconds and a black panel for that long reads as a dead board |
+| 8 | `eos_ble_on_passkey()` + `eos_input_init()` | brings up the NimBLE HID host. Before WiFi: the controller wants a large contiguous block and the WiFi stack fragments the heap |
+| 9 | `eos_net_idf_defaults()`, `eos_net_init()`, `eos_net_start()` | the three-state boot in `docs/provisioning.md`. Returns OK in both landing states — reaching SETUP because a join failed is an outcome, not an error. `net.host` from the store becomes `ncfg.hostname`, which is also the mDNS name |
+| 10 | `eos_httpd_init()`, `eos_httpd_idf_bind()`, `eos_web_embed_bind()`, `eos_apps_bind_files()`, `eos_settings_bind()`, `eos_brain_bridge_start()`, `eos_httpd_start()` | in that order and no other. `eos_httpd_idf_bind()` assigns the whole port table **by value** and wipes anything set before it, so every other binder comes after it — and all of them come before `start()`, so the first request cannot arrive at a half-wired table |
+| 11 | `buddy_adopt()`, `apply_autostart()` | the avatar's shade table maps model colours onto DISPLAY palette indices, so it can only be built once the theme's palette is the loaded one. Autostart moves the focus, which changes which tab of the collapsed group is visible, so it happens before the first frame rather than after it |
+| 12 | frame loop | picks one of three screens per pass, and pumps input, net, httpd, apps, settings and the avatar |
 
 ### The three screens
 
@@ -116,9 +124,20 @@ heap   at app_main    <n> free, <n> largest
 heap   after display  <n> free, <n> largest, this step took <n>
 heap   after shell    ...
 heap   after ble      ...
+heap   after storage  ...
 heap   after wifi     ...
+heap   after brain    ...
 heap   after httpd    ...
+heap   after buddy    ...
 heap   boot cost <n> B of the <n> free at app_main; <n> left, largest block <n>
+```
+
+`heap after buddy` reports about zero, and that is the point: the avatar's
+offscreen box, its shade table and the compiled-in model are all BSS, claimed
+before `app_main` ran. The line above it names the number instead:
+
+```
+buddy  compiled-in model, 372 voxels, 80x80 px box, 7184 B of BSS
 ```
 
 ### Theme search order
@@ -128,10 +147,20 @@ The search honours that at every step — each failure is a log line.
 
 | Order | Source | Status on this board today |
 |---|---|---|
-| 1 | `<storage.sd_point>/theme.json` | skipped; the C6-LCD-1.3 declares no card slot |
-| 2 | `<storage.int_point>/theme.json` — `/int/theme.json` | `fopen` fails; nothing mounts the `int` partition yet |
-| 3 | the copy linked into the image (`EMBED_TXTFILES`) | **this is what runs**: `kernel/theme/themes/cyd-amber.json`, ~1.7 KB of rodata |
-| 4 | `eos_theme_default()` | unreachable unless the embedded copy is corrupt |
+| 1 | `<sd_point>/themes/<ui.theme>.json` | skipped; the C6-LCD-1.3 declares no card slot |
+| 2 | `<int_point>/themes/<ui.theme>.json` — `/int/themes/gruvbox.json` | a real open on a mounted LittleFS. Empty on a board nobody has written a theme to |
+| 3 | `<sd_point>/theme.json` | skipped, same reason as 1 |
+| 4 | `<int_point>/theme.json` | the older convention, kept so a board provisioned before `ui.theme` existed still works |
+| 5 | the copy linked into the image (`EMBED_TXTFILES`) | **this is what runs today**: `kernel/theme/themes/cyd-amber.json`, ~1.7 KB of rodata |
+| 6 | `eos_theme_default()` | unreachable unless the embedded copy is corrupt |
+
+Steps 1 and 2 are what `ui.theme` in the settings store selects; the name is the
+file **stem**, not the `name` field inside the file, because the stem is what
+the loader builds a path from and a file whose two names disagree would give a
+picker entry that vanishes the moment it is chosen. A theme switch through
+`POST /api/settings` re-runs the same search and reprograms the CLUT live —
+colours follow immediately, `gap`/`bar_h`/`tab_h` do not and come back in
+`reboot_required`.
 
 Step 3 exists so the board comes up looking like ESP-OS rather than like the
 neutral slate fallback, and it is the only thing in the image that runs
@@ -140,17 +169,24 @@ none of them ran on target.
 
 ### What is on the screen
 
-Five windows: four on workspace 1, one on workspace 2 so the bar's pips have
+Six windows: five on workspace 1, one on workspace 2 so the bar's pips have
 something to show. With `min_tile_w` 80 in a 117 px tile, the third split cannot
 give both children the minimum and **collapses into a tab group**, which is the
 one window-manager rule this board exists to demonstrate.
 
-| Window | Face | Content |
-|---|---|---|
-| `clock` | 12x20 | uptime. **Not wall time** — this board has no RTC and nothing sets the clock from the network yet |
-| `board` | 8x13 + 6x8 | soc, flash, panel, bus, straight off the descriptor |
-| `heap` | 8x13 + 6x8 | free and largest-block, live. Behind a tab |
-| `keys` | 6x8 | four binds formatted out of the real keymap by `eos_keys_format()` |
+| Window | Rect | Face | Content |
+|---|---|---|---|
+| `clock` | 4,18 114x218 | 12x20 | uptime. **Not wall time** — this board has no RTC and no SNTP client |
+| `board` | 122,18 114x107 | 8x13 + 6x8 | its address once it has joined, otherwise soc, flash, panel, bus |
+| `heap` | tab 0 of 3 | 8x13 + 6x8 | free and largest-block, live. Behind a tab |
+| `keys` | tab 1 of 3 | 6x8 | four binds formatted out of the real keymap by `eos_keys_format()` |
+| `buddy` | tab 2 of 3, 122,145 114x91 | — | the voxel avatar, and the mood megabrain has put it in |
+
+The buddy is opened **last** and that is deliberate on both counts. Last means
+it lands in that tab group as the visible tab, so the avatar is on the glass
+from the first frame without anybody pressing anything; and it means the four
+windows that were verified on hardware keep the rects they had, because a fifth
+window here only lengthens the tab strip.
 
 The status bar is `eos_bar_build()` output, not hand-placed text: workspace
 pips, focused title, mood, heap, brain, wifi and clock, fitted to 236 px in the
@@ -158,20 +194,169 @@ bar model's own priority order. The window ids in each tile's top-right corner
 are the 4x6 face, so all four shipped faces are on the glass and a bad glyph
 table cannot hide.
 
+### The buddy window
+
+`kernel/avatar/eos_buddy.c` is a painter-order voxel renderer with a mood state
+machine. It passed 109 host checks for a whole release and had never once been
+drawn on a screen. It is now a window.
+
+**Why it is rendered once and blitted, rather than drawn.** The scene in
+`eos_shell_draw.c` is replayed **once per band** — six times on a 240x240 panel
+with a different 40-row clip installed each time — and every replay must produce
+identical pixels. `eos_buddy_render()` cannot satisfy that: it writes whole
+pixels into a buffer of its own, and it REORDERS the model's voxel array in
+place, far to near, which is how the painter sort costs no RAM. So it runs once
+per frame, before `eos_display_frame_begin()`, into an offscreen 8-bit indexed
+box; the per-band job is one clipped `eos_display_blit()` of a picture that is
+already finished. `test_shell_draw.c` asserts that two frames drawn from
+identical state come out byte for byte identical, which is the only check that
+would catch a sort that was not idempotent.
+
+**The box is a fixed size, not the tile's.** `EOS_SHELL_BUDDY_PX` is 80, so the
+box is 6,400 bytes and the render is fitted inside `min(body, 80)` and centred
+in the rest. Sizing it to the tile would mean a theme with no bar and no tab
+strip could ask for 230x220 — 50 KB of BSS for a window that might be behind a
+tab. On this board the body is 110x76, the mood line takes 10 of that, and the
+buddy renders at 80x66.
+
+**The shade table.** An 8-bit indexed target cannot shade by arithmetic, so it
+needs a 3x256 map of (face orientation, model palette index) to display index.
+`eos_shell_buddy_shade()` builds it through `eos_display_match()` rather than
+through `eos_buddy_build_shade_lut()`, for two reasons: the HAL hands out no
+copy of its loaded palette, and a second copy taken from the theme would be a
+second copy to go stale; and `eos_display_match()` searches 0..254 and can never
+return `EOS_COLOR_NONE`, which removes the hazard `eos_buddy.h` warns about —
+defect 5 in `STATUS.md` — structurally rather than by remembering. It is rebuilt
+at boot, at every model reload, and **after every live theme switch**, because a
+table of indices built against the old palette would leave the buddy wearing the
+previous theme.
+
+**The model.** `/int/buddy/buddy.vox` wins if it is there. It is not there on any
+board that exists, so `main/eos_buddy_model.c` builds the compiled-in one: the
+same 11x7x15 shape — feet apart, bevelled torso, head wider than the body, eyes
+on the -y face — that `kernel/avatar/test/test_vox.c` has been rendering to
+ASCII since the component was written. 372 voxels, and it stores only the shell:
+`eos_vox_finish()` would mark every inward face of a shell exposed, so the file
+writes the face masks itself from the solid shape the voxels were sampled from.
+That is a third of the pool and half the faces drawn.
+
+The feet are a mid slate and the mouth is near-black, and that difference is a
+bug fix rather than a style choice. Every previous render of this buddy was
+ASCII on black; on the panel the tile's surface is `#1b1b22` and a near-black
+foot at the x-face shade came out within a step or two of it. The buddy lost its
+feet in the first frame this window ever drew.
+
+**Where the mood comes from.** `eos_brain_bridge` posts the megabrain request
+lifecycle into an event queue; the frame loop drains it into
+`eos_buddy_event()`. The word under the avatar is `eos_buddy_state_name()`
+lowercased, which is the same string `/api/buddy` reports. The bar's mood glyph
+is the same machine — `eos_bar_mood_t` is `eos_buddy_state_t` by another name.
+
+### Rendering the desktop without a board
+
+`main/eos_shell_draw.c` calls no IDF function, so the whole scene renders on the
+host — and since this run something takes the header up on that. The suite
+composites every band through the real ST7789 backend with `ESP_PLATFORM`
+unset, checks what it drew, and with a path argument writes the frame out as a
+PPM.
+
+```bash
+cc -std=c99 -Wall -Wextra -Werror -O1 \
+   -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
+   -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
+   -Iboards/generated -Ifirmware/main \
+   firmware/main/test/test_shell_draw.c firmware/main/eos_buddy_model.c \
+   kernel/hal/backend/esp_lcd/eos_display_st7789.c kernel/wm/eos_wm.c \
+   kernel/theme/eos_theme.c kernel/shell/eos_bar.c kernel/shell/eos_keys.c \
+   kernel/font/eos_font.c kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
+   -lm -o /tmp/tdraw
+
+/tmp/tdraw                          # 42 checks, 0 failed
+/tmp/tdraw /tmp/desktop.ppm         # and write the frame
+/tmp/tdraw /tmp/think.ppm thinking  # in any of the seven moods
+```
+
+It `#include`s `eos_shell_draw.c` rather than linking it, because
+`eos_display_host_band()` only answers while a frame is open and the band loop
+is inside `eos_shell_draw_frame()`. Including the translation unit lets the test
+re-run the identical three-step frame with one line added, instead of a hook
+being cut into production code that only a test would ever use.
+
+What the 42 checks are for, beyond "it drew something": the compiled-in model is
+372 voxels with no buried voxel and no empty one; the shade table never resolves
+to `EOS_COLOR_NONE`; every pixel of a full-screen frame is composited exactly
+once; two frames from identical state are identical byte for byte; a tile-only
+damage rect redraws the tile identically; a NULL buddy, an empty model and a
+buddy behind a tab each skip the render and say so; and all seven moods draw.
+
 ### Redraw discipline
 
 | Event | Damage declared |
 |---|---|
 | boot | `eos_display_damage_all()` |
 | a keybind moved something | `eos_display_damage_all()` — a move can change every tile and the pips |
+| a live theme switch | `eos_display_damage_all()`, and the shade table is rebuilt first |
 | the second ticked | the bar rect and the `clock` tile's rect, nothing else |
 | a net event fired | the same two rects on the desktop; a whole frame on the setup screen |
+| the buddy tile is visible | that tile's rect, **every pass** |
 | the screen changed | `eos_display_damage_all()` |
-| nothing | none; the loop sleeps 250 ms |
+| nothing | none; the loop sleeps 250 ms, or 100 ms while the buddy is on screen |
 
-An idle board therefore pushes 58,176 B a second — the 240x12 bar plus the
-117x224 clock tile — instead of the 115,200 B a full frame costs. About 12 ms
-of the 40 MHz bus per second.
+The avatar is the only thing on this board that animates, so it is the only
+thing that earns a faster loop. It bobs, blinks and eases its yaw; at 4 fps that
+reads as a stutter and at 10 fps it does not. The band engine sizes its strips
+from the damage rect rather than from a fixed full-width band, so a buddy frame
+costs the tile's own 114x91 and nothing else.
+
+| State | Pushed per second | Share of the 40 MHz bus |
+|---|---|---|
+| idle, buddy behind a tab | 56,424 B — the 240x14 bar plus the 114x218 clock tile | ~1.1% |
+| idle, buddy on screen | 263,904 B — the above plus 114x91 ten times | ~5.3% |
+| a full frame | 115,200 B | — |
+
+`BUDDY_TICK_MS` in `main.c` is the dial. Nothing else in the image is affected
+by it: off the desktop, and with the buddy behind a tab, the loop is back at
+`IDLE_TICK_MS`.
+
+## The API
+
+`web/README.md` is the contract and it is implemented. Thirty-one endpoints
+across five owners, one route table, and one `eos_httpd_dispatch()`.
+
+| Endpoints | Answered by | Bound in `app_main` by |
+|---|---|---|
+| `/api/net/status`, `/api/wifi/*`, `/api/ble/*` | `kernel/svc/eos_httpd.c` | `eos_httpd_idf_bind()` |
+| `/api/settings` (GET, POST), `/api/system`, `/api/system/health`, `/api/system/reboot`, `/api/themes` | `main/eos_settings_bind.c` | `eos_settings_bind()` |
+| `/api/fs/*`, `/api/console/*`, `/api/buddy`, `/api/buddy/reload`, `/api/apps` | `kernel/svc/eos_apps.c` | `eos_apps_init()`, through `eos_httpd_set_api()` |
+| `/api/brain/{status,ask,cancel}` | `main/eos_brain_bridge.c` | `eos_brain_bridge_bind()` |
+| `/`, `/style.css`, `/app.js`, `/setup.js`, `/voxel-editor.js` | `main/eos_web_embed.c`, wrapped by `eos_apps_bind_files()` | both, in that order |
+
+Three agents added rows to that one route table in parallel and each guessed at
+the others'. `test_httpd.c`'s `test_every_endpoint()` is the reconciliation
+written down: it holds the complete list from `web/README.md` against the real
+route scan, and then drives every one through the real dispatch on a server with
+**nothing bound**. Two properties, and the second is the one that matters — every
+path must resolve, and an unwired endpoint must answer `501 unsupported`, never
+404 and never 500. `web/README.md`'s error table defines unsupported as "valid
+call, not available on this tier", which is the honest thing for a board whose
+ports were never assigned to say.
+
+Three details a client will notice:
+
+- **`limits.chunk_max` is 512 and every upload is bounded by it.** `/api/system`
+  reports it by calling `eos_apps_chunk_max()`, not by restating the number.
+  `eos_apps.c` is what enforces it, and a `chunk_max` reported as 4,096 by a
+  board that refuses anything over 512 turns every upload into a 413 that looks
+  like a network fault.
+- **`GET /api/buddy` 404s on this board even though a buddy is on the panel.**
+  That endpoint reports `/int/buddy/buddy.json`, and the avatar you can see is
+  compiled into the image. `web/README.md` already treats the 404 as normal on a
+  fresh card, which is exactly what this is.
+- **`POST /api/system/reboot` arms, it does not restart.** It answers
+  `{"ok":true,"in_ms":500}` and the OS loop flushes settings and calls
+  `esp_restart()` on the next tick. Restarting inside the handler drops the
+  socket mid-response and the page reports a network failure for a reboot that
+  worked.
 
 ## Provisioning
 
@@ -208,19 +393,87 @@ join takes the radio away from the SoftAP the request arrived on. Every slow
 operation is queued and run from `eos_httpd_pump()` on the main task, which is
 also why that pump must never move onto an HTTP worker.
 
+## Megabrain
+
+`kernel/svc/eos_brain.c` was complete and tested for a whole release and nothing
+started it, which is the entire reason the status bar said "no brain".
+`main/eos_brain_bridge.c` starts it, on a task of its own.
+
+**Why a task and not the frame loop.** `eos_brain_pump()` blocks: `connect()` to
+a mini that is switched off costs up to three seconds and `mdns_query_a()`
+costs two more. On the loop that owns the panel, the first ask on a board whose
+NVS cache is cold would freeze the glass for five seconds. 4,096 bytes of stack
+buys that back.
+
+**Why one task and not four workers.** `eos_brain_t` holds a socket, a parser
+and a request in one struct with no lock anywhere in it. Exactly one task calls
+it — never an HTTP worker, never a callback. Everybody else posts intent under a
+mutex held for microseconds, and the reply comes back through a 1 KB ring.
+
+**Back-pressure, not dropped text.** The task stops pumping when fewer than 256
+bytes of the ring are free. One `eos_brain_pump(b, 0)` is one `recv()` of at
+most `EOS_BRAIN_RX_MAX`, so that headroom is a bound rather than a guess, and a
+browser that stops reading becomes a full TCP window on the megabrain socket
+instead of a lost token. A bigger ring would not have promised that.
+
+**The status bar and the avatar.** `bar.brain_up` and `bar.brain_model` are read
+from the binding, so "no brain" becomes the model name when the mini answers.
+The megabrain request lifecycle drives `eos_buddy_t` through an event queue the
+frame loop drains, and that machine is now on the glass twice: as the bar's mood
+glyph, and as the avatar in the `buddy` window. `eos_bar_mood_t` is
+`eos_buddy_state_t` by another name, so neither is a decoration.
+
+**Where the settings come in.** The five `brain.*` keys are marked "live" in
+`web/README.md` and they are, in both directions. `app_main` hands the store to
+`eos_brain_bridge_from_settings()` at boot, so a configured mini survives a
+reboot; `eos_settings_bind.c`'s apply hook calls the same function on every
+`POST /api/settings` that touches one of them. All five go over together rather
+than one at a time, because `eos_brain_bridge_configure()` takes a whole config
+and a patch that changed the host and the model would otherwise apply the new
+host against the old model for the length of one call. The bridge applies it
+between requests, never mid-stream.
+
+## Serving the web app
+
+`web/README.md`'s rule is: prefer a real file, fall back to the embedded copy,
+and never leave the board with nothing to serve. All three binds are in
+`app_main` and the order is the rule.
+
+```
+eos_httpd_idf_bind(&httpd, ...)   // assigns the port table BY VALUE
+eos_web_embed_bind(&httpd)        // the five files, linked in with EMBED_FILES
+eos_apps_bind_files(&httpd)       // wraps them: a real file on /int wins
+```
+
+`eos_apps_bind_files()` keeps whatever was bound before it and calls it when its
+own open misses, so `/int/web/app.js.gz` is served the moment it exists and the
+copy in flash answers when it does not. Nothing deploys the five files onto
+`/int` yet, so today the embedded copy is what every board serves — which is
+what was verified on hardware and is unchanged by this run.
+
+`/api/fs/read` goes through the same ports with the fallback **off**: a GET for
+a file that is not there is a 404 and never the contents of a same-named asset
+in the image.
+
 ## What is not here
 
-Nothing in the boot path is stubbed. Two capabilities are absent because the
-code that would provide them does not exist yet, and both are absent honestly —
-they answer "no" rather than answering wrongly.
+Nothing in the boot path is stubbed.
 
-**A storage backend.** `kernel/hal/include/eos_storage.h` declares 22 functions
-and nothing implements them, so the `int` LittleFS partition is declared in the
-table and never mounted. `eos_httpd_idf_bind()` therefore leaves its three file
-ports NULL, which that header already defines as "no filesystem": every static
-route answers 404 and SETUP serves `eos_httpd`'s own built-in page, which needs
-no filesystem to work. The web app in `web/` is not on the board. Four lines in
-`app_main`, after the bind, turn static serving on the day a backend lands.
+**`EOS_FS_FAT`, and therefore `/sd`.** The microSD slot on this board exists
+physically and its pins are not known, so the profile says `sdcard.present
+false`. `eos_storage` declares the mount, routes it, and answers `EOS_ERR_NODEV`
+immediately without touching a bus. `/api/system`'s `fs` array reports the card
+declared and absent, which is what the panel says. Writing an SDSPI mount
+against guessed pins would be untestable code.
+
+**A clock.** `time.epoch` comes from `time()` and `synced` is false before 2020,
+because there is no SNTP client. The `clock` window shows uptime and says so.
+The first file written on a fresh board carries a 1970 mtime for ever.
+
+**`sys.autostart` does not launch anything.** Every window is open from boot, so
+the honest meaning of the key on this board is which one has the focus when the
+desktop appears — and that is what `apply_autostart()` does. There is no process
+to start; `apps/` is still empty.
 
 **A distinct join failure reason.** `eos_net_last_error()` collapses every
 association failure into `EOS_NET_ERR_JOIN`, so `/api/net/status` reports
@@ -338,39 +591,46 @@ dead at the end of flash. The app slot costs nothing for it.
 
 ### Margins as built
 
-Measured after this run, with WiFi, NimBLE and the HTTP server all in the image.
+Measured after this run, with WiFi, NimBLE, LittleFS, the HTTP server, the
+settings store, the megabrain client and the avatar all in the image.
 
 | Measure | esp32c6 (C6-LCD-1.3) |
 |---|---|
-| `esp-os.bin` | 1,363,280 B (0x14CF50) |
-| `factory` free | 1,782,448 B (57%) |
+| `esp-os.bin` | 1,640,048 B (0x190670) |
+| `factory` free | 1,505,680 B (48%) |
 | bootloader | 22,176 B |
 | bootloader headroom to 0x8000 | 10,592 B (32%) |
-| `int` free | 983,040 B (nothing writes it yet) |
-| DIRAM static | 203,650 of 452,112 B; **248,462 B remaining** |
+| `int` free | 983,040 B less whatever LittleFS costs on format |
+| DIRAM static | 242,428 of 452,112 B; **209,684 B remaining** |
 
-The image grew by 695,488 B in this run and the static DIRAM by 133,118 B. Both
-are the radios arriving, not the boot glue: before it, `eos_net.c` and
-`eos_httpd.c` were compiled into the archive and never pulled out of it, because
-nothing referenced them. The static DIRAM split, by archive:
+The static DIRAM split, by archive:
 
 | Archive | DIRAM | What |
 |---|---|---|
 | `libpp.a` | 47,134 | WiFi PHY/MAC layer |
+| `libmain.a` | 35,483 | the boot glue: `eos_httpd_t` 5,324, the QR pixel buffer 5,330, the avatar's box and shade table 7,184, the compiled-in buddy 1,941, `eos_settings_bind` 1,580, `eos_brain_bridge` 4,620, `eos_net_t` 1,068, the rest |
+| `libeos_kernel.a` | 26,275 | mostly `eos_apps.c`: a 6,144 B `.vox` staging buffer, a 1,024-voxel pool, the console ring |
 | `libble_app.a` | 23,011 | the NimBLE controller |
 | `libnet80211.a` | 19,392 | the 802.11 MAC |
-| `libmain.a` | 17,820 | the boot glue: `eos_httpd_t` 4,752, the QR pixel buffer 5,330, `eos_net_t` 1,144, `eos_wm_t` ~900, the rest |
-| `libfreertos.a` | 14,372 | |
+| `libfreertos.a` | 14,750 | |
 | `libhw_support.a` | 12,553 | |
-| `libeos_kernel.a` | 7,040 | |
 | `libphy.a` | 5,629 | |
+| `libjoltwallet__littlefs.a` | 136 | the mount's own statics; its pools are heap |
 
-**248 KB of DRAM is what the heap starts from, not the 425,648 B the tier
+**209 KB of DRAM is what the heap starts from, not the 425,648 B the tier
 decisions were made against.** Out of it the display takes 38,400 B for its DMA
-strips at `eos_display_init()`, and then WiFi, NimBLE and `esp_http_server` take
-their dynamic buffers. On the evidence above it fits with room, but nobody has
-measured it on silicon yet — the `heap` lines in the boot log are what settle
-it, and they are the first thing to read on the next flash.
+strips at `eos_display_init()`, LittleFS takes 1,424 B for the mount plus 648 B
+per open file, `eos_brain_bridge` takes about 4.6 KB for a task stack and a
+mutex, and then WiFi, NimBLE and `esp_http_server` take their dynamic buffers.
+On the evidence above it fits with room, but nobody has measured it on silicon
+since the previous flash — the `heap` lines in the boot log are what settle it,
+and they are the first thing to read on the next one.
+
+The last measurement on real hardware was **173,100 B free after boot, largest
+block 155,648**, and that was before storage, settings, megabrain, the apps
+component and the avatar. The static DIRAM has grown by roughly 39 KB since, so
+the number to expect is in the low 130s. If the boot log says otherwise, the log
+is right and this paragraph is wrong.
 
 If it turns out not to fit, the levers in order, none of which is a quiet buffer
 shrink:
@@ -400,15 +660,22 @@ will overflow into the partition table. The fix when that happens is
 | Not here | Why |
 |---|---|
 | LVGL | the C6 registry row says `compositor: lvgl`, and the backend that draws this image is not LVGL — it is `kernel/hal/backend/esp_lcd`, a banded RGB565 compositor. Either that row or the tier-to-backend table wants reconciling; the code reads `render.band_h` and ignores `render.compositor`. |
-| `esp_littlefs` | `int` is declared in the table but nothing mounts it. The component is `joltwallet/littlefs` and belongs with the code in `eos_storage.h` that will use it. Until then `web/` is not served from the board and SETUP uses `eos_httpd`'s built-in page. |
+| a second `.vox` pool | a bad buddy upload fills the one pool, so the previous model does not survive it and `/api/buddy` says so. A pool to make it survivable is 5,120 B for a case the editor already prevents. |
 | TLS | the SoftAP is WPA2 and its password is on the panel; that is the boundary. Over a joined network the server is plain HTTP on the LAN. |
 | a `sdkconfig.defaults.esp32` / `.esp32c5` | nothing target-specific is known to be needed there yet. The C6 file exists because the console genuinely moves. |
 | OTA | `ota_slots` is 0 in all six profiles. |
 
-## The one managed component
+## The two managed components
 
-`espressif/mdns`, pinned in `components/eos_kernel/idf_component.yml`. It left
-IDF core in v5.0, and `eos_brain.c`'s `ESP_PLATFORM` section calls
-`mdns_query_a()` to find the host running the model, so it is a hard requirement
-of the kernel rather than an option. It is fetched into `managed_components/` on
-first configure and pins nothing else.
+Both are pinned in `components/eos_kernel/idf_component.yml` and locked by hash
+in `dependencies.lock`, which is committed.
+
+`espressif/mdns` left IDF core in v5.0, and `eos_brain.c`'s `ESP_PLATFORM`
+section calls `mdns_query_a()` to find the host running the model, so it is a
+hard requirement of the kernel rather than an option.
+
+`joltwallet/littlefs` is what `eos_storage_idf.c` mounts `/int` with. It is the
+only non-Espressif code in the image: 28,766 B of flash and 136 B of static RAM.
+`sdkconfig.defaults` pins `LITTLEFS_CACHE_SIZE`, `LOOKAHEAD_SIZE` and
+`USE_MTIME` at their current values so the published heap figures cannot drift
+under a component update.

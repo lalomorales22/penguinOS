@@ -83,6 +83,48 @@
 #define EOS_HTTPD_CHUNK 1024     // bytes moved per read when streaming a file
 #endif
 
+// --- megabrain ------------------------------------------------------------
+//
+// These four must not exceed eos_brain's own EOS_BRAIN_PROMPT_MAX,
+// EOS_BRAIN_MODEL_MAX, EOS_BRAIN_SYSTEM_MAX and EOS_BRAIN_HOST_MAX. They are
+// restated rather than included because this header must still compile in a
+// host suite that links no brain at all; the adapter that binds the two
+// asserts they agree.
+#ifndef EOS_HTTPD_ASK_MAX
+#define EOS_HTTPD_ASK_MAX 384    // prompt bytes accepted, NUL included
+#endif
+#ifndef EOS_HTTPD_MODEL_MAX
+#define EOS_HTTPD_MODEL_MAX 32
+#endif
+#ifndef EOS_HTTPD_SYSTEM_MAX
+#define EOS_HTTPD_SYSTEM_MAX 224
+#endif
+#ifndef EOS_HTTPD_BHOST_MAX
+#define EOS_HTTPD_BHOST_MAX 48
+#endif
+#ifndef EOS_HTTPD_STREAM_CHUNK
+#define EOS_HTTPD_STREAM_CHUNK 256   // bytes drained per pass of a brain stream
+#endif
+// A model that has said nothing for this long has stopped talking, and the
+// worker is worth more than the reply. Longer than the first-token latency of
+// the slowest model on the mini, shorter than a browser's patience.
+#ifndef EOS_HTTPD_STREAM_IDLE_MS
+#define EOS_HTTPD_STREAM_IDLE_MS 30000u
+#endif
+#ifndef EOS_HTTPD_STREAM_TOTAL_MS
+#define EOS_HTTPD_STREAM_TOTAL_MS 120000u
+#endif
+#ifndef EOS_HTTPD_STREAM_POLL_MS
+#define EOS_HTTPD_STREAM_POLL_MS 10u     // how long the worker sleeps with nothing to send
+#endif
+
+// The ask body is a request body like any other and is bounded by
+// EOS_HTTPD_BODY_MAX before any of the above is looked at. 512 bytes holds a
+// 383-byte prompt with room to spare, and holds a 383-byte prompt AND a
+// 223-byte system prompt in the same document nowhere near — a client that
+// sends both gets 413 from the transport, which is the right answer and the
+// reason the web app sends `system` in the settings instead.
+
 #if EOS_HTTPD_SCAN_POOL < EOS_HTTPD_SCAN_MAX
 #error "EOS_HTTPD_SCAN_POOL below EOS_HTTPD_SCAN_MAX would rank fewer results than it reports"
 #endif
@@ -200,6 +242,32 @@ typedef enum {
     EOS_ROUTE_BLE_PAIR,
     EOS_ROUTE_BLE_STATUS,
     EOS_ROUTE_BLE_FORGET,
+    EOS_ROUTE_BRAIN_STATUS,
+    EOS_ROUTE_BRAIN_ASK,
+    EOS_ROUTE_BRAIN_CANCEL,
+    EOS_ROUTE_SETTINGS_GET,
+    EOS_ROUTE_SETTINGS_SET,    // the same path, the other method
+    EOS_ROUTE_SYSTEM,
+    EOS_ROUTE_SYSTEM_HEALTH,
+    EOS_ROUTE_SYSTEM_REBOOT,
+    EOS_ROUTE_THEMES,
+    // kernel/svc/eos_apps.c answers all of these. They are named here because
+    // eos_httpd_route() is the one route table, and a second one is how a
+    // portal ends up 404ing the endpoint it exists to answer.
+    EOS_ROUTE_FS_LIST,
+    EOS_ROUTE_FS_STAT,
+    EOS_ROUTE_FS_READ,
+    EOS_ROUTE_FS_USAGE,
+    EOS_ROUTE_FS_WRITE,
+    EOS_ROUTE_FS_ABORT,
+    EOS_ROUTE_FS_MKDIR,
+    EOS_ROUTE_FS_REMOVE,
+    EOS_ROUTE_FS_RENAME,
+    EOS_ROUTE_CONSOLE_LOG,
+    EOS_ROUTE_CONSOLE_EXEC,
+    EOS_ROUTE_BUDDY,
+    EOS_ROUTE_BUDDY_RELOAD,
+    EOS_ROUTE_APPS,
     EOS_ROUTE_CAPTIVE,         // an OS connectivity probe: redirect to the portal
     EOS_ROUTE_STATIC,          // a file under the active document root
 } eos_route_t;
@@ -343,6 +411,148 @@ typedef struct {
                                // bond_fail, no_hid, no_reports, timeout.
 } eos_httpd_ble_status_t;
 
+// ---------------------------------------------------------------- megabrain
+//
+// What GET /api/brain/status answers with. The board cannot discover which
+// models the mini is holding — megabrain publishes no list — so `models` is
+// whatever the binding was compiled or configured with, and `model` is the one
+// an ask with no model of its own will use. A NULL `models` is a legal answer
+// and the web app falls back to showing `model` alone.
+
+typedef struct {
+    char        host[EOS_HTTPD_BHOST_MAX];
+    uint16_t    port;
+    char        model[EOS_HTTPD_MODEL_MAX];
+    const char *const *models;   // borrowed, must outlive the call
+    int         model_count;
+    bool        reachable;       // a health probe answered inside its ttl
+    bool        busy;            // a request is in flight
+    const char *last_error;      // NULL when the last request did not fail
+} eos_httpd_brain_t;
+
+// One ask. Empty strings and a zero max mean "use the configured default";
+// the handler never invents one, because the defaults live with the settings.
+typedef struct {
+    const char *q;           // never NULL, never empty
+    const char *model;       // "" for the configured default
+    const char *system;      // "" for the configured default
+    int         max_tokens;  // 0 for the configured default
+} eos_httpd_ask_t;
+
+// What brain_read() answers with when it has no bytes. Anything >= 0 is a
+// count. These are deliberately not eos_err_t: the stream has already
+// committed a 200 and its only remaining vocabulary is text.
+#define EOS_HTTPD_STREAM_WAIT  0    // still running, nothing decoded yet
+#define EOS_HTTPD_STREAM_END  (-1)  // the reply finished cleanly
+#define EOS_HTTPD_STREAM_FAIL (-2)  // it did not; brain_status()->last_error says why
+
+// --- settings, system and themes -----------------------------------------
+//
+// The settings surface is deliberately generic: a flat key, a type and a
+// value. eos_settings owns the twelve key names, their ranges, which of them
+// are secrets and which of them route to eos_net, and this file moves pairs
+// without knowing any of it — the same reason the BLE states are restated
+// rather than included. It is also what lets the four endpoints below be
+// driven by a host suite that links no settings store at all.
+
+typedef enum {
+    EOS_HTTPD_VAL_STR = 0,
+    EOS_HTTPD_VAL_INT,
+    EOS_HTTPD_VAL_BOOL,       // emitted as true/false, never as "true"
+} eos_httpd_val_t;
+
+#ifndef EOS_HTTPD_KEY_MAX
+#define EOS_HTTPD_KEY_MAX 16      // 15 usable bytes: a settings key is an NVS key
+#endif
+#ifndef EOS_HTTPD_VALUE_MAX
+#define EOS_HTTPD_VALUE_MAX 224   // the longest settings value, brain.system
+#endif
+
+typedef struct {
+    char    key[EOS_HTTPD_KEY_MAX];
+    uint8_t type;                     // eos_httpd_val_t
+    char    s[EOS_HTTPD_VALUE_MAX];   // EOS_HTTPD_VAL_STR
+    long    n;                        // EOS_HTTPD_VAL_INT, and 0/1 for BOOL
+} eos_httpd_kv_t;
+
+// One mount, as GET /api/system's `fs` array. Mirrors eos_mount_t without
+// dragging eos_storage.h into a header the host suites include with no
+// filesystem linked.
+typedef struct {
+    char     point[8];       // "/sd", "/int"
+    char     fs[10];         // "littlefs", "fat", "none"
+    bool     mounted;
+    bool     writable;
+    bool     removable;
+    uint64_t total;
+    uint64_t used;
+} eos_httpd_fs_t;
+
+// Everything GET /api/system reports that is not the network or the mounts —
+// those come from net_status() and fs_info(), which already exist. About 380
+// bytes; it lives on the handler's stack, one at a time.
+typedef struct {
+    char     board_id[24];
+    char     board_name[48];
+    char     board_summary[48];
+
+    char     chip_target[12];      // "esp32c6"
+    char     chip_variant[24];
+    uint8_t  chip_cores;
+    uint8_t  chip_rev;
+    uint32_t flash_mb;
+    bool     psram_present;
+    uint32_t psram_mb;
+    char     psram_type[8];
+    uint8_t  mac[6];
+
+    uint8_t  render_tier;
+    char     compositor[12];
+    bool     lvgl;
+
+    char     disp_controller[16];
+    int16_t  disp_w, disp_h;
+    uint8_t  disp_rotation;
+    char     disp_bus[8];
+    uint32_t disp_clock_hz;
+    bool     backlight;
+
+    uint32_t heap_free, heap_min_free, heap_largest, heap_total;
+    uint32_t uptime_ms;
+
+    uint32_t epoch;                // unix seconds, 0 when the clock is unset
+    char     tz[48];
+    bool     time_synced;
+
+    char     fw_version[16];
+    char     fw_idf[16];
+    char     fw_built[26];         // ISO 8601
+
+    uint16_t chunk_max, path_max, name_max, list_max, open_files;
+} eos_httpd_sys_t;
+
+// One entry of GET /api/themes. `colors` is filled for the ACTIVE theme only
+// and the sixteen entries are eos_role_t order — the same order and the same
+// lowercased names the theme file itself uses. The list entries carry a name
+// and a path and nothing else, because parsing every theme file on the card to
+// answer a picker would mean a 4 KB read buffer and a 700-byte theme struct on
+// an HTTP worker's 5 KB stack, and the web app reads colours from the active
+// entry alone.
+#define EOS_HTTPD_THEME_ROLES 16
+
+typedef struct {
+    char    name[33];
+    char    path[EOS_HTTPD_PATH_MAX];
+    bool    has_colors;
+    char    color[EOS_HTTPD_THEME_ROLES][8];   // "#rrggbb"
+    int16_t gap, border, bar_h, tab_h, radius;
+} eos_httpd_theme_t;
+
+// The sixteen role names, in eos_role_t order, as /api/themes and the theme
+// files spell them. Restated here for the same reason the BLE states are; the
+// adapter that binds eos_theme asserts the two agree.
+extern const char *const eos_httpd_role_names[EOS_HTTPD_THEME_ROLES];
+
 typedef struct {
     // WiFi. scan_start returns 0, or a negative eos_err_t; BUSY means the radio
     // is doing something else and the caller must not have asked.
@@ -387,6 +597,82 @@ typedef struct {
     void    *(*file_open)(void *ctx, const char *path, long *size_out);
     int      (*file_read)(void *ctx, void *fh, void *buf, int n);
     void     (*file_close)(void *ctx, void *fh);
+
+    // --- megabrain -------------------------------------------------------
+    //
+    // Optional as a group: all four NULL and the three /api/brain endpoints
+    // answer 501, which is what a board with no model server on the LAN wants.
+    //
+    // Same job shape as the radios, and for a sharper version of the same
+    // reason. eos_brain is a single-request state machine with no lock of its
+    // own, so exactly one task may pump it, and that task is not an HTTP
+    // worker: mDNS discovery blocks for two seconds and a connect to a mini
+    // that is switched off blocks for three. brain_ask() therefore starts a
+    // request and returns, and the worker drains decoded text through
+    // brain_read() from a ring the owning task fills. That is the whole reason
+    // a reply can be seconds long without any worker ever waiting on a socket
+    // it does not own.
+    bool (*brain_status)(void *ctx, eos_httpd_brain_t *out);
+
+    // Starts one. 0 on success, or a negative eos_err_t — BUSY when a request
+    // is already in flight, which is the 409 the web app expects.
+    int  (*brain_ask)(void *ctx, const eos_httpd_ask_t *ask);
+
+    // Copies out at most `cap` bytes of decoded reply, whole UTF-8 characters
+    // only. Returns the count, or one of EOS_HTTPD_STREAM_*. It must not block:
+    // WAIT is the normal answer while the model is thinking.
+    int  (*brain_read)(void *ctx, char *buf, int cap);
+
+    // True when there was something to cancel. Called by POST /api/brain/cancel
+    // and again by the streaming worker when its client disappears, so it must
+    // be safe to call twice and safe to call with nothing running.
+    bool (*brain_cancel)(void *ctx);
+
+    // --- settings --------------------------------------------------------
+    //
+    // Optional as a pair: both NULL and /api/settings answers 501.
+    //
+    // Enumerated rather than fetched by name so this file never has to hold a
+    // key list of its own. false past the end.
+    bool (*settings_get)(void *ctx, int i, eos_httpd_kv_t *out);
+
+    // Applies one key out of a patch. `val` carries the decoded string for a
+    // string key and `num` the number for a numeric one; `is_num` says which
+    // the client actually sent, so a number where a string belongs is the
+    // store's 400 and not a silent coercion here. Returns 0 or a negative
+    // eos_err_t, and sets *reboot when the value will not take effect until
+    // the board restarts.
+    int  (*settings_set)(void *ctx, const char *key, const char *val,
+                         bool is_num, long num, bool *reboot);
+
+    // Called once after the whole patch, whatever happened to the individual
+    // keys. It is what hands a staged WiFi pair to eos_net, and it is separate
+    // because a join needs the SSID and the passphrase together. Optional.
+    void (*settings_commit)(void *ctx);
+
+    // --- system ----------------------------------------------------------
+    //
+    // sys_info NULL and /api/system, /api/system/health and /api/system/reboot
+    // all answer 501. fs_info NULL just omits the `fs` array, which the web
+    // app already skips rather than shows blank.
+    bool (*sys_info)(void *ctx, eos_httpd_sys_t *out);
+    bool (*fs_info)(void *ctx, int i, eos_httpd_fs_t *out);
+
+    // Schedules a restart no sooner than in_ms from now and returns
+    // immediately. It MUST NOT restart inside this call: the response has not
+    // been written yet, and a reboot that races it looks like a crash to the
+    // person who clicked the button. 0, or a negative eos_err_t.
+    int  (*reboot)(void *ctx, int in_ms);
+
+    // --- themes ----------------------------------------------------------
+    //
+    // theme_active NULL and /api/themes answers 501. It fills the name, the
+    // sixteen colours and the metrics of the theme the OS is wearing right
+    // now; theme_list enumerates what eos_storage can see, name and path only,
+    // and is optional — with it NULL the picker still shows the active theme,
+    // which is the "never empty" rule from web/README.md.
+    bool (*theme_active)(void *ctx, eos_httpd_theme_t *out);
+    bool (*theme_list)(void *ctx, int i, eos_httpd_theme_t *out);
 } eos_httpd_ports_t;
 
 // ============================================================== the server
@@ -414,6 +700,7 @@ typedef enum {
     EOS_HTTPD_BODY_BUF = 0,     // body[0..body_len) is the whole response
     EOS_HTTPD_BODY_FILE,        // stream `path` instead, already resolved
     EOS_HTTPD_BODY_REDIRECT,    // 302 to `location`
+    EOS_HTTPD_BODY_STREAM,      // drain ports.brain_read until it says stop
 } eos_httpd_body_kind_t;
 
 typedef struct {
@@ -451,6 +738,14 @@ typedef struct {
     char   arg[80];                       // one decoded body field at a time
     char   uripath[EOS_HTTPD_URI_MAX];
     char   loc[64];                       // staged redirect target
+
+    // The decoded ask. 640 bytes of BSS rather than 640 more bytes on the
+    // worker's stack, which already carries the 512-byte body buffer and has
+    // 4 KB of headroom to defend. `arg` above is 80 bytes and holds an SSID;
+    // a prompt does not fit it and must not be allowed to try.
+    char   ask_q[EOS_HTTPD_ASK_MAX];
+    char   ask_model[EOS_HTTPD_MODEL_MAX];
+    char   ask_system[EOS_HTTPD_SYSTEM_MAX];
 
     // Counters. Cheap, and the only way to see a captive portal misbehave from
     // the other side of a SoftAP.
@@ -521,5 +816,36 @@ void eos_httpd_idf_bind(eos_httpd_t *h, void *net);
 // /api/wifi/connect answers 202 and the client polls /api/net/status.
 void eos_httpd_pump(eos_httpd_t *h, uint32_t now_ms);
 #endif
+
+// ====================================================== the second route file
+//
+// The files, console, buddy and apps endpoints live in kernel/svc/eos_apps.c
+// and reach dispatch through the pointer below rather than by a direct call.
+// That is what keeps this file's host suite a two-file link, and what lets an
+// image that wants provisioning and nothing else leave eos_apps.c out entirely:
+// with no registration those routes answer 501, which is exactly what
+// EOS_ERR_UNSUPPORTED means. It is one image-wide pointer and not a field in
+// eos_httpd_t because eos_apps owns one upload handle, one log ring and one
+// buddy, so a second server would be sharing them anyway.
+typedef int (*eos_httpd_api_fn)(eos_httpd_t *h, int route,
+                                const eos_httpd_req_t *req, eos_httpd_resp_t *r);
+void eos_httpd_set_api(eos_httpd_api_fn fn);
+
+// The error model from web/README.md, and the two response stagers, exported so
+// that a second route file does not carry a second copy of the code/status
+// table. Two copies of that table is one copy that drifts, on the screen the
+// owner is looking at when something has already gone wrong.
+//
+//   e is an eos_err_t. eos_httpd_fail_err() is the spelling every handler
+//   wants: it turns a storage or service return straight into the right code,
+//   the right status and a sentence.
+const char *eos_httpd_err_code(int e);
+int         eos_httpd_err_status(int e);
+int  eos_httpd_reply_json(eos_httpd_t *h, eos_httpd_resp_t *r, int status,
+                          const eos_json_t *j);
+int  eos_httpd_fail(eos_httpd_t *h, eos_httpd_resp_t *r, int status,
+                    const char *code, const char *detail);
+int  eos_httpd_fail_err(eos_httpd_t *h, eos_httpd_resp_t *r, int e,
+                        const char *detail);
 
 #endif // EOS_HTTPD_H
