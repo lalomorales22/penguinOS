@@ -369,7 +369,7 @@ static const regrow_t registry[] = {
          footprint. Sizing the display strips from the probe figure asked for
          281,280 contiguous bytes out of a 110,592-byte largest block and the
          board booted blind. Two 40-row strips need 38,400 and fit. */
-      EOS_COMP_INDEXED8, false, 256, false, 40, 80, 40, 148188u,
+      EOS_COMP_INDEXED8, false, 256, false, 16, 80, 40, 148188u,
       true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, false,
       EOS_LED_GPIO_RGB, 4, 16, 17, -1, 1, true,
       EOS_AUDIO_DAC, 26, 34, 1, 6,
