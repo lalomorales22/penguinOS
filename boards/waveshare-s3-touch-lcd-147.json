@@ -1,0 +1,258 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "waveshare-s3-touch-lcd-147",
+  "name": "Waveshare ESP32-S3-Touch-LCD-1.47",
+  "summary": "The first board here whose pinout came from the vendor rather than from a JTAG scan, and the first that breaks essentially every assumption the other seven share: dual-core Xtensa instead of single-core RISC-V, 16MB of flash instead of 4, 8MB of octal PSRAM instead of none, a capacitive touch panel instead of none, and a microSD slot that actually mounts. It is also the board that proved two registry fields were missing. Its panel wants NO byte swap and NO inversion - the opposite of the C6 boards on both counts - and it wants swap_xy with no mirror at all, an orientation none of the four rotation cases could express. Both were hardcoded constants until this board disagreed.",
+  "chip": {
+    "target": "esp32s3",
+    "variant": "ESP32-S3 (QFN56) rev v0.2",
+    "cores": 2,
+    "flash_size_mb": 16,
+    "psram": {
+      "present": true,
+      "type": "octal",
+      "size_mb": 8
+    }
+  },
+  "render": {
+    "tier": 1,
+    "compositor": "lvgl",
+    "lvgl": true,
+    "palette_entries": 0,
+    "full_framebuffer": false,
+    "band_height": 40,
+    "min_tile_w": 80,
+    "min_tile_h": 40,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 361955,
+    "reason": "MEASURED, and DELIBERATELY CONSERVATIVE. The board reports internal free=361955, largest block=270336, plus 8386156 bytes of PSRAM; allocating TWO full 320x172 RGB565 frames (110,080 B each) in PSRAM SUCCEEDED. So this is the only board in the fleet that can physically run tier 2 with a double buffer and animations. It is nonetheless set to tier 1 because no board has ever run tier 2 and it is not established that the code path exists rather than merely being defined - and a first light that renders is worth more than a first light that is ambitious. Raise this to 2 only after the tier 2 path is confirmed implemented, and raise double_buffer, animations and full_framebuffer with it. heap_budget_bytes is the INTERNAL figure, not the 8.7MB total: PSRAM is not DMA-capable for every peripheral and the panel wants DMA-able buffers, so internal is the constrained resource and the honest budget."
+  },
+  "display": {
+    "controller": "ST7789",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
+    "native_width": 172,
+    "native_height": 320,
+    "rotation": 1,
+    "color_depth": 16,
+    "bytes_per_pixel": 2,
+    "color_order": "bgr",
+    "supports_16bit_pixels": true,
+    "pixel_format_reason": "RGB565 two bytes per pixel, byte-swapped like every other board, onto a panel whose subpixels are wired BGR. See byte_swap_reason.",
+    "bus": "spi",
+    "spi_host": "SPI2",
+    "clock_hz": 40000000,
+    "clock_reason": "40MHz, verified: the probe drove the panel at this rate with no tearing, pushing whole 320x172 frames in a single transfer.",
+    "pins": {
+      "sck": 38,
+      "mosi": 39,
+      "miso": -1,
+      "dc": 45,
+      "cs": 21,
+      "rst": 40,
+      "sda": -1,
+      "scl": -1
+    },
+    "i2c_address": null,
+    "backlight": {
+      "pin": 46,
+      "active_low": false,
+      "pwm": true
+    },
+    "col_offset": 34,
+    "row_offset": 0,
+    "offset_reason": "172 columns sit centred in the ST7789's 240-column window, so (240-172)/2 = 34, the same arithmetic as the LAFVIN and C5 1.47inch profiles. Note the backend swaps col_offset and row_offset when rotation is odd, so this lands as a Y gap on the panel; the probe drove it that way and the picture is not shifted.",
+    "invert": false,
+    "invert_reason": "VERIFIED false. With byte_swap true and BGR order, the complement quadrants of the gold test rendered violet and dark red rather than gold, so inversion is not wanted. Note this still differs from the LAFVIN and C5 1.47inch profiles, which need invert true.",
+    "byte_swap": true,
+    "byte_swap_reason": "VERIFIED, and it takes byte_swap TRUE together with color_order BGR - the two are only separable by a test that varies both. An earlier probe concluded byte_swap false from a red test, and that was WRONG: under swap+BGR a stored 0xF800 reaches the eye as R77% G11% B0%, which is red, so red cannot distinguish the two models and quietly confirms the wrong one. The theme colour #d4af37 can. Stored plain it renders R67% G85% B38% (green); stored swapped it renders R19% G68% B83% (blue); neither is gold, because varying the byte order alone never corrects the channel order. The full four-quadrant gold test - plain/swapped/complement/swapped-complement - came back green/blue/violet/dark-red, and swap+BGR predicts all four exactly. It also retroactively explains the earlier tests rather than dismissing them: the corner test drew red/green/blue/white and the panel showed red/BLUE/GREEN/white, which is BGR doing precisely what BGR does, and the four-stripe test's yellow lands on stripe 4 under this model. Lesson for the next board: probe colour order with a colour that has THREE distinct channel levels. Red, green and blue are the three worst choices because each is invariant under some wrong model.",
+    "mirror_x": true,
+    "mirror_y": false,
+    "mirror_reason": "VERIFIED, and the reason mirror_x/mirror_y exist. This panel needs swap_xy with NO mirror, which none of the four rotation cases produces - each pairs swap_xy with exactly one mirror. rotation 1 supplies mirror_x, so mirror_x true XORs it back off and the net effect is swap_xy alone. Established with a letter F, because handedness appears in no log and no colour test: a mirrored red square is still a red square. With swap_xy alone the F read correctly with the reference dot top-left; adding mirror_y put the dot top-right and made the F backwards; adding mirror_x put it bottom-left and made it backwards. Only the no-mirror case is a rotation rather than a reflection on this panel."
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "Carried on every board in the fleet, and still wanted here even though this is the first board with touch: a keyboard is how the tiling shortcuts (super+Enter, super+q, super+space) are driven, and a touch panel is not a substitute for them."
+    },
+    "web_input": true,
+    "touch": {
+      "present": true,
+      "controller": "AXS5106L",
+      "bus": "i2c",
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": 48,
+        "sda": 42,
+        "scl": 41
+      },
+      "i2c_address": 99,
+      "absent_reason": ""
+    },
+    "buttons": []
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": false,
+      "kind": "none",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": -1,
+      "count": 0,
+      "active_low": false
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1
+    },
+    "sdcard": {
+      "present": true,
+      "bus": "spi",
+      "spi_host": "SPI3",
+      "pins": {
+        "sck": 16,
+        "mosi": 15,
+        "miso": 17,
+        "cs": 14
+      },
+      "max_clock_hz": 20000000,
+      "shares_display_bus": false,
+      "mount_point": "/sd"
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": "/dev/cu.usbmodem101",
+    "usb_bridge": "usb_serial_jtag",
+    "upload_baud": 460800,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "custom-16mb",
+    "app_partition_kb": 4096,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-S3",
+      "flash_size_mb": 16,
+      "psram": true
+    },
+    "panel_id_register": {
+      "supported": false,
+      "register": null,
+      "reads_back": null,
+      "note": "MISO is not wired to the panel, so the controller cannot be read back. Identity came from the vendor pin definition and was confirmed by the panel initialising and rendering correctly under esp_lcd_new_panel_st7789."
+    },
+    "usb_serial": "28:84:85:55:37:38",
+    "mac_allowlist": [
+      "28:84:85:55:37:38"
+    ],
+    "distinguishing_notes": [
+      "auto_detectable is false like every other profile, and that is a rule about esptool rather than about this board: esptool reports chip, flash size, PSRAM and MAC and nothing else, so it can never confirm the PANEL. What is true here is that those four fields alone are enough to pick this board out of the fleet, which is not true of any other - the C6 pair is indistinguishable to esptool.",
+      "The ONLY board in the fleet esptool can identify unambiguously on its own: it is the only ESP32-S3, the only one reporting 16MB of flash, and the only one reporting PSRAM. Contrast the C6 pair, which esptool cannot tell apart at all.",
+      "esptool prints 'Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)' - the PSRAM line is the giveaway.",
+      "Physically: 1.47 inch 172x320 IPS with a TOUCH layer, a TF slot, and a battery connector. The non-touch 1.47 boards look similar but have no AXS5106L on the bus.",
+      "MAC 28:84:85:55:37:38 is this specific unit."
+    ],
+    "confirm_prompt": "This reports as an ESP32-S3 with 16MB flash and 8MB PSRAM, which no other board in the registry does. Is this the Waveshare ESP32-S3-Touch-LCD-1.47?"
+  },
+  "unverified": [
+    "render.min_tile_w",
+    "render.min_tile_h",
+    "render.band_height",
+    "peripherals.internal_fs.partition_label",
+    "peripherals.rgb_led.present",
+    "inputs.buttons",
+    "flashing.flash_mode",
+    "flashing.flash_freq_mhz"
+  ],
+  "gotchas": [
+    {
+      "id": "bgr-panel-and-a-bad-probe-colour",
+      "severity": "high",
+      "field": "display.color_order",
+      "text": "This panel is wired BGR and needs the byte swap, so color_order bgr AND byte_swap true. It differs from the 1.47inch siblings only in invert, which is false here. The trap is not the setting, it is how you test for it: byte order and channel order are NOT independently observable with a single primary colour. Pure red stored as 0xF800 arrives as R77% G11% B0% under swap+BGR - still recognisably red - so a red probe confirms whichever model you already believed. Pure green and pure blue are just as bad; under BGR they swap into each other, which reads as 'the tester mixed up two labels' rather than as data. Probe with a colour having three DISTINCT channel levels. #d4af37 (R212 G175 B55) is ideal: it renders green under no-swap-RGB, blue under swap-RGB, violet and dark red under the inverted variants, and gold under exactly one model.",
+      "verified": true
+    },
+    {
+      "id": "swap-xy-with-no-mirror",
+      "severity": "high",
+      "field": "display.mirror_x",
+      "text": "The backend's rotation table pairs swap_xy with exactly one mirror in every case, which is what makes each case a rotation rather than a reflection - but which mirror is correct depends on the panel's default scan order. This panel wants swap_xy with NO mirror, so mirror_x true cancels the one rotation 1 supplies. Test handedness with an asymmetric GLYPH, never with colour: a mirrored red square is still a red square, and a mirrored colour-corner test is ambiguous between a transpose and an identity. A letter F settles all eight orientations at once.",
+      "verified": true
+    },
+    {
+      "id": "psram-starves-the-radio",
+      "severity": "high",
+      "field": "chip.psram",
+      "text": "MEASURED, and the one thing that stopped first light from actually being usable. With PSRAM enabled and CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL left at its 32768 default, the board boots, brings up its setup AP, accepts an association and hands out a DHCP lease - and then every HTTP response fails with errno 11 (EAGAIN) after send_wait_timeout, so the captive portal spins forever on a network that looks completely healthy. The cause is that Wi-Fi TX needs INTERNAL DMA-capable memory while CONFIG_SPIRAM_USE_MALLOC makes the general heap prefer PSRAM, and 32KB has to cover the radio, lwIP and this board's LCD band buffers at 320x40x2 = 25,600 bytes each. Starvation here is SILENT: nothing fails to allocate, the send simply never completes. Association and DHCP keep working throughout because they are far smaller, which is exactly what makes it look like a web server bug. Proven by building the identical firmware with CONFIG_SPIRAM=n - the error changed from EAGAIN to a benign ECONNRESET and the portal served at once. Fixed by CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072 in firmware/sdkconfig.defaults.esp32s3, after which the same page serves in 0.6-0.9s - faster than the no-PSRAM build's 3.2s. NOTE: raising the value in sdkconfig.defaults.* is not enough on its own if a build dir already has an sdkconfig; defaults only seed a NEW one. Delete <build-dir>/sdkconfig and rebuild, or the old value silently persists.",
+      "verified": true
+    },
+    {
+      "id": "octal-psram-not-quad",
+      "severity": "high",
+      "field": "chip.psram",
+      "text": "The ESP32-S3R8 carries OCTAL PSRAM. CONFIG_SPIRAM_MODE_OCT is not a performance preference - quad mode fails to initialise on this part and the 8MB never appears. With it set correctly esp_psram reports 'Found 8MB PSRAM device' and adds an 8192K pool. See firmware/sdkconfig.defaults.esp32s3.",
+      "verified": true
+    },
+    {
+      "id": "sd-is-sdio-run-as-spi",
+      "severity": "note",
+      "field": "peripherals.sdcard.bus",
+      "text": "The vendor wires this slot for 4-bit SDIO: D0-D3 on GPIO17/18/13/14, CMD on 15, CLK on 16. It is declared here as bus 'spi' with the standard SD-SPI remap - CLK->sck, CMD->mosi, D0->miso, D3->cs - because an SD card speaks both protocols and boards/schema.json has nowhere to record SDIO pin names: sdcard.pins is additionalProperties false and allows only sck/mosi/miso/cs, even though bus already permits 'sdmmc'. This is not a guess dressed up as a fact: the mount was VERIFIED, reporting name=NCard, 14910MB, 20000kHz. 4-bit SDIO would be roughly four times faster and is the obvious future upgrade; it needs schema and driver work first, not a profile edit. D1 (GPIO18) and D2 (GPIO13) are unused in SPI mode.",
+      "verified": true
+    },
+    {
+      "id": "sd-does-not-share-the-panel-bus",
+      "severity": "note",
+      "field": "peripherals.sdcard.shares_display_bus",
+      "text": "The card is on SPI3 and the panel on SPI2, so unlike the CYD there is no bus lock to take and card access cannot stall a frame. This is why max_clock_hz 20000000 is safe to leave as measured rather than backing it off.",
+      "verified": true
+    },
+    {
+      "id": "first-16mb-board",
+      "severity": "note",
+      "field": "flashing.partition_scheme",
+      "text": "partitions.csv is the 4MB layout and its own header claims every board in the fleet is 4MB - true until this one. This board uses firmware/partitions-16mb.csv, selected by CONFIG_PARTITION_TABLE_CUSTOM_FILENAME in firmware/sdkconfig.defaults.esp32s3, giving a 4MB app and an 11.9MB 'int' filesystem against 960KB on the small boards. The data partition MUST stay labelled 'int' - that string is peripherals.internal_fs.partition_label and reaches the firmware at compile time, so renaming it fails at boot with no compile error."
+    },
+    {
+      "id": "touch-driver-not-written",
+      "severity": "high",
+      "field": "inputs.touch.controller",
+      "text": "The AXS5106L was found by scanning the I2C bus with TP_RST released - it answers at 0x63 - and that is ALL that is established. No driver for it exists in penguinOS yet, and this is the first touch panel and the first I2C peripheral in the fleet. The profile declares the hardware honestly; it does not imply the OS can read it. Note the scan order matters: with TP_RST still low the controller holds its lines released and the bus scans empty, which looks exactly like bad wiring.",
+      "verified": true
+    },
+    {
+      "id": "vendor-pinout-not-jtag",
+      "severity": "note",
+      "field": "display.pins",
+      "text": "Unlike the two C6 boards, every pin here was read from the vendor's published pin definition rather than recovered from a running factory image over JTAG. That made bring-up minutes rather than an hour, but it also means the pins were CONFIRMED by the panel working, not measured independently - a subtle difference if a future revision of this board moves one. The JTAG procedure in boards/waveshare-c6-lcd-13/README.md still applies if that ever happens."
+    }
+  ]
+}
