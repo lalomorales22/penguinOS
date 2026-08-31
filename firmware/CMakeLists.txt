@@ -15,6 +15,22 @@ set(EOS_BOARD_ID "waveshare-c6-lcd-13" CACHE STRING
 get_filename_component(EOS_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(EOS_KERNEL_DIR "${EOS_REPO_ROOT}/kernel"            CACHE INTERNAL "")
 set(EOS_BOARDS_DIR "${EOS_REPO_ROOT}/boards/generated"  CACHE INTERNAL "")
+# EOS_BOARD_PROFILE is NOT the name of this variable and never was. tools/flash.sh
+# passed it for a long time, nothing read it, and every build silently fell back
+# to the default board above. That was invisible whenever the requested board
+# happened to share a target with the default - the two C6 boards would have
+# been flashed with each other's panel geometry and reported success. Only a
+# CROSS-target request tripped the check further down and exposed it.
+#
+# So refuse the old spelling loudly rather than ignoring it.
+if(DEFINED EOS_BOARD_PROFILE)
+    message(FATAL_ERROR
+        "EOS_BOARD_PROFILE is not read by this build; the variable is EOS_BOARD_ID.\n"
+        "  Passing it silently builds the default board instead of the one you asked\n"
+        "  for, which is only visible when the targets differ.\n"
+        "  Use:  -DEOS_BOARD_ID=${EOS_BOARD_PROFILE}")
+endif()
+
 set(EOS_BOARD_HEADER_PATH "${EOS_BOARDS_DIR}/${EOS_BOARD_ID}.h")
 
 # boards/generated/ is gitignored: the headers are derived from boards/*.json and
