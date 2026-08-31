@@ -1,0 +1,54 @@
+# ESP32 (original) overrides. Appended by IDF after sdkconfig.defaults when
+# CONFIG_IDF_TARGET is esp32.
+#
+# The original ESP32 has materially less IRAM than the C6 or the S3, and with
+# Wi-Fi and NimBLE both resident penguinOS overflows it:
+#
+#   ld: section `.iram0.text' will not fit in region `iram0_0_seg'
+#   ld: region `iram0_0_seg' overflowed by 668 bytes
+#
+# Moving the Wi-Fi datapath out of IRAM and into flash recovers far more than
+# the 668 bytes needed. The cost is throughput on the radio - those functions
+# now run from the flash cache - which is the right trade here: this is the
+# tier 0 board, it serves a 20 KB page and talks to a keyboard, and it is not
+# moving enough bytes for the difference to show. Do NOT copy this into the
+# other targets' files: they have the IRAM to spare and would lose the speed
+# for nothing.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
+# The CH340 bridge means the console is a real UART on the stock pins, not the
+# SoC's own USB peripheral - the opposite of the C6 and S3 boards, which need
+# CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG. The IDF default is already correct here;
+# the line exists so the difference is written down rather than inferred from
+# an absence.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# 240 MHz is the ESP32 maximum, and the SPI panel is clocked at 40 MHz off it.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Wi-Fi buffer pools, cut to fit. MEASURED: with IDF's defaults this board
+# boots to 5,612 bytes free and esp_http_server cannot start at all -
+# httpd_start returns ESP_ERR_HTTPD_TASK and the web app is simply down.
+#
+# The boot trace is unambiguous about where 148,188 bytes go:
+#   display 40,476   BLE 37,000   Wi-Fi 57,932   brain 4,544
+# Wi-Fi's defaults (32 dynamic RX, 32 dynamic TX, 10 static RX, AMPDU both
+# ways) are sized for a board with four times this RAM. A captive portal
+# serving a 2.7 KB page does not need them.
+#
+# AMPDU off is the single biggest saving and the one with a real cost:
+# aggregation is what makes bulk transfer fast, so throughput drops. On a board
+# whose whole job is a setup page and a keyboard that is the right trade, and
+# it is NOT a trade to copy to the other targets - they have the RAM.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+
+# lwIP's socket table is per-socket state, and 10 is more than this board will
+# ever have open: four httpd workers, the brain's one client, DNS.
+CONFIG_LWIP_MAX_SOCKETS=8

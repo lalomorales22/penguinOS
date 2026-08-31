@@ -15,3 +15,10 @@
 dependencies:
   espressif/mdns: "^1.5"
   joltwallet/littlefs: "^1.14"
+
+  # The CYD's panel. esp_lcd itself ships only st7789/ssd1306/nt35510, so the
+  # ILI9341 constructor comes from here. Pulled in for every board rather than
+  # conditionally: it is a few KB of init sequence, --gc-sections drops it on
+  # boards that never call it, and a per-board dependency list is a second
+  # place for the board registry to drift out of step with itself.
+  espressif/esp_lcd_ili9341: "^1.2.0"

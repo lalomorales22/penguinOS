@@ -31,6 +31,7 @@
 #include "driver/ledc.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
+#include "esp_lcd_ili9341.h"
 #include "esp_lcd_panel_ops.h"
 #endif
 
@@ -601,7 +602,16 @@ static eos_err_t panel_start(const eos_board_t *b, uint32_t max_xfer)
                                        : LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
     };
-    if (esp_lcd_new_panel_st7789(st.io, &pc, &st.panel) != ESP_OK) return EOS_ERR_IO;
+    // Which constructor, decided by the board rather than by this file's name.
+    // The two parts differ in their init sequence, not in anything downstream:
+    // once the panel handle exists, every draw, gap, mirror and inversion call
+    // below is identical, which is why one backend can serve both.
+    esp_err_t pe;
+    switch (b->panel.panel) {
+    case EOS_PANEL_ILI9341: pe = esp_lcd_new_panel_ili9341(st.io, &pc, &st.panel); break;
+    default:                pe = esp_lcd_new_panel_st7789(st.io, &pc, &st.panel); break;
+    }
+    if (pe != ESP_OK) return EOS_ERR_IO;
 
     if (esp_lcd_panel_reset(st.panel) != ESP_OK) return EOS_ERR_IO;
     if (esp_lcd_panel_init(st.panel)  != ESP_OK) return EOS_ERR_IO;
@@ -670,7 +680,12 @@ eos_err_t eos_display_init(void)
 
     const eos_board_t *b = eos_board_get();
     if (!b) return EOS_ERR_NODEV;
-    if (b->panel.panel != EOS_PANEL_ST7789) return EOS_ERR_UNSUPPORTED;
+    // ST7789 and ILI9341 both. The ILI9488 is deliberately NOT here: it has no
+    // 16-bit mode at all and needs three bytes per pixel, which the wire_bytes
+    // check below rejects anyway - but rejecting it by NAME here would be a
+    // lie about why, so the format check is left to do it.
+    if (b->panel.panel != EOS_PANEL_ST7789 &&
+        b->panel.panel != EOS_PANEL_ILI9341) return EOS_ERR_UNSUPPORTED;
     if (b->panel.bus   != EOS_BUS_SPI)      return EOS_ERR_UNSUPPORTED;
     if (b->panel.color_depth != 16 || b->panel.wire_bytes != 2) return EOS_ERR_UNSUPPORTED;
 

@@ -3,7 +3,7 @@
   "schema_version": 1,
   "id": "cyd-2432s024n",
   "name": "ESP32-2432S024N (Cheap Yellow Display, 2.4in, N variant)",
-  "summary": "The tightest board penguinOS runs on, and the one that sets tier 0. Also sold as HW-950.",
+  "summary": "The tightest board penguinOS runs on, and the one that sets tier 0. Also sold as HW-950, which is the marking on the silkscreen and the only identifier the board carries. Written from documentation long before any unit was on a bench, and VERIFIED on hardware afterwards: every display pin, the backlight, the wire format, the channel order, the orientation and the heap all came back as described. The one thing documentation could not have told us is that its controller answers no ID register at all - 0x04, 0xD3 and 0xB6 all read zero - so the panel had to be identified by how it BEHAVES rather than by what it says it is.",
   "chip": {
     "target": "esp32",
     "variant": "ESP32-D0WD-V3",
@@ -20,14 +20,14 @@
     "compositor": "indexed8",
     "lvgl": false,
     "palette_entries": 256,
-    "full_framebuffer": true,
-    "band_height": 0,
+    "full_framebuffer": false,
+    "band_height": 40,
     "min_tile_w": 80,
     "min_tile_h": 40,
     "double_buffer": false,
     "animations": false,
-    "heap_budget_bytes": 98304,
-    "reason": "About 20KB of free heap at steady state with WiFi and BLE up. A 320x240 RGB565 framebuffer is 150KB and LVGL's own working set is tens of KB on top of that, so neither fits. A 320x240 8-bit indexed buffer is 76.8KB, allocated once at boot before WiFi fragments the heap, and flushed a line at a time through a 640-byte RGB565 staging buffer. This is the same arrangement the cyd24 terminal and the six-game arcade already run."
+    "heap_budget_bytes": 148188,
+    "reason": "MEASURED BY penguinOS ITSELF, not by a probe, and the distinction is the whole point of this field. A bare bring-up probe on this board reports free=281612 / largest=147456; penguinOS at app_main reports free=148188 / largest=110592. The difference is the OS's own static footprint, and a budget taken from the probe is not a budget the OS can ever honour. Recording the probe figure here made the display backend size its strips at 293 rows and ask heap_caps_malloc for 281,280 contiguous DMA bytes out of a 110,592-byte largest block; it failed with EOS_ERR_POOL and the board booted blind. band_height 40 and full_framebuffer false follow from the same measurement: two 40-row strips at 240 wide is 38,400 bytes, which fits the largest block with room left for Wi-Fi, NimBLE, the web server and the buddy. A full 240x320 frame would need 153,600 bytes for one and 307,200 for the two the backend double-buffers - more than this board's entire free heap. That is what keeps it at tier 0, and the number that decides it is the largest BLOCK, never the free total."
   },
   "display": {
     "controller": "ILI9341",
@@ -36,7 +36,7 @@
     "bsp_version": null,
     "native_width": 240,
     "native_height": 320,
-    "rotation": 1,
+    "rotation": 0,
     "color_depth": 16,
     "bytes_per_pixel": 2,
     "color_order": "bgr",
@@ -66,10 +66,12 @@
     "row_offset": 0,
     "invert": false,
     "byte_swap": true,
-    "byte_swap_reason": "INHERITED, NOT MEASURED. Until the ESP32-S3-Touch-LCD-1.47 disagreed, the byte swap was hardcoded in eos_display_st7789.c for every board, so true reproduces exactly the behaviour this profile was written against. This board has never been run, so that is a default and not an observation. Check it the first time the board boots: draw pure red (0xF800). Red means true is correct; CYAN means invert is wrong; YELLOW means BOTH this and invert are wrong, which is the combination that does not look like a wire-format bug and cost real time on the S3.",
-    "mirror_x": false,
+    "byte_swap_reason": "VERIFIED on hardware, together with color_order, by a three-primary test - the only instrument that separates them. Byte order and channel order are NOT independently observable with one colour, and they are barely observable with gold: under swap+BGR #d4af37 lands on a yellow-green that reads as 'yellowish gold' and cheerfully confirms the wrong model, which is exactly what happened here for several rounds. Driving the panel in RGB order and storing 0xF800, 0x07E0, 0x001F as three full-width bands makes each of the four models produce a DIFFERENT sequence: R,G,B is no-swap+RGB; B,G,R is no-swap+BGR; B,R,G is swap+RGB; R,B,G is swap+BGR. The panel showed RED, BLUE, GREEN - swap+BGR, with no arithmetic required of anyone.",
+    "mirror_x": true,
     "mirror_y": false,
-    "mirror_reason": "Both false, which XORs to exactly the mirror bits the rotation already implied - so this board renders bit-for-bit as it did before mirror_x and mirror_y existed. Not a measurement: it is the old hardcoded behaviour made explicit. If text or the avatar ever renders backwards on this board, this pair is the first thing to check."
+    "mirror_reason": "VERIFIED true on X, and this board is exactly why mirror_x/mirror_y exist. The bring-up probe never CALLED esp_lcd_panel_mirror at all, so it inherited whatever MADCTL the esp_lcd ILI9341 init left behind - and its two Fs, one as stored and one pre-mirrored, showed the as-stored one reading correctly. penguinOS is not so passive: rotation 0 makes it call mirror(false, false) explicitly, which CLEARS the MX bit the driver's own default had set, and the whole screen came up mirrored - the QR code and every word backwards. mirror_x true XORs that bit back on. The lesson generalises past this board: a probe that omits a call is not testing the same configuration as an OS that makes it with default arguments. Handedness is invisible in every log and every colour test, so it can only be caught by drawing something asymmetric AND driving the panel the way the OS will - a QR code nobody can scan is the failure mode.",
+    "invert_reason": "VERIFIED false. Inversion never had to be guessed at here: the three-primary test returned saturated primaries in a recognisable permutation, and an inverting panel would have returned their complements - cyan, yellow, magenta - which is not a result anyone can mistake for red, blue and green.",
+    "offset_reason": "VERIFIED zero. A 240-wide fill reached both edges with no shear and no black column, and the row-count test placed row 0 at the top of the glass."
   },
   "inputs": {
     "bluetooth_keyboard": {
@@ -92,7 +94,7 @@
         "scl": -1
       },
       "i2c_address": null,
-      "absent_reason": "This is the N variant: no touch controller is fitted at all, despite the module looking exactly like a touchscreen. Two boards were probed for 60 seconds each with an I2C sweep and an XPT2046 transfer on every candidate pin set, including the classic CLK25 MOSI32 MISO39 CS33 wiring. Nothing answered on either. Do not probe again."
+      "absent_reason": "DISPUTED, and the profile is wrong for at least some units. This said the N variant has no touch controller fitted, established by probing two boards for 60 seconds and seeing nothing. The owner of THIS board reports that the factory firmware it shipped with had working touch - which is far stronger evidence than a negative probe result, because a probe that looks on the wrong pins finds nothing on a board that is fully populated, and the touch bus has three incompatible published pinouts across the CYD family. Only CS=33 and IRQ=36 are agreed by every source. present stays false ONLY because nothing has been measured yet, and false is what stops penguinOS looking for a chip it cannot yet drive. It is a placeholder, not a finding. Settle it by probing the XPT2046 on each candidate bus - it is an SPI ADC, so a sane 12-bit reading separates a fitted chip from a floating pin at once - and cross-check against backup/factory-4MB.bin, which is the board's own testimony about which GPIOs its touch code used."
     },
     "buttons": [
       {
@@ -151,9 +153,14 @@
   "flashing": {
     "port_hint": "/dev/cu.usbserial-10",
     "usb_bridge": "CH340",
-    "upload_baud": 460800,
+    "upload_baud": 230400,
     "monitor_baud": 115200,
-    "bad_baud_rates": [],
+    "bad_baud_rates": [
+      {
+        "baud": 460800,
+        "reason": "Fails within a second of 'Configuring flash size...' with \"A fatal error occurred: Invalid head of packet (0xFD): Possible serial noise or corruption.\" - the byte differs run to run (0xFD, 0x7D seen). Reproduced on a 64 KB read, so it is not a length effect: 460800 simply does not work on this CH340. 230400 passes the same read every time."
+      }
+    ],
     "flash_mode": "dio",
     "flash_freq_mhz": 80,
     "partition_scheme": "huge_app",
@@ -164,7 +171,7 @@
   "identification": {
     "auto_detectable": false,
     "esptool_reports": {
-      "chip": "ESP32-D0WD-V3",
+      "chip": "ESP32",
       "flash_size_mb": 4,
       "psram": false
     },
@@ -174,8 +181,10 @@
       "reads_back": null,
       "note": "Not attempted. The ILI9488 boards proved that a controller ID read is not something to build on, so nothing in penguinOS reads one."
     },
-    "usb_serial": null,
-    "mac_allowlist": [],
+    "usb_serial": "E0:8C:FE:2E:D6:2C",
+    "mac_allowlist": [
+      "e0:8c:fe:2e:d6:2c"
+    ],
     "distinguishing_notes": [
       "2.4 inch panel in a yellow PCB with a microSD slot on the left edge.",
       "Silkscreened ESP32-2432S024N, sometimes HW-950. The trailing N is the variant letter and the only thing separating it from the R variant, which does have an XPT2046 touch chip.",
@@ -184,14 +193,13 @@
     "confirm_prompt": "Is this the 2.4in Cheap Yellow Display, and does the silkscreen end in N rather than R? The R variant has touch and this profile does not configure it."
   },
   "unverified": [
-    "display.color_order",
     "flashing.flash_mode",
     "flashing.flash_freq_mhz",
-    "render.heap_budget_bytes",
     "peripherals.internal_fs.partition_label",
     "render.min_tile_w",
     "render.min_tile_h",
-    "display.byte_swap"
+    "inputs.touch.present",
+    "inputs.touch.controller"
   ],
   "gotchas": [
     {
@@ -229,6 +237,27 @@
       "severity": "note",
       "field": "peripherals.sdcard.spi_host",
       "text": "Panel is on HSPI and the microSD is on VSPI (SCK18 MISO19 MOSI23 CS5). They do not share a bus, so no bus lock is needed between them."
+    },
+    {
+      "id": "answers-no-id-register",
+      "severity": "note",
+      "field": "identification.panel_id_register",
+      "text": "MISO is wired on GPIO12 and WORKS - 0x09 (RDDST) returns 00 30 80 00 00 and 0x0A (RDDPM) returns 08 00, real data - but every identification register reads zero: 0x04 RDDID, 0xD3 RDID4 and 0xB6 Display Function Control all come back 00 00 00 00. So a read of zeros here does NOT mean the pins are wrong, and a probe that concludes that will send you looking for a wiring fault that does not exist. It also closes off the neatest way to measure resolution: 0xB6's NL field would have given the line count directly. Identify this panel by behaviour instead - see the two gotchas below.",
+      "verified": true
+    },
+    {
+      "id": "overrun-shears-sideways-clamps-downward",
+      "severity": "high",
+      "field": "display.native_width",
+      "text": "The two axes fail DIFFERENTLY when you paint past the panel, and knowing which is which is what makes the resolution measurable without a datasheet. Painting 320 columns wide SHEARS: the controller clamps its column window to 239 and each row's surplus 80 pixels spill into the next row, stepping the whole image diagonally. Painting 480 rows tall does NOT shear - the row counter clamps at 319 and every remaining row lands on top of row 319, so 80 rows of white collapse into a ONE-PIXEL HAIRLINE at the bottom edge. A hairline where a band was expected is the signature of a 320-row panel, and it is easy to misread as 'the band is there, so the panel is taller'. Test height with the width pinned to a value both candidates accept, or the shear makes the result unreadable.",
+      "verified": true
+    },
+    {
+      "id": "ch340-corrupts-long-reads-not-fast-ones",
+      "severity": "high",
+      "field": "flashing.bad_baud_rates",
+      "text": "460800 fails outright - 'Invalid head of packet', within a second - so it is listed in bad_baud_rates and upload_baud drops to 230400. But baud is only half the story and the more useful half is this: at 230400 a 64 KB read succeeds every time while a continuous 4 MB read dies around 52% with 'Corrupt data, expected 0x1000 bytes but received 0xfa7'. The corruption is a function of read LENGTH, not rate. Back this board up in 512 KB chunks with a retry around each and concatenate them; all eight chunks then pass first time. backup/factory-4MB.bin was captured that way, sha256 81cff512b796c94ce16dc0b9fac0c13fe4d858367f5918b7740ebc934bb4cc5b.",
+      "verified": true
     }
   ]
 }
