@@ -312,6 +312,16 @@ class Validator:
         self.get("display.col_offset", int, lo=0)
         self.get("display.row_offset", int, lo=0)
         self.get("display.invert", bool)
+        # Not a constant across the fleet. The C6 boards need the swap and the
+        # ESP32-S3-Touch-LCD-1.47 does not; with invert also wrong, pure red
+        # renders as yellow rather than as anything obviously broken, which is
+        # why this is a required measured field and not a default.
+        self.get("display.byte_swap", bool)
+        # XORed with the rotation's own mirror bits. The rotation table assumes a
+        # panel default scan order; where a panel disagrees these express it
+        # without adding a fifth rotation case that means "the odd one".
+        self.get("display.mirror_x", bool)
+        self.get("display.mirror_y", bool)
 
         if nw is None or nh is None or rot is None:
             return None, None
@@ -1054,6 +1064,9 @@ def emit(d, src, digest):
     o.d("EOS_LCD_COL_OFFSET", disp["col_offset"])
     o.d("EOS_LCD_ROW_OFFSET", disp["row_offset"])
     o.d("EOS_LCD_INVERT", 1 if disp["invert"] else 0)
+    o.d("EOS_LCD_BYTE_SWAP", 1 if disp["byte_swap"] else 0)
+    o.d("EOS_LCD_MIRROR_X", 1 if disp["mirror_x"] else 0)
+    o.d("EOS_LCD_MIRROR_Y", 1 if disp["mirror_y"] else 0)
 
     o.section("inputs")
     o.d("EOS_HAS_BT_KEYBOARD", 1 if bt["present"] else 0)
@@ -1188,7 +1201,8 @@ HAL_PANEL = {"ILI9341": "EOS_PANEL_ILI9341", "ST7789": "EOS_PANEL_ST7789",
 HAL_BUS = {"spi": "EOS_BUS_SPI", "i2c": "EOS_BUS_I2C", "sdmmc": "EOS_BUS_SDMMC",
            None: "EOS_BUS_NONE"}
 HAL_TOUCH = {None: "EOS_TOUCH_NONE", "XPT2046": "EOS_TOUCH_XPT2046",
-             "GT911": "EOS_TOUCH_GT911", "CST816": "EOS_TOUCH_CST816"}
+             "GT911": "EOS_TOUCH_GT911", "CST816": "EOS_TOUCH_CST816",
+             "AXS5106L": "EOS_TOUCH_AXS5106L"}
 HAL_LED = {"none": "EOS_LED_NONE", "gpio_rgb": "EOS_LED_GPIO_RGB",
            "ws2812": "EOS_LED_WS2812"}
 HAL_AUDIO = {"none": "EOS_AUDIO_NONE", "dac": "EOS_AUDIO_DAC", "i2s": "EOS_AUDIO_I2S"}
@@ -1256,8 +1270,11 @@ def hal_init(d, dv):
              % (disp["native_width"], disp["native_height"], disp["rotation"]))
     L.append("    .color_depth = %d, .wire_bytes = %d,"
              % (disp["color_depth"], disp["bytes_per_pixel"]))
-    L.append("    .bgr = %s, .invert = %s,"
-             % (cbool(disp["color_order"] == "bgr"), cbool(disp["invert"])))
+    L.append("    .bgr = %s, .invert = %s, .byte_swap = %s,"
+             % (cbool(disp["color_order"] == "bgr"), cbool(disp["invert"]),
+                cbool(disp["byte_swap"])))
+    L.append("    .mirror_x = %s, .mirror_y = %s,"
+             % (cbool(disp["mirror_x"]), cbool(disp["mirror_y"])))
     L.append("    .hz = %du," % disp["clock_hz"])
     L.append("    .col_offset = %d, .row_offset = %d," % (disp["col_offset"], disp["row_offset"]))
     L.append("    .sck = %d, .mosi = %d, .miso = %d," % (p["sck"], p["mosi"], p["miso"]))

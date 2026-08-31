@@ -64,7 +64,12 @@
     },
     "col_offset": 0,
     "row_offset": 0,
-    "invert": false
+    "invert": false,
+    "byte_swap": true,
+    "byte_swap_reason": "INHERITED, NOT MEASURED. Until the ESP32-S3-Touch-LCD-1.47 disagreed, the byte swap was hardcoded in eos_display_st7789.c for every board, so true reproduces exactly the behaviour this profile was written against. This board has never been run, so that is a default and not an observation. Check it the first time the board boots: draw pure red (0xF800). Red means true is correct; CYAN means invert is wrong; YELLOW means BOTH this and invert are wrong, which is the combination that does not look like a wire-format bug and cost real time on the S3.",
+    "mirror_x": false,
+    "mirror_y": false,
+    "mirror_reason": "Both false, which XORs to exactly the mirror bits the rotation already implied - so this board renders bit-for-bit as it did before mirror_x and mirror_y existed. Not a measurement: it is the old hardcoded behaviour made explicit. If text or the avatar ever renders backwards on this board, this pair is the first thing to check."
   },
   "inputs": {
     "bluetooth_keyboard": {
@@ -185,7 +190,8 @@
     "render.heap_budget_bytes",
     "peripherals.internal_fs.partition_label",
     "render.min_tile_w",
-    "render.min_tile_h"
+    "render.min_tile_h",
+    "display.byte_swap"
   ],
   "gotchas": [
     {

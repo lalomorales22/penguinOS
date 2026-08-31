@@ -309,7 +309,10 @@
         "backlight",
         "col_offset",
         "row_offset",
-        "invert"
+        "invert",
+        "byte_swap",
+        "mirror_x",
+        "mirror_y"
       ],
       "properties": {
         "controller": {
@@ -512,6 +515,34 @@
         },
         "invert": {
           "type": "boolean"
+        },
+        "invert_reason": {
+          "type": "string",
+          "description": "How inversion was established. Every profile carries this and it was missing from the schema, which with additionalProperties false meant the schema rejected its own fleet."
+        },
+        "offset_reason": {
+          "type": "string",
+          "description": "How col_offset/row_offset were established."
+        },
+        "mirror_x": {
+          "type": "boolean",
+          "description": "Panel-default correction, XORed with whatever the rotation implies. The backend's rotation table pairs swap_xy with exactly one mirror in every case, which assumes a particular default scan order; the ESP32-S3-Touch-LCD-1.47 wants swap_xy with NO mirror, an orientation none of the four rotations can express. These two fields make that expressible without special-casing a board. false on every panel whose default matches, which is all of the 4MB fleet."
+        },
+        "mirror_y": {
+          "type": "boolean",
+          "description": "See mirror_x."
+        },
+        "mirror_reason": {
+          "type": "string",
+          "description": "How the mirror defaults were established. Handedness does not appear in any log, so say what asymmetric thing was drawn and which way round it came out."
+        },
+        "byte_swap": {
+          "type": "boolean",
+          "description": "Whether a host-order RGB565 value must be byte-swapped before it reaches the panel. NOT a constant across the fleet: the C6 boards need it and the ESP32-S3-Touch-LCD-1.47 does not, and getting it wrong while also getting invert wrong renders pure red as yellow rather than as anything obviously broken. Measure it; do not inherit it from a sibling profile."
+        },
+        "byte_swap_reason": {
+          "type": "string",
+          "description": "How byte_swap was established. Say what was drawn and what appeared."
         }
       }
     },
