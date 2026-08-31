@@ -84,6 +84,7 @@
       "present": false,
       "controller": null,
       "bus": null,
+      "shares_display_bus": false,
       "pins": {
         "sck": -1,
         "mosi": -1,

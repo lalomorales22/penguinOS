@@ -373,7 +373,13 @@ static const regrow_t registry[] = {
       true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, false,
       EOS_LED_GPIO_RGB, 4, 16, 17, -1, 1, true,
       EOS_AUDIO_DAC, 26, 34, 1, 6,
-      EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 1 },
+      /* Touch IS fitted, contradicting this profile's original claim. It sits on
+         the PANEL'S OWN SPI bus - the community pinouts all put it on a
+         separate one, and both of those are empty here, which is why a
+         60-second probe found nothing. Confirmed by asking the chip (Z1=2
+         against Z2=4064 varying, the untouched signature) and by 30 clean
+         press/release pairs on the PENIRQ line. */
+      EOS_TOUCH_XPT2046, EOS_BUS_SPI, true, true, 1 },
     { &eos_board_waveshare_c5_lcd_147, "waveshare-c5-lcd-147",
       EOS_SOC_ESP32_C5, 1, EOS_TIER_LEAN, 4194304u, 0u,
       EOS_PANEL_ST7789, EOS_BUS_SPI, 172, 320, 1, 320, 172,

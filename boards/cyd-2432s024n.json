@@ -81,20 +81,21 @@
     },
     "web_input": true,
     "touch": {
-      "present": false,
-      "controller": null,
-      "bus": null,
+      "present": true,
+      "controller": "XPT2046",
+      "bus": "spi",
+      "shares_display_bus": true,
       "pins": {
-        "sck": -1,
-        "mosi": -1,
-        "miso": -1,
-        "cs": -1,
-        "irq": -1,
+        "sck": 14,
+        "mosi": 13,
+        "miso": 12,
+        "cs": 33,
+        "irq": 36,
         "sda": -1,
         "scl": -1
       },
       "i2c_address": null,
-      "absent_reason": "DISPUTED, and the profile is wrong for at least some units. This said the N variant has no touch controller fitted, established by probing two boards for 60 seconds and seeing nothing. The owner of THIS board reports that the factory firmware it shipped with had working touch - which is far stronger evidence than a negative probe result, because a probe that looks on the wrong pins finds nothing on a board that is fully populated, and the touch bus has three incompatible published pinouts across the CYD family. Only CS=33 and IRQ=36 are agreed by every source. present stays false ONLY because nothing has been measured yet, and false is what stops penguinOS looking for a chip it cannot yet drive. It is a placeholder, not a finding. Settle it by probing the XPT2046 on each candidate bus - it is an SPI ADC, so a sane 12-bit reading separates a fitted chip from a floating pin at once - and cross-check against backup/factory-4MB.bin, which is the board's own testimony about which GPIOs its touch code used."
+      "absent_reason": ""
     },
     "buttons": [
       {
@@ -197,9 +198,7 @@
     "flashing.flash_freq_mhz",
     "peripherals.internal_fs.partition_label",
     "render.min_tile_w",
-    "render.min_tile_h",
-    "inputs.touch.present",
-    "inputs.touch.controller"
+    "render.min_tile_h"
   ],
   "gotchas": [
     {
@@ -257,6 +256,13 @@
       "severity": "high",
       "field": "flashing.bad_baud_rates",
       "text": "460800 fails outright - 'Invalid head of packet', within a second - so it is listed in bad_baud_rates and upload_baud drops to 230400. But baud is only half the story and the more useful half is this: at 230400 a 64 KB read succeeds every time while a continuous 4 MB read dies around 52% with 'Corrupt data, expected 0x1000 bytes but received 0xfa7'. The corruption is a function of read LENGTH, not rate. Back this board up in 512 KB chunks with a retry around each and concatenate them; all eight chunks then pass first time. backup/factory-4MB.bin was captured that way, sha256 81cff512b796c94ce16dc0b9fac0c13fe4d858367f5918b7740ebc934bb4cc5b.",
+      "verified": true
+    },
+    {
+      "id": "touch-is-fitted-and-shares-the-panel-bus",
+      "severity": "high",
+      "field": "inputs.touch.pins",
+      "text": "VERIFIED by asking the chip. This profile previously said no touch controller was fitted, from a 60-second probe that found nothing. That probe was not careless - it was testing the wrong hypothesis. Every community source for this family puts touch on a SEPARATE SPI bus (25/32/39, or 22/26/39), and BOTH of those are genuinely empty here: all four XPT2046 channels return an identical 0 on each. The chip is on the PANEL'S OWN BUS - sclk 14, mosi 13, miso 12 - with only CS on its own pin at 33. The discriminator is variation, not magnitude. Untouched, the part answers Z1=2 and Z2=4064/4062/4047; that three-count wobble is real converter noise and a floating MISO cannot produce it, while the empty buses return the same value every time. Pressure is the Z1/Z2 ratio, so Z1 near zero against Z2 near full scale is the correct no-finger reading. CONSEQUENCE FOR THE DRIVER: touch shares SPI2 with the display, so every poll must take the panel's bus lock - the same constraint peripherals.sdcard records with shares_display_bus, and a tighter one, because the panel is mid-band far more often than the card is mid-read. A touch poll that barges in during a band write tears the picture. Clock the XPT2046 at 1-2 MHz; it does not tolerate the panel's 40 MHz.",
       "verified": true
     }
   ]
