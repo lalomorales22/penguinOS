@@ -1,0 +1,55 @@
+# ESP32-S3 overrides. Appended by IDF after sdkconfig.defaults when
+# CONFIG_IDF_TARGET is esp32s3.
+#
+# This board differs from the 4 MB fleet in three ways that all have to be set
+# here, because sdkconfig.defaults encodes the small-board assumptions.
+
+# 16 MB of flash, and its own partition table. sdkconfig.defaults names
+# partitions.csv, which is the 4 MB layout; overriding the filename is what
+# keeps the two tables independent instead of one file trying to serve both.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-16mb.csv"
+
+# 8 MB of PSRAM, and it is OCTAL on the ESP32-S3R8. Quad mode does not merely
+# run slower on this part, it fails to initialise, so the mode is not a free
+# choice. MEASURED with these settings: esp_psram reports the full 8388608
+# bytes and a 2 x 110080 B double buffer allocates successfully - which is what
+# makes this the only board in the fleet that can run render tier 2.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# Let heap_caps_malloc fall back to PSRAM for large blocks, but keep small
+# allocations internal: PSRAM is not DMA-capable for every peripheral and the
+# panel wants DMA-able buffers.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# MEASURED, and the reason the captive portal did not work on first light.
+#
+# When PSRAM joins the heap, this many bytes of INTERNAL memory are held back so
+# they stay available to MALLOC_CAP_DMA/MALLOC_CAP_INTERNAL requests. The IDF
+# default is 32768, and 32KB has to cover Wi-Fi TX buffers, lwIP, AND this
+# board's LCD band buffers - 320x40x2 is 25,600 bytes for a single band. Starved
+# of internal DMA memory the radio does not fail loudly: esp_http_server's
+# send() simply never completes and times out with EAGAIN (errno 11), while
+# association and DHCP still work perfectly because they are far smaller. The
+# symptom is a captive portal that spins forever on a Wi-Fi network that
+# otherwise looks healthy.
+#
+# Confirmed by building the same firmware with CONFIG_SPIRAM=n: the error
+# changed from EAGAIN to a benign ECONNRESET and the portal served immediately.
+# 128KB out of roughly 350KB internal leaves the general heap ample room while
+# giving the radio and the panel a floor they cannot be squeezed below.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
+
+# Native USB, no bridge chip - same situation as the C6. Without this the board
+# boots correctly and looks dead, because the stock UART0 console prints to
+# pins nobody has wired.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# 240 MHz is the S3 maximum. The SPI panel is clocked at 40 MHz off it.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The S3 is the first dual-core board here (chip.cores 2 in the profile).
+# Nothing is pinned yet; the OS is written single-core-safe and the second core
+# is headroom for the tier 2 compositor rather than something relied upon.

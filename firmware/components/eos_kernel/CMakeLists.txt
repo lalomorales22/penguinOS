@@ -27,12 +27,14 @@ set(_eos_kernel_srcs
     "${EOS_KERNEL_DIR}/shell/eos_pointer.c"
     "${EOS_KERNEL_DIR}/avatar/eos_vox.c"
     "${EOS_KERNEL_DIR}/avatar/eos_buddy.c"
+    "${EOS_KERNEL_DIR}/avatar/eos_stroll.c"
     "${EOS_KERNEL_DIR}/svc/eos_brain.c"
     "${EOS_KERNEL_DIR}/svc/eos_radio.c"
     "${EOS_KERNEL_DIR}/svc/eos_net.c"
     "${EOS_KERNEL_DIR}/svc/eos_ble.c"
     "${EOS_KERNEL_DIR}/svc/eos_httpd.c"
     "${EOS_KERNEL_DIR}/svc/eos_apps.c"
+    "${EOS_KERNEL_DIR}/svc/eos_gallery.c"
     "${EOS_KERNEL_DIR}/svc/eos_settings.c"
     "${EOS_KERNEL_DIR}/font/eos_font.c"
     "${EOS_KERNEL_DIR}/qr/eos_qr.c"
@@ -71,6 +73,12 @@ idf_component_register(
         bt               # NimBLE for eos_ble. Never Bluedroid: 83KB vs 19KB is an OOM.
         joltwallet__littlefs   # eos_storage's "/int" mount. Third party, see idf_component.yml.
         vfs              # eos_storage_idf.c is POSIX: open/read/opendir go through esp_vfs
+        # Only the ESP32-S3-Touch-LCD-1.47 has PSRAM, and eos_board_active.c guards
+        # its include with #if CONFIG_SPIRAM - but REQUIRES is what puts the header
+        # on the path, and that is unconditional. Safe on the no-PSRAM boards:
+        # esp_psram has no require_idf_targets and registers with empty sources
+        # where the silicon does not support it.
+        esp_psram        # esp_psram_get_size on the boards that have it
 )
 
 # Which boards/generated/<id>.h everything downstream compiles against. PUBLIC,

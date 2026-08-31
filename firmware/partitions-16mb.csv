@@ -1,0 +1,46 @@
+# penguinOS partition table for the 16 MB boards.
+#
+# partitions.csv covers the 4 MB fleet and its header says "every board in this
+# fleet has 4 MB of flash". The Waveshare ESP32-S3-Touch-LCD-1.47 is the first
+# board for which that is false, so it gets its own table rather than a rewrite
+# of the one six other boards depend on. Which table a build uses is decided by
+# CONFIG_PARTITION_TABLE_CUSTOM_FILENAME in sdkconfig.defaults.<target>.
+#
+# The one non-obvious constraint is unchanged and still binding: the data
+# partition MUST stay labelled "int", because that string is
+# peripherals.internal_fs.partition_label in every boards/*.json and
+# eos_board_storage_t.int_label carries it into the firmware at compile time.
+# Rename it here and eos_storage_mount() fails at boot with no compile error.
+#
+# The arithmetic, 16 MB = 16,777,216 bytes = 0x1000000:
+#
+#   0x000000  bootloader                          reserved up to 0x8000
+#   0x008000  partition table                      0x001000       4 KB
+#   0x009000  nvs                                  0x006000      24 KB
+#   0x00F000  phy_init                             0x001000       4 KB
+#   0x010000  factory                              0x400000   4,096 KB
+#   0x410000  int (littlefs)                      0x0BF0000  12,224 KB
+#   0x1000000 end of flash                        ------------------------
+#                                                 total       16,384 KB
+#
+# factory is 4 MB rather than the 3 MB the small boards get. This is the only
+# board that runs tier 2, which means LVGL with animations and a double buffer,
+# and it is also the only one carrying a touch driver; 3 MB would probably still
+# fit today but there is no reason to be tight on a 16 MB part.
+#
+# "int" is 11.9 MB against 960 KB on the 4 MB boards - twelve times the room.
+# That is what makes a real .vox gallery practical here: a buddy is a few KB, so
+# this holds thousands of them alongside the themes and the web app.
+#
+# ota_slots stays 0, matching every other profile. There is space for two 4 MB
+# OTA slots if that ever becomes wanted, but adding them silently would halve
+# the filesystem, so it is a deliberate future change and not a default.
+#
+# App offsets must be 64 KB aligned and data offsets 4 KB aligned; 0x010000 and
+# 0x410000 are both 64 KB aligned.
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x6000,
+phy_init,   data, phy,      0xF000,    0x1000,
+factory,    app,  factory,  0x10000,   0x400000,
+int,        data, littlefs, 0x410000,  0xBF0000,
