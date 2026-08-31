@@ -16,10 +16,31 @@ fills in once, after which that physical board is pinned to that profile.
 Everything that cost debugging time lives here as a field with a reason attached,
 because a value with no reason gets "cleaned up" by the next person.
 
-## The five boards
+## The eight boards
 
-| Profile | Tier | Chip | Panel | Active | What will bite you |
-|---|---|---|---|---|---|
+Four have been run on real hardware and four are documentation only. The
+difference matters more than anything else in this table: a VERIFIED row has had
+every pin, the wire format and the heap checked against silicon, and an
+UNVERIFIED row is a careful reading of a datasheet that nobody has held. Treat
+the second kind as a starting point for bring-up, not as a working target.
+
+| Profile | Verified | Tier | Chip | Panel | Active | What will bite you |
+|---|---|---|---|---|---|---|
+| `cyd-2432s024n` | **yes** | 0 | ESP32-D0WD-V3, 4MB, no PSRAM | ILI9341 SPI, HSPI @ 40MHz | 240x320 | **Touch IS fitted** - XPT2046 on the PANEL'S OWN bus (14/13/12, CS 33, IRQ 36), which is why probes looking at the documented separate buses find nothing. Also the tightest board here: 148KB, and the display bands had to shrink to 16 rows or the AP's DHCP server cannot answer. |
+| `lafvin-c6-lcd-147` | **yes** | 1 | ESP32-C6FH4, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **Identical to the Waveshare C6 on every pin**, differing only in the panel and the MAC. esptool cannot tell them apart. Needs `col_offset` 34; without it the picture looks fine and sits 34px sideways. |
+| `waveshare-c6-lcd-13` | **yes** | 1 | ESP32-C6FH4, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 240x240 | Square panel, so it needs NO column offset - the one thing separating it from the LAFVIN in software. |
+| `waveshare-s3-touch-lcd-147` | **yes** | 1 | ESP32-S3R8, **16MB**, **8MB octal PSRAM** | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **The only board that breaks the 4MB assumption**, and it needs its own partition table. PSRAM is OCTAL - quad mode does not merely run slower, it fails to initialise. Capacitive touch (AXS5106L @ 0x63) and a microSD slot that mounts. |
+| `waveshare-c5-lcd-147` | no | 1 | ESP32-C5, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **The vendor BSP owns panel init**, including the ST7789 RAM offsets: it calls `esp_lcd_panel_set_gap(panel, 34, 0)` and `esp_lcd_panel_invert_color(panel, true)`, and the profile mirrors both. It pins LVGL to `>=8,<10`, so the LVGL version is not a free choice on this board. |
+| `wavvy-ili9488-40` | no | 0 | ESP32-WROOM, 4MB, no PSRAM | ILI9488 SPI, VSPI @ 80MHz | 320x480 | **Upload baud must be 230400.** 921600 and 460800 both fail with `Invalid head of packet (0xFF)` on this CP2102 cable, esptool reads included. |
+| `wavvy-ili9488-35` | no | 0 | ESP32-WROOM, 4MB, no PSRAM | ILI9488 SPI, VSPI @ **40MHz** | 320x480 | **Not stable at 80MHz.** It renders structured block corruption, not a failure. Identical to the 4.0in board in every other respect. |
+| `wavvy-oled-c5` | no | 0 | ESP32-C5, 4MB, no PSRAM | SSD1306 I2C @ 400kHz, addr 0x3C | 128x64 | **A tier 1 chip running the tier 0 renderer, deliberately.** A 1024-byte 1bpp page does not want LVGL. Also: SH1106 modules look identical and answer at the same address. |
+
+Three silicon families now build: `esp32`, `esp32c6` and `esp32s3`. Each has its
+own `firmware/sdkconfig.defaults.<target>`, and each board gets its own build
+directory with its OWN sdkconfig - a shared one at the project root breaks the
+moment two targets are in play, because `set-target` rewrites it and the next
+board's build stops on a target mismatch against its own CMakeCache.
+
 | `cyd-2432s024n` | 0 | ESP32-D0WD-V3, 4MB, no PSRAM | ILI9341 SPI, HSPI @ 40MHz | 320x240 | **No touch controller at all.** It is the N variant and looks exactly like a touchscreen. Both boards were probed and nothing answered. |
 | `waveshare-c5-lcd-147` | 1 | ESP32-C5, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **The vendor BSP owns panel init**, including the ST7789 RAM offsets: it calls `esp_lcd_panel_set_gap(panel, 34, 0)` and `esp_lcd_panel_invert_color(panel, true)`, and the profile mirrors both. It pins LVGL to `>=8,<10`, so the LVGL version is not a free choice on this board. |
 | `wavvy-ili9488-40` | 0 | ESP32-WROOM, 4MB, no PSRAM | ILI9488 SPI, VSPI @ 80MHz | 320x480 | **Upload baud must be 230400.** 921600 and 460800 both fail with `Invalid head of packet (0xFF)` on this CP2102 cable, esptool reads included. |
@@ -192,8 +213,15 @@ value that looks wrong until you know why:
 
 `render.heap_budget_bytes` is the one field here that is a policy rather than a
 measurement: it is the line the OS agrees not to cross so the radios still have
-room. It is in `unverified` on all five boards and should stay there until it has
-been checked against a real heap dump.
+room. It stays in `unverified` until it has been checked against a real heap dump,
+which has now happened on the four verified boards.
+
+Measure it with penguinOS ITSELF, never with a bring-up probe. A bare probe on
+the CYD reports 281,612 bytes free; the OS at `app_main` reports 148,188, and
+the difference is the OS's own static footprint. Sizing the display from the
+probe figure asked for 281,280 contiguous DMA bytes out of a 110,592-byte
+largest block, and the board booted blind. Note the second number too: the free
+TOTAL is not what constrains you, the largest BLOCK is.
 
 `unverified` is the other half of that: a list of dotted paths whose values are
 conservative defaults rather than bench measurements. Everything *not* in that

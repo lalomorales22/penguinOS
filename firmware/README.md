@@ -15,7 +15,49 @@ same files are compiled by six host suites with a plain `cc` and a copy under
 | Path | What it is |
 |---|---|
 | `CMakeLists.txt` | project, board selection, board/target guard |
-| `sdkconfig.defaults` | defaults true of all six boards |
+| `sdkconfig.defaults` | defaults true of every board, whatever its silicon |
+| `sdkconfig.defaults.esp32` | ESP32 only: IRAM is 668 bytes short with Wi-Fi and NimBLE resident, and the default Wi-Fi buffer pools cost 58KB on a 148KB board |
+| `sdkconfig.defaults.esp32c6` | C6 only: native-USB console, 160MHz |
+| `sdkconfig.defaults.esp32s3` | S3 only: octal PSRAM, 240MHz, and the 16MB partition table |
+| `partitions.csv` | the 4MB layout, used by seven of the eight boards |
+| `partitions-16mb.csv` | the S3's layout: 4MB app, 11.9MB filesystem |
+
+## Building for a specific board
+
+The board is a build-time choice and never a source edit. Two things must both
+be right, and getting either wrong fails in a way that does not name itself:
+
+```bash
+idf.py -B build/<board-id> \
+       -DEOS_BOARD_ID=<board-id> \
+       -DSDKCONFIG=build/<board-id>/sdkconfig \
+       set-target <target> && \
+idf.py -B build/<board-id> \
+       -DEOS_BOARD_ID=<board-id> \
+       -DSDKCONFIG=build/<board-id>/sdkconfig build
+```
+
+`EOS_BOARD_ID`, not `EOS_BOARD_PROFILE`. Nothing reads the latter, so passing it
+silently builds the DEFAULT board instead of the one you asked for. Across
+different targets that trips the mismatch guard below; across the SAME target it
+succeeds and flashes one board's panel geometry onto another, reporting success.
+`tools/flash.sh` did exactly this for a long time. CMakeLists.txt now hard-fails
+on the old spelling rather than ignoring it.
+
+`SDKCONFIG` per build directory. Every board sharing one `firmware/sdkconfig`
+was harmless while the whole fleet was `esp32c6`, and breaks the moment two
+TARGETS exist: `set-target` rewrites the shared file, and the next board's build
+stops with
+
+    Project sdkconfig was generated for target 'esp32s3', but CMakeCache.txt
+    contains 'esp32c6'
+
+Separate `-B` directories are NOT enough on their own. `tools/flash.sh` handles
+both of these for you; the incantation above is what it runs.
+
+The target must match what the profile says. `CMakeLists.txt` cross-checks
+`chip.target` from the board profile against the build tree's target and refuses
+to continue if they differ - the one guard that catches a wrong-board build.
 | `sdkconfig.defaults.esp32c6` | C6-only overrides; IDF appends it automatically |
 | `partitions.csv` | the partition table, with the 4 MB arithmetic |
 | `main/main.c` | `app_main`: the boot path, the mode choice, and the frame loop |

@@ -81,7 +81,15 @@ FLASH_RE = re.compile(r"(?:Detected flash size|Flash size):\s*(\d+)\s*(MB|KB)", 
 CRYSTAL_RE = re.compile(r"Crystal (?:is|frequency:)\s*(\d+)\s*MHz", re.I)
 # ESP32-C5 / -S3 / -H2 / -P4 style part numbers. ESP32-D0WD and ESP32-PICO are
 # plain esp32 and must not match here.
-VARIANT_RE = re.compile(r"^ESP32-((?:C|S|H|P)\d+)\b", re.I)
+# NO trailing \b. It was there, and it silently broke both ESP32-C6 boards.
+# esptool prints the C6 as "ESP32-C6FH4 (QFN32)": after \d+ takes the 6 the next
+# character is F, a WORD character, so there is no word boundary and the match
+# fails. The caller then falls back to startswith("ESP32") and reports plain
+# esp32, after which narrow() rejects every C6 profile as wrong-target and the
+# MAC allowlist is never even consulted - decide() only searches survivors.
+# The operator is offered a menu of boards that are not the one plugged in.
+# "ESP32-S3 (QFN56)" escaped this only because a space follows its digit.
+VARIANT_RE = re.compile(r"^ESP32-((?:C|S|H|P)\d+)", re.I)
 
 # idf target -> the arduino-cli FQBN the prober is built with. Only the targets
 # the registry actually contains are listed; anything else is reported as
