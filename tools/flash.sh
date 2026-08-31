@@ -542,11 +542,11 @@ build_image() {
     # contains 'esp32c6'". Separate -B dirs are NOT enough on their own.
     local sdkcfg="$bdir/sdkconfig"
     run idf.py -C "$project" -B "$bdir" \
-        -D EOS_BOARD_PROFILE="$profile" \
+        -D EOS_BOARD_ID="$profile" \
         -D SDKCONFIG="$sdkcfg" \
         set-target "$EOS_PROFILE_TARGET" \
         || die "idf.py set-target failed"
-    run idf.py -C "$project" -B "$bdir" -D EOS_BOARD_PROFILE="$profile" \
+    run idf.py -C "$project" -B "$bdir" -D EOS_BOARD_ID="$profile" \
         -D SDKCONFIG="$sdkcfg" build \
         || die "the build failed"
     return 0
@@ -723,6 +723,27 @@ stamp_nvs() {
         say "  nvs       skipped: nvs_partition_gen.py not found (needs \$IDF_PATH)"
         note "The MAC cache still records this board; only the on-board stamp is missing."
         return 0
+    fi
+
+    # Do NOT rewrite a stamp that is already correct. This image contains ONLY
+    # the profile id and MAC, so writing it over the nvs partition destroys
+    # everything else living there - and what lives there is the board's Wi-Fi
+    # credentials. Reflashing a provisioned board therefore threw it back into
+    # setup mode every single time, which reads as the update having wiped the
+    # board rather than as the flasher having overwritten one partition.
+    #
+    # On a board that already says it is this profile there is nothing to add,
+    # so skip and keep the credentials. A blank or DIFFERENT stamp still gets
+    # written: a blank one has no credentials worth keeping, and a different one
+    # means the board is not what it claimed, where a clean nvs is correct.
+    local existing
+    existing="$(read_nvs_stamp "$bdir" "$baud" 2>/dev/null || true)"
+    if [ -n "$existing" ] && [ "$existing" = "$profile" ]; then
+        say "  nvs       already stamped $profile - left alone, so Wi-Fi credentials survive"
+        return 0
+    fi
+    if [ -n "$existing" ]; then
+        say "  nvs       stamp says '$existing', flashing '$profile' - rewriting"
     fi
 
     local tmp csv bin
