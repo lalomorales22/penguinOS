@@ -84,6 +84,7 @@
       "present": true,
       "controller": "AXS5106L",
       "bus": "i2c",
+      "shares_display_bus": false,
       "pins": {
         "sck": -1,
         "mosi": -1,

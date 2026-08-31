@@ -153,36 +153,90 @@ void app_main(void)
     ESP_LOGI(TAG, "panel up: %dx%d PORTRAIT, sck %d mosi %d miso %d cs %d dc %d bl %d",
              W, H, PIN_SCLK, PIN_MOSI, PIN_MISO, PIN_CS, PIN_DC, PIN_BL);
 
-    // THREE PRIMARIES, and the panel is driven in RGB order so that byte order
-    // and channel order are separable. Each of the four possible models
-    // produces a DIFFERENT sequence, so simply naming the three bands top to
-    // bottom identifies the model outright - no arithmetic, no judgement call:
+    // TOUCH HUNT, stage 2: ASK THE CHIP.
     //
-    //     no swap + RGB  ->  RED    GREEN  BLUE
-    //     no swap + BGR  ->  BLUE   GREEN  RED
-    //     swap    + RGB  ->  BLUE   RED    GREEN
-    //     swap    + BGR  ->  RED    BLUE   GREEN
+    // Stage 1 found GPIO36 held high with no internal pull-up available on that
+    // pad, so something external drives it - the signature of an idle PENIRQ.
+    // But an interrupt line only speaks when touched, and that made the test
+    // depend on timing. An XPT2046 answers whenever it is asked.
     //
-    // Pure primaries are used because they are the only colours nobody has to
-    // interpret. Gold was the right instrument for separating swap from
-    // inversion on the S3; it is the WRONG one here, because under swap+BGR it
-    // lands on a yellow-green that reads as "yellowish gold" and confirms the
-    // wrong model - which is exactly what happened.
-    const uint16_t BANDS[3] = { 0xF800, 0x07E0, 0x001F };   /* R, G, B as stored */
-    ESP_LOGI(TAG, "THREE PRIMARY TEST, panel in RGB order, no inversion");
-    ESP_LOGI(TAG, "  stored top..bottom: 0xF800 (red) 0x07E0 (green) 0x001F (blue)");
-    ESP_LOGI(TAG, "  R,G,B=no-swap+RGB   B,G,R=no-swap+BGR   B,R,G=swap+RGB   R,B,G=swap+BGR");
+    // It is a 12-bit SPI ADC: send a control byte, clock 16 bits back, take
+    // bits 14:3. A chip that is present returns plausible, VARYING values. A
+    // floating MISO returns 0x000 or 0xFFF every single time, which is the
+    // discriminator - not the magnitude of any one reading.
+    //
+    // The bus has three incompatible published pinouts across this family and
+    // only CS=33 is agreed, so all three are tried.
+    {
+        struct { const char *name; int host; int sclk, mosi, miso, cs; } CAND[] = {
+            { "shared with the panel", SPI2_HOST, 14, 13, 12, 33 },
+            { "separate 25/32/39",     SPI3_HOST, 25, 32, 39, 33 },
+            { "separate 22/26/39",     SPI3_HOST, 22, 26, 39, 33 },
+        };
+        const uint8_t CMD[4]  = { 0xB0, 0xC0, 0xD0, 0x90 };
+        const char   *WHAT[4] = { "Z1", "Z2", "X ", "Y " };
 
-    for (int y0 = 0; y0 < PH; y0 += BAND) {
-        int rows = (y0 + BAND > PH) ? (PH - y0) : BAND;
-        for (int y = 0; y < rows; y++) {
-            int gy = y0 + y, b = gy / 107;
-            if (b > 2) b = 2;
-            for (int x = 0; x < PW; x++) band[y * PW + x] = BANDS[b];
+        for (unsigned c = 0; c < sizeof CAND / sizeof CAND[0]; c++) {
+            ESP_LOGI(TAG, "TOUCH: trying %s  sclk=%d mosi=%d miso=%d cs=%d",
+                     CAND[c].name, CAND[c].sclk, CAND[c].mosi, CAND[c].miso, CAND[c].cs);
+
+            bool own_bus = (c != 0);        /* candidate 0 rides the panel's live bus */
+            if (own_bus) {
+                spi_bus_config_t tb = { .sclk_io_num = CAND[c].sclk, .mosi_io_num = CAND[c].mosi,
+                                        .miso_io_num = CAND[c].miso, .quadwp_io_num = -1,
+                                        .quadhd_io_num = -1, .max_transfer_sz = 32 };
+                if (spi_bus_initialize(CAND[c].host, &tb, SPI_DMA_DISABLED) != ESP_OK) {
+                    ESP_LOGW(TAG, "TOUCH:   bus init failed, skipping"); continue;
+                }
+            }
+            spi_device_interface_config_t dc = {
+                .clock_speed_hz = 1 * 1000 * 1000,   /* XPT2046 tops out ~2 MHz */
+                .mode = 0, .spics_io_num = CAND[c].cs, .queue_size = 1,
+            };
+            spi_device_handle_t dev = NULL;
+            if (spi_bus_add_device(CAND[c].host, &dc, &dev) != ESP_OK) {
+                ESP_LOGW(TAG, "TOUCH:   add_device failed");
+                if (own_bus) spi_bus_free(CAND[c].host);
+                continue;
+            }
+
+            int varied = 0;
+            for (int k = 0; k < 4; k++) {
+                uint16_t seen[3];
+                for (int rep = 0; rep < 3; rep++) {
+                    uint8_t tx[3] = { CMD[k], 0, 0 }, rx[3] = { 0, 0, 0 };
+                    spi_transaction_t tr = { .length = 24, .tx_buffer = tx, .rx_buffer = rx };
+                    spi_device_polling_transmit(dev, &tr);
+                    seen[rep] = (uint16_t)((((uint16_t)rx[1] << 8) | rx[2]) >> 3);
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                }
+                if (seen[0] != seen[1] || seen[1] != seen[2]) varied++;
+                ESP_LOGI(TAG, "TOUCH:   %s -> %4u %4u %4u", WHAT[k], seen[0], seen[1], seen[2]);
+            }
+            ESP_LOGI(TAG, "TOUCH:   verdict: %s",
+                     varied ? "VALUES VARY - a real XPT2046 is answering here"
+                            : "every reading identical - nothing on this bus");
+
+            spi_bus_remove_device(dev);
+            if (own_bus) spi_bus_free(CAND[c].host);
         }
-        esp_lcd_panel_draw_bitmap(p, 0, y0, PW, y0 + rows, band);
     }
-    ESP_LOGI(TAG, "painted three full-width bands at %dx%d", PW, PH);
 
-    while (1) vTaskDelay(pdMS_TO_TICKS(1000));
+    // Stage 3: park watching GPIO36 forever, so a press at ANY time is caught.
+    ESP_LOGI(TAG, "TOUCH: now watching GPIO36 continuously - press whenever you like");
+    {
+        gpio_config_t c36 = { .pin_bit_mask = 1ULL << 36, .mode = GPIO_MODE_INPUT };
+        gpio_config(&c36);
+        int last = -1;
+        while (1) {
+            int v = gpio_get_level(36);
+            if (v != last) {
+                if (last != -1)
+                    ESP_LOGI(TAG, "TOUCH: GPIO36 -> %d  %s", v,
+                             v ? "released" : "PRESSED - touch controller confirmed");
+                last = v;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
 }

@@ -594,7 +594,8 @@
             "bus",
             "pins",
             "i2c_address",
-            "absent_reason"
+            "absent_reason",
+            "shares_display_bus"
           ],
           "properties": {
             "present": {
@@ -623,6 +624,10 @@
                   "type": "null"
                 }
               ]
+            },
+            "shares_display_bus": {
+              "type": "boolean",
+              "description": "True when the touch controller sits on the DISPLAY's sck/mosi/miso rather than a bus of its own. Must match the pins: the pin-collision check is what catches a real wiring mistake, so this is an opt-in exemption and a board that shares without declaring it still fails. The consequence is a driver constraint, not a note: every touch poll has to take the panel's bus lock, and it is tighter than the SD card's because the panel is mid-band far more often than the card is mid-read."
             },
             "pins": {
               "type": "object",

@@ -287,6 +287,11 @@ typedef struct {
     eos_pin_t    touch_sck, touch_mosi, touch_miso, touch_cs, touch_irq;
     eos_pin_t    touch_sda, touch_scl;
     uint8_t      touch_addr;
+    // True when touch_sck/mosi/miso ARE the panel's lines. Not a note: every
+    // poll must take the panel's bus lock, and it is a tighter constraint than
+    // the SD card's, because the panel is mid-band far more often than the card
+    // is mid-read. A poll that barges in during a band write tears the picture.
+    bool         touch_shares_bus;
 } eos_board_input_t;
 
 // ---------------------------------------------------------- storage config

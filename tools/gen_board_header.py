@@ -429,6 +429,7 @@ class Validator:
                       choices={"spi", "i2c", None})
         ta = self.get("inputs.touch.i2c_address", int, nullable=True, required=True, lo=3, hi=119)
         tr = self.get("inputs.touch.absent_reason", str)
+        tshare = self.get("inputs.touch.shares_display_bus", bool)
         tpins = {}
         for k in ("sck", "mosi", "miso", "cs", "irq", "sda", "scl"):
             tpins[k] = self.pin("inputs.touch.pins." + k, target, "touch %s" % k,
@@ -454,6 +455,21 @@ class Validator:
                 self.err("inputs.touch.bus", "required when present is true")
             if tb == "i2c" and ta is None:
                 self.err("inputs.touch.i2c_address", "required for an I2C touch controller")
+            # Declared sharing must MATCH the pins. A profile that claims a
+            # separate bus while naming the panel's own lines is the exact
+            # mistake the collision check exists to catch.
+            dp = self.d.get("display", {}).get("pins", {})
+            same = all(tpins.get(k) == dp.get(k) for k in ("sck", "mosi", "miso")
+                       if tpins.get(k, -1) != -1)
+            any_shared = any(tpins.get(k, -1) != -1 and tpins.get(k) == dp.get(k)
+                             for k in ("sck", "mosi", "miso"))
+            if any_shared and same and not tshare:
+                self.err("inputs.touch.shares_display_bus",
+                         "the touch pins ARE the panel's sck/mosi/miso, so this must "
+                         "be true and every touch poll has to take the panel's bus lock")
+            if tshare and not any_shared:
+                self.err("inputs.touch.shares_display_bus",
+                         "claims to share the panel bus but names none of its pins")
 
         btns = self.get("inputs.buttons", list)
         if btns is not None:
@@ -749,9 +765,17 @@ class Validator:
             if isinstance(b, dict):
                 add(b.get("gpio"), "button.%s" % b.get("name", i))
 
-        shares = sd.get("shares_display_bus") is True
-        shareable = {"display.sck", "display.mosi", "display.miso",
-                     "sdcard.sck", "sdcard.mosi", "sdcard.miso"}
+        # Two peripherals may legitimately sit on the panel's SPI lines, but only
+        # when the profile SAYS SO. The collision check is what catches a real
+        # wiring mistake, so sharing is an opt-in exemption rather than a hole:
+        # a board that shares without declaring it still fails here.
+        shares    = sd.get("shares_display_bus") is True
+        t_shares  = touch.get("shares_display_bus") is True
+        shareable = {"display.sck", "display.mosi", "display.miso"}
+        if shares:
+            shareable |= {"sdcard.sck", "sdcard.mosi", "sdcard.miso"}
+        if t_shares:
+            shareable |= {"touch.sck", "touch.mosi", "touch.miso"}
         by_pin = {}
         for pin, role in roles:
             by_pin.setdefault(pin, []).append(role)
@@ -759,7 +783,7 @@ class Validator:
             names = by_pin[pin]
             if len(names) < 2:
                 continue
-            if shares and set(names) <= shareable:
+            if (shares or t_shares) and set(names) <= shareable:
                 continue
             self.err("pins", "GPIO %d is claimed by %s" % (pin, " and ".join(sorted(names))))
 
@@ -1081,6 +1105,7 @@ def emit(d, src, digest):
                 o.d("EOS_TOUCH_PIN_%s" % k.upper(), touch["pins"][k])
         if touch["i2c_address"] is not None:
             o.d("EOS_TOUCH_I2C_ADDR", "0x%02X" % touch["i2c_address"])
+        o.d("EOS_TOUCH_SHARES_LCD_BUS", 1 if touch.get("shares_display_bus") else 0)
     o.d("EOS_BTN_COUNT", len(inp["buttons"]))
     for i, b in enumerate(inp["buttons"]):
         o.d("EOS_BTN%d_NAME" % i, cstr(b["name"]))
@@ -1302,6 +1327,7 @@ def hal_init(d, dv):
     L.append("    .touch_sck = %d, .touch_mosi = %d, .touch_miso = %d,"
              % (tp["sck"], tp["mosi"], tp["miso"]))
     L.append("    .touch_cs = %d, .touch_irq = %d," % (tp["cs"], tp["irq"]))
+    L.append("    .touch_shares_bus = %s," % cbool(touch.get("shares_display_bus")))
     L.append("    .touch_sda = %d, .touch_scl = %d, .touch_addr = 0x%02X,"
              % (tp["sda"], tp["scl"], touch["i2c_address"] or 0))
     L.append("},")
