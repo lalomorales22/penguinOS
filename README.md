@@ -130,9 +130,13 @@ JSON out. So there's a small bridge in this repo that sits between them.
 Install [Ollama](https://ollama.com), pull a model, and start the bridge:
 
 ```bash
-ollama pull llama3.2:3b
-python3 tools/ollama-bridge.py --model llama3.2:3b
+ollama pull qwen3.5:2b
+python3 tools/ollama-bridge.py
 ```
+
+`qwen3.5:2b` is the default on both sides — the bridge and the board's own
+firmware agree on it — so you don't have to configure the model at all. Any
+Ollama model works; pass `--model <name>` to use a different one.
 
 That's it — no dependencies beyond Python 3. It prints the address to point the
 board at.
@@ -148,18 +152,21 @@ name to whatever you pulled.
 **Point the board at the bridge, not at Ollama.** The bridge listens on 8080 by
 default; Ollama's own port is 11434 and the board cannot talk to it directly.
 
-**Reasoning models can look broken.** Models like `qwen3` and `deepseek-r1`
-stream their chain of thought separately and produce no visible answer until
-they finish — and on a small token budget they may never finish. The bridge
-turns thinking off by default for this reason. Pass `--think` if you want it,
-and raise the token limit in Settings if you do.
+**Reasoning models can look broken — including the default one.** `qwen3.5:2b`
+streams its chain of thought in a separate field and produces no visible answer
+until it finishes. On the board's 256-token budget it can spend every token
+thinking and return **nothing at all**, which is indistinguishable from a dead
+chat. The bridge turns thinking off by default for exactly this reason, which is
+what makes the default model usable. Pass `--think` if you want to watch it
+reason, and raise the token limit in Settings if you do.
 
 **It works with more than Ollama.** Anything serving Ollama's API works — LM
 Studio and llama.cpp both do. Point the bridge elsewhere with
 `--ollama http://host:port`.
 
-**Small models are the point.** A 3B model answers a board with a 2-inch screen
-perfectly well, and runs on a laptop.
+**Small models are the point.** A 2B model answers a board with a 2-inch screen
+perfectly well and runs on a laptop. `qwen3.5:4b` is a good next step up if you
+have the memory.
 
 ---
 

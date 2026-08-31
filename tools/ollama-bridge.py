@@ -19,7 +19,7 @@ Run it on the computer that runs Ollama. Point the board at THIS script's
 address and port - not at Ollama's - in the board's Settings tab.
 
     python3 tools/ollama-bridge.py
-    python3 tools/ollama-bridge.py --model llama3.2:3b --port 8080
+    python3 tools/ollama-bridge.py --model qwen3.5:4b --port 8080
 
 It also works with anything else that speaks Ollama's API - LM Studio and
 llama.cpp both do - by pointing --ollama somewhere else.
@@ -194,8 +194,13 @@ def main():
                     help="port THIS bridge listens on; the board points here (default 8080)")
     ap.add_argument("--ollama", default="http://127.0.0.1:11434",
                     help="where Ollama is (default http://127.0.0.1:11434)")
-    ap.add_argument("--model", default="llama3.2:3b",
-                    help="model to use when the board does not name one")
+    # Matches EOS_BRAIN_DEFAULT_MODEL in kernel/svc/include/eos_brain.h, so the
+    # bridge and the board agree without anyone configuring anything. It is a
+    # REASONING model - see the think handling in _ask(); it returns an empty
+    # answer if allowed to think within the board's token budget.
+    ap.add_argument("--model", default="qwen3.5:2b",
+                    help="model to use when the board does not name one "
+                         "(default matches the board's own default)")
     ap.add_argument("--timeout", type=int, default=120, help="seconds to wait on Ollama")
     ap.add_argument("--think", action="store_true",
                     help="let reasoning models think out loud. OFF by default: they can "
@@ -218,7 +223,7 @@ def main():
     except Exception as exc:                              # noqa: BLE001
         print("Cannot reach Ollama at %s: %s" % (ARGS.ollama, exc))
         print("  Start it with:  ollama serve")
-        print("  Then pull a model:  ollama pull llama3.2:3b")
+        print("  Then pull a model:  ollama pull qwen3.5:2b")
         return 1
 
     srv = ThreadingHTTPServer((ARGS.bind, ARGS.port), Handler)
