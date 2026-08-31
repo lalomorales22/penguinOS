@@ -99,6 +99,25 @@
 
 <!-- ---------------------------------------------------------------- buddy -->
 <section class="panel" id="p-buddy" role="tabpanel" hidden>
+
+  <!-- Every buddy on the board, one card each, drawn from the real .vox.
+       This is above the editor because choosing which penguin is on the panel
+       is now the first thing this tab is for, and editing one is the second. -->
+  <div class="gal">
+    <div class="gal-head">
+      <b>Gallery</b>
+      <span class="mono" id="gal-count">asking the board&hellip;</span>
+      <span class="gal-sp"></span>
+      <button type="button" id="gal-add">Add .vox&hellip;</button>
+      <button type="button" id="gal-refresh">Refresh</button>
+    </div>
+    <div class="gal-strip" id="gal-strip" role="listbox"
+         aria-label="buddies on this board"></div>
+    <p class="hint" id="gal-rule">Click a card to put that buddy on the panel.
+      Import adds a card, it never replaces one.</p>
+    <p class="note" id="gal-status"></p>
+  </div>
+
   <div class="vx">
 
     <div class="vx-stage" id="vx-stage">
@@ -169,6 +188,8 @@
             <option value="wander" selected>wander - slow yaw drift</option>
             <option value="curious">curious - looks around, quick turns</option>
             <option value="sleepy">sleepy - sleeps early, wakes slowly</option>
+            <option value="roam">roam - walks most of the time</option>
+            <option value="play">play - roams, hops, spins and flaps</option>
           </select>
         </label>
         <label>Sleep after

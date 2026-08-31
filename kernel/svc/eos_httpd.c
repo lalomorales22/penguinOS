@@ -683,6 +683,13 @@ static const struct {
     { "/api/console/exec",    "POST", EOS_ROUTE_CONSOLE_EXEC },
     { "/api/buddy",           "GET",  EOS_ROUTE_BUDDY        },
     { "/api/buddy/reload",    "POST", EOS_ROUTE_BUDDY_RELOAD },
+    // The gallery. Removing is a POST and not a DELETE because this server
+    // answers two methods and nothing else - web/README.md's rule, and the
+    // reason is that a small HTTP server's method table is one more thing to
+    // get wrong for no gain the browser can feel.
+    { "/api/buddy/gallery",        "GET",  EOS_ROUTE_BUDDY_GALLERY        },
+    { "/api/buddy/gallery/select", "POST", EOS_ROUTE_BUDDY_GALLERY_SELECT },
+    { "/api/buddy/gallery/remove", "POST", EOS_ROUTE_BUDDY_GALLERY_REMOVE },
     { "/api/apps",            "GET",  EOS_ROUTE_APPS         },
 };
 #define N_ROUTES ((int)(sizeof ROUTES / sizeof ROUTES[0]))
@@ -2478,9 +2485,11 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_BRAIN_CANCEL: h->req_api++; return h_brain_cancel(h, r);
 
     // ---- kernel/svc/eos_apps.c: files, console, buddy, apps --------------
-    // All fourteen go to one call. Listing them rather than range-checking the
-    // enum is deliberate: three people append to eos_route_t and a range is the
-    // thing that silently swallows the next route somebody inserts.
+    // All seventeen go to one call. Listing them rather than range-checking
+    // the enum is deliberate: three people append to eos_route_t and a range is
+    // the thing that silently swallows the next route somebody inserts. The
+    // three gallery rows are the proof - they were inserted in the middle of
+    // this block's range and had to be named here to be reachable.
     case EOS_ROUTE_FS_LIST:      case EOS_ROUTE_FS_STAT:
     case EOS_ROUTE_FS_READ:      case EOS_ROUTE_FS_USAGE:
     case EOS_ROUTE_FS_WRITE:     case EOS_ROUTE_FS_ABORT:
@@ -2488,6 +2497,9 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_FS_RENAME:    case EOS_ROUTE_CONSOLE_LOG:
     case EOS_ROUTE_CONSOLE_EXEC: case EOS_ROUTE_BUDDY:
     case EOS_ROUTE_BUDDY_RELOAD: case EOS_ROUTE_APPS:
+    case EOS_ROUTE_BUDDY_GALLERY:
+    case EOS_ROUTE_BUDDY_GALLERY_SELECT:
+    case EOS_ROUTE_BUDDY_GALLERY_REMOVE:
         h->req_api++;
         if (!s_api)
             return fail_err(h, r, -7, "this image was built without the files, "

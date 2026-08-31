@@ -267,6 +267,9 @@ typedef enum {
     EOS_ROUTE_CONSOLE_EXEC,
     EOS_ROUTE_BUDDY,
     EOS_ROUTE_BUDDY_RELOAD,
+    EOS_ROUTE_BUDDY_GALLERY,          // several buddies; one of them live
+    EOS_ROUTE_BUDDY_GALLERY_SELECT,
+    EOS_ROUTE_BUDDY_GALLERY_REMOVE,
     EOS_ROUTE_APPS,
     EOS_ROUTE_CAPTIVE,         // an OS connectivity probe: redirect to the portal
     EOS_ROUTE_STATIC,          // a file under the active document root

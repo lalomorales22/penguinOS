@@ -970,6 +970,22 @@ static int ble_gap_event(struct ble_gap_event *ev, void *arg)
         if (!is_subscribed_handle(ev->notify_rx.attr_handle)) return 0;
         if (!ev->notify_rx.om) return 0;
         if (ble_hs_mbuf_to_flat(ev->notify_rx.om, rep, sizeof rep, &got) != 0) return 0;
+        // TEMPORARY DIAGNOSTIC: every subscribed notification, with its bytes.
+        // decode_mouse() takes exactly three, and this keyboard's busiest
+        // handle sends four - which is what a report-protocol mouse with a
+        // scroll wheel looks like, and also what a consumer-control page looks
+        // like. The bytes tell the two apart.
+        {
+            static uint32_t lastn;
+            uint32_t tn = now_ms();
+            if ((uint32_t)(tn - lastn) >= 150u) {
+                lastn = tn;
+                ESP_LOGI(TAG, "rx h=%u len=%u  %02x %02x %02x %02x",
+                         (unsigned)ev->notify_rx.attr_handle, (unsigned)got,
+                         got > 0 ? rep[0] : 0, got > 1 ? rep[1] : 0,
+                         got > 2 ? rep[2] : 0, got > 3 ? rep[3] : 0);
+            }
+        }
         // Shorter than a keyboard report means a mouse, a consumer-control key
         // or a vendor report. The HAL would survive it - it bounds-checks
         // everything - but it would read the first byte as modifiers and
@@ -1002,6 +1018,20 @@ static int ble_gap_event(struct ble_gap_event *ev, void *arg)
                              (unsigned)s_mouse_handle);
                 }
                 if (ev->notify_rx.attr_handle != s_mouse_handle) return 0;
+                // TEMPORARY DIAGNOSTIC: what the trackpad actually sends, and
+                // where the cursor ends up. Rate limited so a moving finger
+                // cannot flood the very task that services it.
+                {
+                    static uint32_t last_log;
+                    uint32_t tn = now_ms();
+                    if ((uint32_t)(tn - last_log) >= 200u) {
+                        const eos_pointer_t *pp = eos_pointer_shared();
+                        last_log = tn;
+                        ESP_LOGI(TAG, "mouse dx=%d dy=%d btn=%02x -> x=%d y=%d",
+                                 (int)m.dx, (int)m.dy, m.buttons,
+                                 (int)pp->x, (int)pp->y);
+                    }
+                }
                 // Straight into the cursor, on the host task, because the
                 // position must be current the instant the frame loop next
                 // draws - the ring carries the click, not the coordinates.

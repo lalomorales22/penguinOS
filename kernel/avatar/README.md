@@ -6,6 +6,7 @@ The little 3D character that is the face of penguinOS. Two pieces:
 |---|---|
 | `eos_vox.[ch]` | MagicaVoxel `.vox` reader, interior culling, face masks |
 | `eos_buddy.[ch]` | software cube rasteriser + the personality state machine |
+| `eos_stroll.[ch]` | where he stands, the waddle, and what he does unprompted |
 
 No allocation, no float, no LVGL. It draws into a buffer you hand it, in
 either 8-bit indexed or RGB565, so the same code runs on the CYD's software
@@ -56,11 +57,13 @@ sort order and returns 0.
 | `eos_voxel_t` | 5 | x, y, z, palette index, face mask |
 | `eos_vox_model_t` | 32 | points at your pool |
 | `eos_vox_pal_t` | 768 | optional — pass NULL and never spend it |
-| `eos_buddy_t` | 104 | |
-| `eos_buddy_cfg_t` | 32 | |
+| `eos_buddy_t` | 116 | riscv32; was 92 before it could move |
+| `eos_buddy_cfg_t` | 24 | `roam_q8` landed in existing padding and cost nothing |
+| `eos_stroll_t` | 56 | one per buddy; the caller owns it |
 | `eos_buddy_target_t` | 40 | |
 | shade LUT (I8 only) | 768 | `const`, put it in flash, costs no RAM |
-| code | 6737 B flash | both objects, `xtensa-esp32-elf-gcc -std=c99 -Os -mlongcalls`; 2308 vox + 4429 buddy |
+| code | 6737 B flash | vox + buddy, `xtensa-esp32-elf-gcc -std=c99 -Os -mlongcalls`; 2308 vox + 4429 buddy |
+| motion | 3781 B flash | `riscv32-esp-elf-gcc -Os`: 3267 for `eos_stroll.o`, 514 added to `eos_buddy.o` |
 | writable statics | **0** | no `.data`, no `.bss` in either object; every table is `const` |
 | peak stack, render at 64x64 | ~320 B | xtensa `-Os`: `eos_buddy_render` 288 + `ceil_q8` 32, no recursion, no VLA |
 | peak stack, parse + finish | ~240 B | `eos_vox_parse` 80 + `eos_vox_finish` 48 + `sort_spatial` 80 + `voxkey` 32 |
@@ -126,6 +129,161 @@ a stale gap and drops back to IDLE on the next tick.
 | `EV_ERROR` | CONFUSED for 1.9s, then IDLE |
 | `EV_IDLE_TIMEOUT` | SLEEPING (or set `cfg.idle_sleep_ms` and it happens on its own) |
 
+## Motion
+
+`eos_buddy` draws one frame of one mood. It has no idea where it is standing.
+`eos_stroll` is the layer over the top that decides that: pick a spot, turn to
+face it, waddle there, stop, look about, and every so often do something silly.
+It is a separate object because a mood arrives from the megabrain and a stroll
+does not, and folding the second into the first would put a walk cycle inside
+the thing the HTTP client drives.
+
+The entire surface it touches is four numbers on the buddy:
+
+| It writes | Through | In |
+|---|---|---|
+| where he stands | `eos_buddy_move_to/by()` | Q8 pixels from the centre of the target |
+| the lean | `eos_buddy_set_gait()` | Q8 voxels of shear at the top of the model |
+| the rise | `eos_buddy_set_gait()` | Q8 voxels of lift |
+| which way he faces | `eos_buddy_face()` | Q8 yaw steps, offset from `cfg.home_yaw` |
+
+### The stage
+
+Position is an offset **inside the render target**, not a move of where the
+target is blitted. That is the whole reason a step is free: the buddy's box is
+already the unit of damage on the panel — rendered once into its own buffer,
+blitted at a fixed spot — so walking repaints exactly the rectangle a bob
+repaints. Moving the blit would dirty two boxes a frame and drag the tile
+behind it.
+
+`cfg.roam_q8` is how much of his own size he gives up to get floor to walk on.
+0 is exactly the old behaviour, to the pixel: he is fitted as large as the box
+allows and there is nowhere to go. The stage is then whatever the box has left
+over after his footprint, minus an eighth of his own size on each axis held
+back for the bob and the lean — so a hop at the top of the stage cannot put his
+head through the edge of the tile.
+
+Measured, with the reference 11x7x15 buddy. The 80x80 box is
+`EOS_SHELL_BUDDY_PX`, which is what the tile gets; 240x240 is the Buddy app
+full screen.
+
+| `roam_q8` | Drawn at | Stage in 80x80 | Stage in 240x240 |
+|---|---|---|---|
+| 0 (`still`) | full fit | +-9.0 x +-0.0 px | +-26.9 x +-0.0 px |
+| 32 (`sleepy`) | 87% | +-12.9 x +-2.5 px | +-38.6 x +-7.2 px |
+| 41 (`wander`) | 84% | +-14.0 x +-4.0 px | +-41.8 x +-11.8 px |
+| 51 (`curious`, `roam`, `play`) | 80% | +-15.2 x +-5.6 px | +-45.5 x +-16.8 px |
+
+A step at 10 Hz is between a third and two thirds of a pixel, and a crossing of
+the 80x80 tile takes four or five seconds. Two pixels is visible on this panel,
+so that is a walk and not a twitch.
+
+The horizontal stage is about three times the vertical, and that is correct
+rather than a compromise: the camera sits 30 degrees up, so a square of floor
+projects to a 2:1 letterbox. Vertical travel is foreshortened by
+`EOS_BUDDY_SIN_PHI` for the same reason, which makes up-screen read as
+*further away* rather than *airborne*, and is the only depth cue there is —
+nothing rescales the model.
+
+### The waddle
+
+A penguin walking is not a slide, it is a rock from foot to foot, and the
+give-away is that the roll and the step are **the same oscillator**: he leans
+onto the foot he is about to push off. So there is exactly one phase in the
+whole gait, and everything is a function of its sine:
+
+| | Is | Peaks |
+|---|---|---|
+| lean | `amp * sin(phase)` | twice a cycle, opposite signs — one per foot |
+| rise | `amp * abs(sin(phase))` | at both lean extremes: the hip over a straight stance leg |
+| step | `speed * abs(sin(phase))` | at both lean extremes: that is the push-off |
+
+Two feet, two lean extremes, two push-offs, one cycle. They cannot drift apart
+because there is nothing to drift against. The host test asserts the
+*relationship* and not merely that both of them move: at the frame where the
+lean is extreme the stride is within 3% of its maximum, and at every lean zero
+crossing — both feet down, nobody pushing — it is under 12% of it.
+
+**What the lean actually is, and what it cost.** The rasteriser has no roll.
+The three things it could have been:
+
+| Option | Verdict |
+|---|---|
+| horizontal shear | **chosen.** `shear_q8` already exists, `fill_quad()` already handles it (a shear maps parallelograms to parallelograms), and on a blocky model the top sliding over the base reads as a body over a stance foot. Costs nothing new. |
+| one-voxel vertical offset per side | rejected: the model has no left/right halves to offset. Splitting it would mean two draws and a seam. |
+| yaw wobble | rejected: one yaw step is 11.25 degrees, so the smallest wobble available *snaps* rather than rocks at 10 frames a second. |
+
+The cost of the shear is that it is a whole-body lean, not a hip: his feet
+lean with him. At three pixels per voxel nobody can see the feet well enough
+for that to read as wrong, and it is the difference between a waddle and a
+slide.
+
+The rise on its own would be a hop, not a waddle. It is not on its own — the
+lean is the larger signal and is what carries the gait. `EOS_STROLL_ACT_HOP`
+is the one that really is a hop, and is named that.
+
+### Behaviour
+
+A small state machine over the moods, never inside them:
+
+    REST -> TURN -> WALK -> LOOK -> REST
+      \-> ACT -> REST
+
+| Phase | What |
+|---|---|
+| `REST` | standing at home yaw, waiting out a jittered timer |
+| `TURN` | yaw easing round to face the chosen spot; capped at 2.5 s so he cannot be stranded facing the wrong way |
+| `WALK` | waddling toward it; ends on arrival, on overshoot, on 450 ms of getting nowhere against the clamp, or on the preset's cap |
+| `LOOK` | arrived; head goes two or three steps one way then the other |
+| `ACT` | one unprompted thing: hop, spin, flap or stretch |
+| `HELD` | THINKING, TALKING, LISTENING, CONFUSED or HAPPY: hold position |
+| `SETTLED` | SLEEPING: the lean and rise decay to nothing and he stays put |
+
+**He walks only while IDLE.** A buddy who wanders off mid-answer looks broken
+rather than alive, so the four moods that mean the owner is at the panel hold
+him where he is, and SLEEPING settles him completely. Waking puts him back on
+his feet.
+
+The four acts are all written through the same two numbers the waddle uses,
+plus the yaw offset for the spin, because the buddy has no other joints:
+
+| Act | Expressed as | Length |
+|---|---|---|
+| hop | rise, half a sine per bounce, rectified so he rests on the floor | 1350 ms, 3 bounces |
+| spin | exactly one turn wound onto the yaw target | 1300 ms |
+| flap | lean oscillating at 500 ms — a body shimmy, there are no flippers to move | 1500 ms |
+| stretch | one half sine of rise over the whole act, with a small lean | 1100 ms |
+
+Every one of those periods is four or five frames at 10 Hz, and that is not a
+coincidence. An act built on a 200 ms oscillation aliases against a 100 ms
+frame into a two-frame flicker: the buddy does not flap, he strobes. The first
+cut of `flap` was 220 ms and did exactly that.
+
+Rest lengths and the gap between acts are `min + jitter`, and the gait period
+is jittered a tenth either side per walk. A penguin who hops every nine seconds
+exactly is a metronome and the eye finds that in about three repeats.
+
+### `idle.behaviour`
+
+`buddy.json` already carried this field, so the vocabulary is extended rather
+than replaced. `eos_stroll_preset_from_name()` maps the string; anything
+unrecognised is `wander`, which is the rule `web/README.md` already set.
+
+| Value | What he does | `roam_q8` |
+|---|---|---|
+| `still` | holds home yaw, blinks. Never moves, never leans, and is drawn at exactly the size he was before this file existed | 0 |
+| `wander` | the fallback: long rests, the odd short walk, plays every 20–40 s | 41 |
+| `curious` | quick turns, looks about, covers the stage, plays every 8–21 s | 51 |
+| `sleepy` | slow and short, very long rests, never plays; still halves `idle_sleep_ms` | 32 |
+| `roam` | walks most of the time, whole stage, plays every 13–30 s | 51 |
+| `play` | roams and plays every 4–12 s | 51 |
+
+`eos_apps_idle_t` in `kernel/svc/include/eos_apps.h` has the same six in the
+same order, but the two are joined **by name and not by cast**, so neither
+header has to include the other. That enum is append-only: a `buddy.json` in
+the wild carries the name, so a new value is free, but reordering would change
+what an already-stored behaviour means.
+
 ## The .vox format, as we read it
 
 RIFF-ish: 4-byte id, `int32` content bytes, `int32` children bytes, then the
@@ -180,6 +338,10 @@ is a hard error, never a clamp. Errors are typed — see `eos_vox_strerror()`.
 ```bash
 cc -std=c99 -Wall -Wextra -O1 -Iinclude eos_vox.c eos_buddy.c test/test_vox.c -o test_vox
 ./test_vox                  # 109 checks
+
+cc -std=c99 -Wall -Wextra -O1 -Iinclude eos_vox.c eos_buddy.c eos_stroll.c \
+   test/test_stroll.c -o test_stroll -lm
+./test_stroll               # 92 checks, and prints the gait
 ./test_vox buddy.vox        # also drops a real .vox you can open in MagicaVoxel
 
 # and the one that matters, because the parser eats untrusted card data:
@@ -208,6 +370,28 @@ five moods so you can see it turn. Beyond the obvious, it checks:
   `-fsanitize=address` a read one byte past the declared length is a hard
   failure. Fed a big static buffer, an over-read is invisible; that is the only
   reason this test allocates.
+
+`test_stroll` prints two things a human should actually look at: one walk
+cycle as ASCII, ten frames of it, with the lean and the stride beside each
+frame — you can watch the body slide over the feet and come back — and a plan
+view of ninety seconds of `play` seen from above, so the roaming looks like
+roaming and not like a pendulum. Beyond that it checks:
+
+- the walk reaches its target and **stops**, and does not drift afterwards;
+- the clamp holds at all four edges, asked for directly and walked into, over
+  4 x 400 s of continuous roaming;
+- the roll and the step are one oscillator, asserted as the relationship
+  above rather than as "both of them moved";
+- exactly two lean sign changes and exactly two push-off surges per cycle;
+- no phase strands him: over ten minutes of `play`, nothing runs past 3.2 s,
+  every one of the four acts comes up, and the gaps between them span 8.6 s;
+- the lean always eases out within 600 ms of stopping — over 900 s there is
+  no frame where he is standing still and still leaning;
+- SLEEPING settles him: eight seconds of it does not move him one Q8 unit,
+  the lean and rise reach exactly zero, and he lets go of the yaw;
+- 3000 frames x 4 target sizes, and all four corners of the stage x 32 yaws
+  under a hard lean, write **nothing** outside the target buffer — checked
+  with a guard band, not by trusting the rasteriser.
 
 ### The one that bites
 

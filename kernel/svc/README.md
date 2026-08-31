@@ -800,16 +800,24 @@ themes and megabrain. Fourteen routes, one translation unit, no allocation.
 | `/api/console/log` | GET | `since`, `max` — a ring slice with `next` and `dropped` |
 | `/api/console/exec` | POST | `{"cmd":"..."}` — seven words, 202, output through the log |
 | `/api/buddy` | GET | the avatar's config, state, model and this board's caps |
-| `/api/buddy/reload` | POST | re-reads `buddy.json` and `buddy.vox` with no reboot |
+| `/api/buddy/reload` | POST | re-reads the active model and its metadata, no reboot |
+| `/api/buddy/gallery` | GET | `offset`, `count` — the models on the board, one of them active |
+| `/api/buddy/gallery/select` | POST | `{"slug":"..."}` — make one live, now |
+| `/api/buddy/gallery/remove` | POST | `{"slug":"..."}` — refuses the live one and the last one |
 | `/api/apps` | GET | the windows the shell can open, for the autostart picker |
+
+The three gallery rows are answered by `eos_gallery.c` and reach it through
+`eos_apps_dispatch()`, not through a second `eos_httpd_set_api()` pointer:
+`eos_httpd` holds exactly one, and a second is a second thing an image can leave
+NULL while its routes are still in the table.
 
 Errors are `web/README.md`'s table, produced by `eos_httpd_fail_err()` from an
 `eos_err_t`, so there is one copy of the code/status mapping in the image.
 
 ## How it reaches the server
 
-`eos_httpd.c` gained three things and no handlers: fourteen rows in `ROUTES[]`,
-fourteen `case` labels that all call one function, and five one-line exports of
+`eos_httpd.c` gained three things and no handlers: seventeen rows in `ROUTES[]`,
+seventeen `case` labels that all call one function, and five one-line exports of
 its own error helpers. The handlers are here.
 
 The call is through a pointer `eos_apps_init()` registers, not a direct call:
@@ -942,9 +950,10 @@ pane sees why.
 
 ## The buddy
 
-`buddy.json` and `buddy.vox` on `/int/buddy`, written by the editor through the
-ordinary chunked `/api/fs/write`. There is no upload endpoint for the model and
-there should not be: one upload mechanism, one set of failure modes.
+`<slug>.vox` and `<slug>.json` in `/int/buddy/gallery`, written by the editor
+through the ordinary chunked `/api/fs/write`. There is no upload endpoint for
+the model and there should not be: one upload mechanism, one set of failure
+modes. Which of them is live is `/int/buddy/active` — see *The gallery* below.
 
 `/api/buddy/reload` hands the file to `eos_vox_parse()` and reports what it
 said. Nothing is pre-validated here — that parser was fuzzed over eight thousand
@@ -956,6 +965,13 @@ pool this board has, so the previous model does not survive it; the endpoint
 reports that honestly rather than describing a model that is now half of two. A
 second pool to make a bad upload survivable is 5,120 bytes for a case the editor
 already prevents.
+
+That is honest but it used to be all there was, and honest is not the same as
+survivable. `eos_gallery_select()` is what makes it survivable without a second
+pool: it calls `eos_apps_buddy_reload_from()` **before** it moves the pointer on
+the filesystem, so a refused model is followed by a plain reload of the buddy
+that was already active. The owner keeps their penguin, and the cost is one
+extra parse on a path that has already failed.
 
 `buddy.json` is re-emitted from what the board parsed, not echoed. Splicing
 unvalidated file bytes into a response is how the phone gets a document it
@@ -989,6 +1005,95 @@ pool is 20,480 bytes of `.bss` and the buffer for the file that fills it is
 another 21 KB, on a board with 173 KB of heap. `/api/buddy` reports the cap in
 `limits`, so the editor can warn before somebody spends an evening on a model
 the board will refuse.
+
+## The gallery
+
+`eos_gallery.c`, and it exists because of a bug rather than a feature request.
+There used to be exactly one buddy and importing a new one wrote over it — which
+is how the owner lost Pip, and getting him back took a remove-and-reboot over
+`curl` because the seeder only writes when there is nothing there.
+
+```
+/int/buddy/gallery/<slug>.vox     the model
+/int/buddy/gallery/<slug>.json    its name, personality and accent
+/int/buddy/active                 one line naming the slug that is live
+```
+
+Three decisions in that layout are worth the paragraph each.
+
+**`active` is a file, not a key.** There is no board-wide `buddy.json` any more
+— every model has its own — so there is no document to put the key in. And the
+pointer is rewritten on every select while the metadata beside it holds the
+sentence the owner wrote about their penguin; twenty-odd bytes is one LittleFS
+block, and re-emitting a 500-byte document to change one key would put that
+sentence through a flash write every time somebody clicked a different buddy.
+
+**Nothing is cached.** `eos_gallery_active()` reads the file every time. The
+file IS the state; a cached copy is the one that goes stale under an
+`/api/fs/write` nobody told this component about.
+
+**The search order is total, so there is one answer.** The active entry, then
+the first entry in directory order, then the legacy `/int/buddy/buddy.vox`. The
+middle step writes nothing, so a full or read-only filesystem still boots
+wearing a buddy. The last step is the end of the search and not a second source
+of truth: `eos_seed_buddy()` renames a pre-gallery `buddy.vox` into the gallery
+on the first boot after the update, and after that there is nothing there to
+find.
+
+### Slugs are the attack surface
+
+A slug arrives in a POST body from whoever is on the WiFi and leaves as a path
+handed to `eos_storage_open()`. `eos_gallery_slug_ok()` is a **whitelist** —
+`[a-z0-9-]`, 1 to `EOS_GALLERY_SLUG_MAX` (24) bytes — checked over an explicit
+length and never over a C string, so an embedded or `\u0000` NUL is refused
+rather than silently ending the name early.
+
+A whitelist rather than a list of forbidden shapes is the whole point. `.`,
+`..`, `%2e%2e`, a backslash, a Cyrillic `а` and every escape that only becomes
+non-ASCII after `eos_json_get_str()` decodes it are all outside the set without
+one of them being named, and a rule that has to enumerate its attacks is a rule
+that will miss the next one. 24 is not taste: an upload writes
+`<slug>.vox.part` and `EOS_NAME_MAX` is 40.
+
+The same rule is what quietly keeps the listing right. `pip.json` has the wrong
+suffix; an abandoned `pip.vox.part` has a stem of `pip.vox`, which contains a
+dot and is therefore not a slug. Neither becomes an entry and neither needed a
+special case.
+
+### The listing does not parse anything
+
+`eos_gallery_peek()` reads the first 256 bytes of each `.vox` and takes `dim`
+from `SIZE` and `voxels` from `XYZI`'s count. It is a second reader of a format
+this component is otherwise careful to have only one reader of, and it earns
+that by being unable to matter: it writes two numbers into a struct and touches
+no voxel pool, no palette and no model. A bug in it mislabels a row.
+`eos_vox_parse()` still gets the whole file at select time and still decides
+whether a model loads, and the host suite drives the same non-cubic file through
+both and asserts they agree axis for axis.
+
+The alternative was parsing every entry to list the directory: one 7 KB stage
+and a sort of up to 1,536 voxels per row, on the task holding the dispatch
+mutex, at 10 Hz. A ten-model gallery would have been a visible hitch on the
+panel every time the tab was opened.
+
+`<slug>.json` is read for the entry's `name` only, and **falls back to the slug**
+for a document that is missing, truncated, oversized or not JSON. That is the
+requirement with the sharpest edge in the whole component: the thing that
+produces a truncated `.json` is an upload that died, and an upload that died is
+exactly when the owner opens the gallery to pick something else. One bad entry
+costs that one row its name and nothing else.
+
+### The two refusals
+
+| Case | Returns | Why |
+|---|---|---|
+| the slug is the live buddy | `EOS_ERR_BUSY`, 409 | deleting what the panel is drawing is the bug this closes |
+| it is the last entry | `EOS_ERR_STATE`, 409 | a gallery that can be emptied can lose you your last penguin |
+
+Different codes on purpose, so the UI can say different things. The live check
+asks two questions — what `/int/buddy/active` says, and what
+`eos_apps_buddy_slug()` says is loaded. They agree on a healthy board, and
+asking both is what protects the model on screen when they have come apart.
 
 ### Reaching the running system
 
@@ -1040,6 +1145,22 @@ free. The static RAM is the number that matters: free DIRAM at link falls from
 | `s_budjson` | 768 | `buddy.json` staged whole |
 | `s_scr` | 288 | the request path, rename's second one, and a listing entry joined onto its directory — see below |
 | `s_below`, `s_up`, `s_fslot`, the log mutex, the rest | 304 | |
+
+`eos_gallery.c` adds 1,241 bytes of `.bss` and about 4.8 KB of flash on top of
+that, and `eos_apps.c` grew 320 bytes of `.bss` with it:
+
+| `.bss` | Bytes | What |
+|---|---|---|
+| `s_meta` | 768 | one `<slug>.json` staged for its name. Deliberately the same size as `s_budjson`: a document too large for the loader must also be too large for the listing, or the tab shows a name the board will never use |
+| `s_peek` | 256 | the `.vox` header window the listing reads dimensions and voxel count out of |
+| `s_g` | 217 | the two gallery paths and one slug |
+| `s_bud.file`, `s_bud.slug` (in `eos_apps.c`) | 128 | what actually loaded, and which entry it was |
+| `eos_apps_buddy_reload()`'s two resolved paths | 192 | static and not stack, same reason as `s_scr` |
+
+Not one of those is on the HTTP worker's stack, for the reason the paragraph
+below gives, and none of them scales with how many models the gallery holds:
+listing is a directory scan that reuses one buffer per row. A hundred 6 KB
+models is 600 KB of the 900 KB free on `/int` and costs this component nothing.
 
 **The scratch is static and not stack, deliberately.** The HTTP worker has
 5,376 bytes of which 513 are already the request body, and three 96-byte paths

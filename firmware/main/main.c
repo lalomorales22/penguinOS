@@ -74,6 +74,7 @@
 #include "eos_apps.h"
 
 #include "eos_buddy.h"
+#include "eos_stroll.h"
 #include "eos_buddy_model.h"
 
 #include "eos_boot_theme.h"
@@ -142,12 +143,25 @@ static eos_settings_store_t settings;
 // eos_buddy_state_t by another name, and the EOS_APP_BUDDY window, which is
 // what the whole project is named for.
 //
-// The model is whichever of two exists. A buddy.vox on /int wins; with none
-// there — which is every board that has not been given one — the compiled-in
-// shape in eos_buddy_model.c is adopted instead, so the tile is never empty
-// and the Buddy tab's "there is no model yet, build one" is an offer rather
-// than an apology.
+// The model is whichever one the gallery resolves to, and eos_apps is the only
+// thing that decides: the slug in /int/buddy/active, else the first entry in
+// the gallery, else the pre-gallery /int/buddy/buddy.vox that a board which has
+// not been updated yet still carries. With none of those — a board nobody has
+// given a buddy — the compiled-in shape in eos_buddy_model.c is adopted, so the
+// tile is never empty and the Buddy tab's "there is no model yet, build one" is
+// an offer rather than an apology. This file never opens a model path itself;
+// buddy_adopt() takes whatever eos_apps_buddy_model() is holding.
 static eos_buddy_t buddy;
+
+// And what he does with himself between questions. The mood machine says how
+// he feels; this says where he is standing, which foot he is on and whether
+// he is about to hop. It is a separate object on purpose: a mood arrives from
+// the megabrain and a stroll does not, and folding the second into the first
+// would put a walk cycle inside the thing the HTTP client drives.
+//
+// buddy.json's idle.behaviour chooses the preset, by name — "still" spends no
+// pixels and draws exactly the avatar this board drew before it could walk.
+static eos_stroll_t stroll;
 static char        brain_model[EOS_BRAIN_MODEL_MAX];
 
 // The files, console, buddy and apps endpoints. eos_apps_t does not exist:
@@ -398,6 +412,7 @@ static void buddy_adopt(void)
     const eos_vox_pal_t *pal = eos_apps_buddy_palette();
     const eos_buddy_cfg_t *from = eos_apps_buddy_cfg();
     eos_buddy_state_t was = eos_buddy_state(&buddy);
+    eos_stroll_preset_t preset;
     eos_buddy_cfg_t cfg;
 
     if (m && m->count) {
@@ -411,9 +426,21 @@ static void buddy_adopt(void)
     }
     if (!pal) pal = m->pal;
 
+    // How much of the tile he gives up so that there is floor under him. It
+    // has to be set BEFORE eos_buddy_init(), because the scale and the stage
+    // are the same division of the box and only one of them can go first.
+    preset = eos_stroll_preset_from_name(eos_apps_idle_name(eos_apps_buddy_behaviour()));
+    cfg.roam_q8 = eos_stroll_roam_q8(preset);
+
     eos_shell_buddy_shade(pal, &cfg);
     eos_buddy_init(&buddy, m, &cfg);
     eos_buddy_set_state(&buddy, was);
+    // Seeded from the model, not from a clock: two boards wearing the same
+    // buddy should not be doing the same hop at the same instant, and two
+    // reloads of the same model on one board should not replay one either.
+    eos_stroll_init(&stroll, &buddy, preset,
+                    0x5EED1E55u ^ (eos_apps_buddy_generation() * 2654435761u)
+                                ^ ((uint32_t)m->count << 7));
 }
 
 // ------------------------------------------------------------ megabrain
@@ -438,8 +465,15 @@ static bool brain_tick(uint32_t now)
     while ((ev = eos_brain_bridge_next_event()) >= 0)
         eos_buddy_event(&buddy, (eos_buddy_event_t)ev);
 
-    if (brain_last_tick && now > brain_last_tick)
-        eos_buddy_tick(&buddy, now - brain_last_tick);
+    if (brain_last_tick && now > brain_last_tick) {
+        uint32_t dt = now - brain_last_tick;
+        eos_buddy_tick(&buddy, dt);
+        // After the mood, never before it: the stroll reads the state the
+        // mood machine has just settled on, and a walk driven off last
+        // frame's mood is a lean applied to the wrong animation on exactly
+        // the frame a mood changes.
+        eos_stroll_tick(&stroll, dt);
+    }
     brain_last_tick = now;
 
     // No health probe until there is a network to probe over. In SETUP every
@@ -698,6 +732,15 @@ void app_main(void)
     // on a new board. Seeding it means the Buddy tab opens on the buddy that
     // is actually on screen, so editing him starts from him rather than from
     // an empty grid. It writes once and never overwrites.
+    heap_step("storage");
+
+    // The gallery: the shipped models put back if any are missing, a
+    // pre-gallery buddy.vox migrated in, and the active pointer written if
+    // nothing valid is chosen. Measured on its own rather than folded into
+    // storage, because this is the step that grew this pass and the one whose
+    // cost anybody reading a boot log will want to find. It should be ~0: the
+    // seeder stages nothing, comparing the legacy model against the shipped
+    // one in 128-byte bites rather than holding 7 KB to answer one question.
     eos_seed_buddy();
 
     // The avatar, off the filesystem.
@@ -715,7 +758,9 @@ void app_main(void)
             ESP_LOGW(TAG, "buddy  %s: %s", eos_strerr(be),
                      eos_apps_buddy_error() ? eos_apps_buddy_error() : "");
     }
-    heap_step("storage");
+    // The voxel pool is BSS and was taken before app_main ran, so what this
+    // measures is the parse and the metadata, not the model.
+    heap_step("gallery");
 
     // 2b. The settings. Between storage and theme because it names the theme,
     //     and before the network because it names the mDNS host. A file that is

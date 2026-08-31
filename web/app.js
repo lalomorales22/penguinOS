@@ -1083,9 +1083,20 @@ function bindSettings() {
 // is how many voxels the loaded model is past the caps that arrived with it,
 // which is zero for every model the board itself wrote and non-zero only if
 // somebody put a file on the filesystem by hand.
+// `slot` is the gallery id of the buddy the editor is working on and `slotFile`
+// is its .vox path. Everything that reads or writes a model goes through them,
+// so that a board with one buddy at buddy.vox and a board with nine of them
+// take exactly the same code path - the first is just a gallery of one.
+//
+// `slot` starts null rather than 'buddy' and every reader spells it
+// `B.slot || 'buddy'`. Null means "no preference yet, open whichever one the
+// board says is on the panel"; a real name would mean "stay on this one", and
+// a board that happens to have a slot called buddy sitting next to the one it
+// is actually wearing would then open the wrong penguin.
 var B = {
   ed: null, meta: null, loaded: false, centred: false,
-  dir: null, over: 0, src: null, capsKnown: false
+  dir: null, over: 0, src: null, capsKnown: false,
+  slot: null, slotFile: null
 };
 
 // The directory the firmware keeps the buddy in. EOS_APPS_BUDDY_DIR has been
@@ -1105,6 +1116,7 @@ function buddyInit() {
     onchange: buddySync
   });
 
+  galInit();
   buildPal();
   buddySync();
   buddyCaps();
@@ -1177,31 +1189,15 @@ function buddyInit() {
   $('b-load').onclick = buddyLoad;
   $('b-save').onclick = buddySave;
   $('b-export').onclick = buddyExport;
+  // Both import buttons run galAdd, which ADDS a slot rather than replacing
+  // one. That is the fix this whole feature exists for: an import used to
+  // write straight over /int/buddy/buddy.vox, and that is how a penguin gets
+  // lost on a Friday evening.
   $('b-import').onclick = function () { $('b-importfile').click(); };
   $('b-importfile').onchange = function (e) {
     var f = e.target.files[0];
     e.target.value = '';
-    if (!f) return;
-    f.arrayBuffer().then(function (ab) {
-      var r;
-      try {
-        r = B.ed.fromVox(new Uint8Array(ab));
-      } catch (err) {
-        // fromVox() checks against the caps this board reported, so a file
-        // MagicaVoxel is happy with can still be refused here - which is the
-        // point, and is why the message carries the numbers.
-        bstatus(f.name + ' will not load: ' + err.message, true);
-        return toast('bad .vox: ' + err.message, 'err');
-      }
-      B.src = f.name + ' (imported, not on the board)';
-      buildPal();
-      syncDim();
-      buddyWho();
-      buddySync();
-      bstatus('imported ' + f.name + ': ' + B.ed.count() + ' voxels in a ' +
-              r.size.join('x') + ' box. Save to board to put it on the panel.');
-      toast('imported ' + f.name, 'ok');
-    });
+    if (f) galAdd(f);
   };
 
   window.addEventListener('keydown', function (e) {
@@ -1305,7 +1301,7 @@ function metaFromForm() {
     // only ever read by a person - which is exactly why it should not say 22
     // cubed about a penguin that is 15x13x22.
     model: {
-      file: 'buddy.vox',
+      file: (B.slot || 'buddy') + '.vox',
       dim: ed.declaredSize(),
       voxels: ed.count()
     }
@@ -1337,12 +1333,14 @@ function bstatus(msg, bad) {
   p.style.color = bad ? 'var(--err)' : '';
 }
 
-// Tries each candidate directory in turn and resolves with the first
-// buddy.vox that came back 200, or with null when none of them did. A 404 is
-// an answer, not a failure: it is how a board with no model says so.
+// Tries each candidate directory in turn and resolves with the first model
+// that came back 200, or with null when none of them did. A 404 is an answer,
+// not a failure: it is how a board with no model says so. The leaf is the
+// active gallery slot, which the gallery listing has already installed by the
+// time this runs and which is plain 'buddy' on a board that has no gallery.
 function fetchVox(dirs) {
   if (!dirs.length) return Promise.resolve(null);
-  var dir = dirs[0], path = dir + '/buddy.vox';
+  var dir = dirs[0], path = dir + '/' + (B.slot || 'buddy') + '.vox';
   // No .catch(). A rejection here is the transport, not a missing file, and it
   // is left to propagate: falling through to the next directory would report
   // "the board has no buddy" about a board that simply did not answer.
@@ -1410,14 +1408,21 @@ function buddyLoad() {
       buddyCaps();
       if (meta) metaToForm(meta);
 
-      return fetchVox(buddyDirs()).then(function (got) {
+      // Before the model is fetched, not after: the gallery listing is what
+      // says WHICH model is on the panel, and reading buddy.vox on a board
+      // whose active slot is pip.vox would put the wrong penguin in the editor
+      // and then save it over the right one.
+      return galLoad().then(function () {
+        return fetchVox(buddyDirs());
+      }).then(function (got) {
         if (!got) {
           B.src = null;
           buddyWho();
           if (!d) {
             bstatus('this board has no buddy yet. Draw one and press Save to board.');
           } else {
-            bstatus('the board describes a buddy but there is no buddy.vox in ' +
+            bstatus('the board describes a buddy but there is no ' +
+                    (B.slot || 'buddy') + '.vox in ' +
                     (B.dir || BUDDY_DIRS.join(' or ')) +
                     (d.error ? ' - it says: ' + d.error : ''), true);
           }
@@ -1469,7 +1474,7 @@ function buddyLoad() {
 }
 
 function buddySave() {
-  var ed = B.ed, dir = B.dir || BUDDY_DIRS[0];
+  var ed = B.ed, dir = B.dir || BUDDY_DIRS[0], slot = B.slot || 'buddy';
   if (!ed.count()) return toast('model is empty', 'err');
 
   // Refused here, with the board's own numbers, rather than after the owner
@@ -1497,7 +1502,7 @@ function buddySave() {
   }
   var meta = metaFromForm();
   var box = ed.declaredSize().join('x');
-  bstatus('saving ' + bytes(vox.length) + ' to ' + dir + ' ...');
+  bstatus('saving ' + bytes(vox.length) + ' to ' + dir + '/' + slot + '.vox ...');
   $('b-save').disabled = true;
 
   // mkdir is allowed to fail: it usually fails because it is already there.
@@ -1505,28 +1510,45 @@ function buddySave() {
   return api('/api/fs/mkdir' + qp({ path: dir }), { method: 'POST' })
     .catch(function () { return null; })
     .then(function () {
-      var ui = uploadRow('buddy.vox');
+      var ui = uploadRow(slot + '.vox');
       rows.push(ui);
-      return putChunks(dir + '/buddy.vox', new Blob([vox]), ui);
+      return putChunks(dir + '/' + slot + '.vox', new Blob([vox]), ui);
     })
     .then(function () {
-      var ui = uploadRow('buddy.json');
+      var ui = uploadRow(slot + '.json');
       rows.push(ui);
       var j = new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' });
-      return putChunks(dir + '/buddy.json', j, ui);
+      return putChunks(dir + '/' + slot + '.json', j, ui);
     })
     .then(function () {
+      galEvict(slot);
+      // Saving a slot that is NOT the one on the panel must not move the panel.
+      // `select` is how a slot whose bytes just changed gets re-read, and it is
+      // also how a slot becomes the live one - the same call - so it is only
+      // safe on the slot that is live already. Editing a buddy off the panel
+      // and pressing Save is a normal thing to do, and it should not swap the
+      // board out from under someone who did not ask for that.
+      if (G.has && G.active && G.active !== slot) {
+        return { ok: true, d: null, quiet: true };
+      }
       // The one call that tells us whether the board could actually parse what
       // it was just handed. Swallowing its error is how an upload that the
       // board rejected reads as a success and the panel quietly keeps the
-      // compiled-in penguin.
-      return api('/api/buddy/reload', { method: 'POST', timeout: 12000 })
-        .then(function (d) { return { ok: true, d: d }; },
-              function (e) { return { ok: false, e: e }; });
+      // compiled-in penguin. A board with no gallery has one model and one
+      // route for it; a board with one re-selects what is already selected.
+      var live = G.has
+        ? api('/api/buddy/select' + qp({ id: slot }), { method: 'POST', timeout: 12000 })
+            .then(null, function () {
+              return api('/api/buddy/reload', { method: 'POST', timeout: 12000 });
+            })
+        : api('/api/buddy/reload', { method: 'POST', timeout: 12000 });
+      return live.then(function (d) { return { ok: true, d: d }; },
+                       function (e) { return { ok: false, e: e }; });
     })
     .then(function (rl) {
       B.dir = dir;
-      B.src = dir + '/buddy.vox';
+      B.src = dir + '/' + slot + '.vox';
+      B.slotFile = B.src;
       buddyWho();
       if (rl && !rl.ok) {
         bstatus('the ' + bytes(vox.length) + ' file is on the board, but it refused ' +
@@ -1549,10 +1571,19 @@ function buddySave() {
           buddySync();
         }, function () { /* the caps line stays provisional, which is true */ });
       }
-      bstatus('saved ' + n + ' voxels in a ' + box + ' box to ' + dir +
-              ' and the board reloaded it' +
-              (drew != null ? '. It is drawing ' + drew + ' of them.' : '.'));
+      if (rl && rl.quiet) {
+        // Nothing was reloaded, so nothing here can claim the board read it.
+        bstatus('saved ' + n + ' voxels in a ' + box + ' box to ' + dir + '/' +
+                slot + '.vox. The panel is showing ' + galName(G.active) +
+                ', so it did not change - click ' + slot +
+                ' in the gallery to put this one on it.');
+      } else {
+        bstatus('saved ' + n + ' voxels in a ' + box + ' box to ' + dir + '/' +
+                slot + '.vox and the board reloaded it' +
+                (drew != null ? '. It is drawing ' + drew + ' of them.' : '.'));
+      }
       toast('buddy saved', 'ok');
+      if (G.loaded) galLoad();
     }, function (e) {
       bstatus('save failed: ' + e.message, true);
       toast('save failed', 'err');
@@ -1580,6 +1611,785 @@ function buddyExport() {
   a.remove();
   setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
 }
+
+// ========================================================== BUDDY GALLERY
+
+// The board keeps several buddies now and exactly one of them is on the panel.
+// This strip is how the owner sees which, and how they change it. That is the
+// whole reason it exists: before it there was one file at /int/buddy/buddy.vox
+// and an import wrote straight over it, so importing a model was how you lost
+// your penguin. Nothing on this strip overwrites anything. Import writes a new
+// slot and leaves the panel alone, clicking a card is what swaps the panel, and
+// the two deletions the firmware refuses - the active buddy, and the last one -
+// are refused here in words on the card, before the button can be pressed,
+// rather than as an error afterwards.
+//
+// The one non-obvious constraint: every card's picture is drawn from the actual
+// .vox by the SAME rasteriser the big canvas and the panel use, so a thumbnail
+// can never flatter a model the board cannot draw. Drawing one is cheap -
+// measured at 0.43 ms for a Pip-sized model and 2.24 ms for the largest the
+// format allows, twelve of them in one synchronous burst in under 7 ms - but
+// the file behind each one is a 6 KB request to a board with four HTTP workers,
+// and THAT is the budget worth protecting. So a card fetches its model only
+// once it has been scrolled into view, one at a time, and the drawn bitmap is
+// kept so scrolling back over it costs nothing.
+
+var GAL_PX = 80;        // the box eos_buddy.c draws the avatar into inside a tile
+var GAL_YAW = 4;        // of EOS_BUDDY_YAW_STEPS - a 45 degree three-quarter view
+var GAL_CACHE = 24;     // drawn thumbnails kept; 24 * 160 * 160 * 4 is 2.4 MB at dpr 2
+
+var G = {
+  has: false,        // the board answered /api/buddy/gallery
+  entries: [],
+  active: null,
+  max: 0,
+  ed: null,          // the offscreen editor that draws the cards
+  thumbs: {},        // cache key -> a canvas holding a finished thumbnail
+  order: [],         // cache keys oldest first, for eviction
+  queue: [],
+  pumping: false,
+  io: null,
+  gen: 0,            // bumped on every rebuild; in-flight jobs from an older
+                     // generation drop their result rather than paint a card
+                     // that is no longer in the document
+  busy: false,
+  loaded: false
+};
+
+function gstatus(msg, bad) {
+  var p = $('gal-status');
+  p.textContent = msg || '';
+  p.style.color = bad ? 'var(--err)' : '';
+}
+
+function galInit() {
+  $('gal-refresh').onclick = function () {
+    // A refresh throws the drawn thumbnails away as well as the listing. The
+    // cache key can only be as good as what the listing reports, and a board
+    // that reports no size for its models would otherwise show a stale picture
+    // of one that another browser had edited.
+    G.thumbs = {};
+    G.order = [];
+    galLoad();
+  };
+  $('gal-add').onclick = function () { $('b-importfile').click(); };
+
+  if ('IntersectionObserver' in window) {
+    G.io = new IntersectionObserver(function (rows) {
+      rows.forEach(function (row) {
+        if (!row.isIntersecting) return;
+        G.io.unobserve(row.target);
+        var j = row.target._galjob;
+        if (j) { G.queue.push(j); galPump(); }
+      });
+    }, { root: $('gal-strip'), rootMargin: '160px 200px' });
+  }
+}
+
+// ------------------------------------------------------------- the listing
+
+function galStem(path) {
+  var s = String(path || '');
+  var i = s.lastIndexOf('/');
+  if (i >= 0) s = s.slice(i + 1);
+  return s.replace(/\.vox$/i, '');
+}
+
+function galMetaPath(e) { return e.file.replace(/\.vox$/i, '') + '.json'; }
+
+function galNum(v) {
+  v = Number(v);
+  return isFinite(v) && v >= 0 ? Math.floor(v) : null;
+}
+
+// web/README.md, *The gallery*: entries carry a `slug`, the listing reports the
+// gallery's own `dir` (which is EOS_APPS_BUDDY_DIR + "/gallery", not the buddy
+// directory), and `<slug>.vox` beside `<slug>.json` is the whole naming rule.
+// Paths are built from those two rather than being carried per entry.
+//
+// `file` and `id` are still read when they turn up, because they cost one `||`
+// each and this ran against a board that did not have these routes at all
+// while they were being written. What is NOT invented is the path: an entry
+// with no slug and no file is skipped, because a card drawn from a path this
+// file made up would be a lie about what is on the board.
+function galNorm(d) {
+  var list = null, i;
+  if (Array.isArray(d)) list = d;
+  else if (d) list = d.entries || d.gallery || d.buddies || d.items || d.models;
+  if (!Array.isArray(list)) list = [];
+
+  var dir = (d && typeof d.dir === 'string' && d.dir.charAt(0) === '/')
+    ? d.dir : (B.dir || BUDDY_DIRS[0]);
+  var top = d ? (d.active || d.selected || d.current) : null;
+  if (top && typeof top === 'object') top = top.slug || top.id || top.name || null;
+  if (top != null) top = String(top);
+
+  var out = [], seen = Object.create(null);
+  for (i = 0; i < list.length; i++) {
+    var e = list[i];
+    if (!e || typeof e !== 'object') continue;
+    var file = (typeof e.file === 'string' && e.file) ||
+               (typeof e.path === 'string' && e.path) || null;
+    var id = e.slug || e.id || (file ? galStem(file) : null) || e.name;
+    if (id == null) continue;
+    id = String(id);
+    if (seen[id]) continue;
+    seen[id] = 1;
+    if (!file) file = dir + '/' + id + '.vox';
+    if (file.charAt(0) !== '/') file = dir + '/' + file;
+    var m = e.model || {};
+    out.push({
+      id: id,
+      name: String(e.name || e.title || id),
+      file: file,
+      // The listing's `voxels` is the file's XYZI count, read out of the first
+      // 256 bytes rather than by parsing - the same number the browser parser
+      // reports as `count`, and NOT /api/buddy's post-cull `model.voxels`.
+      voxels: galNum(e.voxels != null ? e.voxels : m.voxels),
+      bytes: galNum(e.bytes != null ? e.bytes : e.size),
+      // `ok:false` is the board saying it could not read that header. Such an
+      // entry is still listed, still selectable and still deletable on purpose:
+      // it is the only way the owner can see a damaged import in order to get
+      // rid of it, so nothing here hides it or disables its bin.
+      ok: e.ok !== false,
+      active: e.active === true || e.selected === true || e.current === true ||
+              (top != null && top === id),
+      key: null
+    });
+  }
+
+  // One panel, one active buddy. If the board flagged several, the first wins;
+  // if it flagged none and there is only one to flag, that is not a guess.
+  var act = null;
+  for (i = 0; i < out.length; i++) {
+    if (!out[i].active) continue;
+    if (act) out[i].active = false; else act = out[i];
+  }
+  if (!act && out.length === 1) { out[0].active = true; act = out[0]; }
+
+  G.entries = out;
+  G.active = act ? act.id : null;
+  G.max = galNum(d && (d.max != null ? d.max : d.capacity)) || 0;
+
+  // Everything downstream - which file "Save to board" writes, which file the
+  // editor loads - hangs off B.slot, so it is installed here and not
+  // rediscovered anywhere else.
+  //
+  // It is NOT simply the active slot. The editor is often parked on a buddy
+  // that is not the one on the panel - that is exactly where an import leaves
+  // it - and re-listing the gallery must not drag it back onto the live one,
+  // because the next Save would then write the model on screen over the buddy
+  // the board is wearing. That is the failure this whole feature exists to
+  // prevent, so: stay where the editor is if the board still has that slot,
+  // and fall back to the active one only when it does not.
+  var keep = null;
+  for (i = 0; i < out.length; i++) if (out[i].id === B.slot) keep = out[i];
+  var park = keep || act;
+  if (park) {
+    B.slot = park.id;
+    B.slotFile = park.file;
+  }
+  if (act) B.dir = dirname(act.file);
+}
+
+// A board whose firmware predates the gallery still has exactly one buddy, and
+// showing it as a one-card strip keeps the tab's shape the same rather than
+// making the gallery appear and disappear with the image on the board.
+function galSingle() {
+  var dir = B.dir || BUDDY_DIRS[0], m = B.meta || {}, mod = m.model || {};
+  // web/README.md: `model.path` is the full path of the model the board is
+  // actually wearing and `model.slug` says which entry that is. Read those
+  // when they are there. `buddy.vox` is the last resort and the honest one -
+  // it is what a board carrying a pre-gallery model has, and assuming that
+  // filename anywhere else is how a client reads a model the board is not
+  // wearing.
+  var file = (typeof mod.path === 'string' && mod.path.charAt(0) === '/')
+    ? mod.path : (dir + '/buddy.vox');
+  var id = mod.slug ? String(mod.slug) : galStem(file);
+  G.entries = [{
+    id: id,
+    name: m.name || id,
+    file: file,
+    voxels: galNum(mod.voxels),
+    bytes: null,
+    ok: true,
+    active: true,
+    key: null
+  }];
+  G.active = id;
+  G.max = 1;
+  B.slot = id;
+  B.slotFile = file;
+}
+
+function galRule() {
+  $('gal-rule').textContent = G.has
+    ? ('Click a card to put that buddy on the panel; the board changes as soon ' +
+       'as it answers. Import adds a card, it never replaces one. The buddy on ' +
+       'the panel cannot be deleted and neither can the last one left - swap ' +
+       'first, then delete.')
+    : ('This board\'s firmware keeps a single buddy slot: it does not answer ' +
+       '/api/buddy/gallery, so there is nothing here to choose between and ' +
+       'nothing to delete. Save to board replaces the one model it has.');
+}
+
+function galName(id) {
+  for (var i = 0; i < G.entries.length; i++) {
+    if (G.entries[i].id === id) return G.entries[i].name;
+  }
+  return id || 'nothing';
+}
+
+// The listing pages the way /api/fs/list does, and list_max is 32 on this
+// board. Pages are walked until `more` goes false, with a hard stop so that a
+// board answering `more` forever cannot spin the tab: the cap is far above any
+// gallery that fits in 960 KB of LittleFS, and hitting it is reported rather
+// than hidden.
+var GAL_PAGE = 32;
+var GAL_MAX_ENTRIES = 256;
+
+function galFetchAll() {
+  var all = [], head = null;
+  var page = function (offset) {
+    return api('/api/buddy/gallery' + qp({ offset: offset, count: GAL_PAGE }),
+               { timeout: 10000 })
+      .then(function (d) {
+        if (!head) head = d;
+        var got = (d && (d.entries || d.gallery || d.buddies)) || [];
+        if (!Array.isArray(got)) got = [];
+        all = all.concat(got);
+        var more = !!(d && d.more) && got.length > 0 && all.length < GAL_MAX_ENTRIES;
+        return more ? page(offset + got.length) : null;
+      });
+  };
+  return page(0).then(function () {
+    var d = head && typeof head === 'object' ? head : {};
+    return {
+      dir: d.dir, active: d.active, max: d.total != null ? d.total : d.max,
+      entries: all,
+      truncated: all.length >= GAL_MAX_ENTRIES
+    };
+  });
+}
+
+function galLoad() {
+  G.loaded = true;
+  return galFetchAll()
+    .then(function (d) { return { ok: true, d: d }; },
+          function (e) { return { ok: false, e: e }; })
+    .then(function (res) {
+      if (res.ok) {
+        G.has = true;
+        galNorm(res.d);
+      } else if (res.e.status === 404 || res.e.status === 501) {
+        // Not an error. It is an older image, and web/README.md has always
+        // called a 404 on a buddy route a normal answer rather than a fault.
+        G.has = false;
+        galSingle();
+      } else {
+        G.has = false;
+        G.entries = [];
+        G.active = null;
+        galRender();
+        galRule();
+        gstatus('the board did not answer /api/buddy/gallery: ' +
+                res.e.message + '. The editor below still works on ' +
+                (B.slot || 'buddy') + '.', true);
+        return;
+      }
+      galRender();
+      galRule();
+      if (!G.entries.length) {
+        gstatus('the board has no buddies at all. Draw one and press Save to ' +
+                'board, or import a .vox.', true);
+      } else if (!G.active) {
+        gstatus('the board did not say which of these ' + G.entries.length +
+                ' is on the panel, so none is marked. Click one to be sure.', true);
+      } else {
+        gstatus('');
+      }
+    });
+}
+
+// ------------------------------------------------------------ the pictures
+
+// A detached Editor. Its input handlers bind to a canvas that is in no
+// document, so nothing can ever interact with it; all it is here for is
+// fromVox() and renderPreview(). Its limits are the FORMAT's rather than the
+// board's on purpose - a model too big for this board is still a model the
+// owner should be able to see and recognise before being told it will not fit,
+// and the card says so in words underneath instead of showing an empty square.
+function galEd() {
+  if (G.ed) return G.ed;
+  G.ed = new window.EOSVox.Editor({
+    canvas: document.createElement('canvas'),
+    preview: document.createElement('canvas'),
+    limits: window.EOSVox.defaultLimits()
+  });
+  return G.ed;
+}
+
+function galDpr() { return Math.min(2, window.devicePixelRatio || 1); }
+
+function galDraw(cv, u8) {
+  var ed = galEd(), want = Math.round(GAL_PX * galDpr());
+  if (cv.width !== want) { cv.width = want; cv.height = want; }
+  var r = ed.fromVox(u8);
+  ed.preview = cv;
+  ed.pctx = cv.getContext('2d');
+  // renderPreview quantises yaw to the 32 steps the board turns in and derives
+  // the step by flooring, so land half a step inside the one we want rather
+  // than exactly on its edge where the floor could fall either way.
+  ed.previewT = 0;
+  ed.previewYaw = (GAL_YAW + 0.5) * (Math.PI * 2 / 32);
+  ed.renderPreview(0);
+  return r;
+}
+
+function galKeep(key, src) {
+  var c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  c.getContext('2d').drawImage(src, 0, 0);
+  G.thumbs[key] = c;
+  G.order.push(key);
+  while (G.order.length > GAL_CACHE) {
+    var old = G.order.shift();
+    if (old !== key) delete G.thumbs[old];
+  }
+  return c;
+}
+
+function galPaste(cv, src) {
+  if (cv.width !== src.width) { cv.width = src.width; cv.height = src.height; }
+  var ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(src, 0, 0);
+}
+
+// Everything drawn from this slot is stale the moment its bytes change.
+function galEvict(id) {
+  var pre = id + '|', i;
+  for (i = G.order.length - 1; i >= 0; i--) {
+    if (G.order[i].slice(0, pre.length) !== pre) continue;
+    delete G.thumbs[G.order[i]];
+    G.order.splice(i, 1);
+  }
+}
+
+// One card per animation frame. The drawing is not what costs - the fetch is -
+// but yielding between cards is what keeps a strip of a hundred from being a
+// hundred-model stall on a phone.
+function galPump() {
+  if (G.pumping) return;
+  G.pumping = true;
+  var step = function () {
+    var job = null;
+    while (G.queue.length) {
+      job = G.queue.shift();
+      if (job.gen === G.gen) break;
+      job = null;
+    }
+    if (!job) { G.pumping = false; return; }
+    var again = function () { window.requestAnimationFrame(step); };
+    galJob(job).then(again, again);
+  };
+  window.requestAnimationFrame(step);
+}
+
+function galJob(job) {
+  var hit = G.thumbs[job.key];
+  if (hit) {
+    galPaste(job.cv, hit);
+    job.card.classList.remove('pending');
+    return Promise.resolve();
+  }
+  return apiRaw('/api/fs/read' + qp({ path: job.e.file }), { timeout: 20000 })
+    .then(function (r) {
+      if (!r.ok) throw new Error('the board answered ' + r.status);
+      return r.arrayBuffer();
+    })
+    .then(function (ab) {
+      if (job.gen !== G.gen) return;
+      var u8 = new Uint8Array(ab), r = galDraw(job.cv, u8);
+      galKeep(job.key, job.cv);
+      job.card.classList.remove('pending');
+      // The listing does not have to carry sizes, and the file always does.
+      job.e.bytes = u8.length;
+      job.e.voxels = r.kept;
+      job.meta.textContent = galMetaText(job.e);
+      galFlagBig(job.e, job.meta);
+    })
+    .then(null, function (err) {
+      if (job.gen !== G.gen) return;
+      job.card.classList.remove('pending');
+      job.card.classList.add('broken');
+      job.meta.className = 'gal-meta mono bad';
+      job.meta.textContent = 'will not draw';
+      job.meta.title = job.e.file + ': ' + err.message;
+    });
+}
+
+function galMetaText(e) {
+  var a = e.voxels != null ? (e.voxels + ' vox') : '.vox';
+  return e.bytes != null ? (a + ' · ' + bytes(e.bytes)) : a;
+}
+
+function galFlagBig(e, span) {
+  var lim = B.ed ? B.ed.limits : null;
+  if (!lim || e.voxels == null || e.voxels <= lim.voxels) return;
+  span.classList.add('bad');
+  span.title = e.voxels + ' voxels, and this board holds ' + lim.voxels +
+               '. It draws here and would be refused there.';
+}
+
+// ---------------------------------------------------------------- the strip
+
+function galKey(e) {
+  return e.id + '|' + (e.bytes == null ? '?' : e.bytes) +
+                '|' + (e.voxels == null ? '?' : e.voxels);
+}
+
+function galRender() {
+  var strip = $('gal-strip'), n = G.entries.length, last = n <= 1;
+  if (G.io) G.io.disconnect();
+  G.queue.length = 0;
+  G.gen++;
+  strip.textContent = '';
+  G.entries.forEach(function (e) { strip.appendChild(galCard(e, last)); });
+
+  $('gal-count').textContent = !n ? 'nothing on the board'
+    : (n + (n === 1 ? ' buddy' : ' buddies') + (G.max > n ? ' of ' + G.max : '') +
+       (G.active ? ', ' + galName(G.active) + ' on the panel' : ''));
+}
+
+function galCard(e, last) {
+  var card = el('div', 'gal-card pending');
+  card.setAttribute('role', 'option');
+  card.tabIndex = 0;
+  card.setAttribute('aria-selected', e.active ? 'true' : 'false');
+  if (e.active) card.classList.add('on');
+
+  var cv = el('canvas', 'gal-thumb'), px = Math.round(GAL_PX * galDpr());
+  cv.width = px;
+  cv.height = px;
+  card.appendChild(cv);
+
+  card.appendChild(el('b', 'gal-name', e.name));
+  var meta = el('span', 'gal-meta mono', galMetaText(e));
+  card.appendChild(meta);
+  galFlagBig(e, meta);
+
+  if (e.active) card.appendChild(el('span', 'gal-tag', 'on panel'));
+
+  // The firmware refuses these two, and so does this, with the reason on the
+  // card rather than in the error that would otherwise come back afterwards.
+  var why = !G.has ? 'one slot only'
+          : last ? 'the only one'
+          : e.active ? 'on the panel' : null;
+  var del = el('button', 'gal-del', '×');
+  del.type = 'button';
+  del.disabled = !!why;
+  del.title = why ? ('cannot delete ' + e.name + ': ' + why) : ('delete ' + e.name);
+  del.setAttribute('aria-label', del.title);
+  del.onclick = function (ev) { ev.stopPropagation(); galDelete(e); };
+  card.appendChild(del);
+  // Always appended, empty or not: a refusal line on one card and none on the
+  // next makes the strip a row of unequal boxes.
+  card.appendChild(el('span', 'gal-why mono', why ? 'no delete: ' + why : ''));
+
+  var open = function () { galSelect(e); };
+  card.onclick = open;
+  card.onkeydown = function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    open();
+  };
+
+  e.key = e.key || galKey(e);
+  var job = { gen: G.gen, e: e, cv: cv, card: card, meta: meta, key: e.key };
+  cv._galjob = job;
+  if (G.io) G.io.observe(cv);
+  else { G.queue.push(job); galPump(); }
+  return card;
+}
+
+// -------------------------------------------------------------- the verbs
+
+// Pulls one gallery slot into the editor: its model, and its sidecar if it has
+// one. The sidecar is optional everywhere - a .vox somebody dropped onto the
+// filesystem by hand has none - so a missing or unreadable one leaves the
+// identity fields alone rather than blanking them.
+function galOpen(e) {
+  var ed = B.ed;
+  return apiRaw('/api/fs/read' + qp({ path: e.file }), { timeout: 20000 })
+    .then(function (r) {
+      if (!r.ok) throw new Error('the board answered ' + r.status);
+      return r.arrayBuffer();
+    })
+    .then(function (ab) {
+      var u8 = new Uint8Array(ab), r = ed.fromVox(u8);
+      B.slot = e.id;
+      B.slotFile = e.file;
+      B.dir = dirname(e.file);
+      B.src = e.file;
+      B.over = Math.max(0, ed.count() - ed.limits.voxels);
+      buildPal();
+      syncDim();
+      buddySync();
+      buddyWho();
+      bstatus(ed.count() + ' voxels in a ' + r.size.join('x') + ' box, ' +
+              bytes(u8.length) + ', from ' + e.file + '. The board draws ' +
+              ed.drawnCount() + ' of them once the buried ones are hidden.' +
+              (B.over > 0 ? ' This board holds ' + ed.limits.voxels +
+                            ', so erase ' + B.over + ' before saving.' : ''),
+              B.over > 0);
+      // The identity panel is reset from the slot's own sidecar, and from a
+      // blank one when it has none. Leaving the previous buddy's name and
+      // personality in the fields would not merely look wrong: the next Save
+      // writes those fields into THIS slot, so opening a model with no sidecar
+      // would quietly graft the last one's personality onto it.
+      return apiRaw('/api/fs/read' + qp({ path: galMetaPath(e) }), { timeout: 10000 })
+        .then(function (r2) { return r2.ok ? r2.json() : null; })
+        .then(null, function () { return null; })
+        .then(function (m) {
+          metaToForm(m && typeof m === 'object' ? m : galBlankMeta(e));
+          buddyWho();
+        });
+    })
+    .then(null, function (err) {
+      bstatus('could not open ' + e.file + ': ' + err.message, true);
+    });
+}
+
+// What the identity panel shows for a slot that has no buddy.json beside it -
+// a .vox somebody dropped onto the filesystem by hand, or one this tab added
+// before its sidecar landed. Same defaults as the markup ships with.
+function galBlankMeta(e) {
+  return {
+    schema_version: 1,
+    name: e.name,
+    personality: '',
+    accent: '#d88e56',
+    idle: { behaviour: 'wander', sleep_ms: 120000, home_yaw: 0 },
+    eyes: { open_index: 0, shut_index: 0 }
+  };
+}
+
+function galSelect(e) {
+  if (G.busy) return;
+  if (e.active) {
+    gstatus(e.name + ' is already the one on the panel.');
+    return;
+  }
+  if (!G.has) {
+    gstatus('this firmware has one buddy slot, so there is nothing to swap to.');
+    return;
+  }
+  G.busy = true;
+  $('gal-strip').classList.add('busy');
+  gstatus('putting ' + e.name + ' on the panel...');
+
+  api('/api/buddy/gallery/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug: e.id }),
+    timeout: 12000
+  })
+    .then(function (d) {
+      var now = (d && (d.active || d.selected ||
+                       (d.buddy && d.buddy.model && d.buddy.model.slug))) || e.id;
+      now = String(now);
+      G.entries.forEach(function (x) { x.active = x.id === now; });
+      G.active = now;
+      galRender();
+      // Said plainly, because the panel is across the room and the whole point
+      // of a gallery is that this happens on the hardware and not in the tab.
+      gstatus(e.name + ' is on the panel now - look at the board, it has ' +
+              'already changed. The editor below is editing ' + e.name +
+              ' from here on.');
+      toast(e.name + ' is on the panel', 'ok');
+      return galOpen(e);
+    }, function (err) {
+      gstatus('the board would not switch to ' + e.name + ': ' + err.message +
+              '. Whatever was on the panel is still there.', true);
+      toast('could not switch', 'err');
+    })
+    .then(function () {
+      G.busy = false;
+      $('gal-strip').classList.remove('busy');
+    });
+}
+
+function galDelete(e) {
+  if (G.busy || !G.has) return;
+  confirmBox('Delete ' + e.name,
+    'Removes ' + e.file + ' from the board for good. Nothing on the board keeps ' +
+    'a copy - export it first if there is any chance you want it back.')
+    .then(function (ok) {
+      if (!ok) return;
+      G.busy = true;
+      $('gal-strip').classList.add('busy');
+      gstatus('deleting ' + e.name + '...');
+      // Deliberately only /api/buddy/remove. The two refusals live in the
+      // firmware, and reaching around them with a plain /api/fs/remove is
+      // exactly how the panel would end up pointed at a file that is gone.
+      return api('/api/buddy/gallery/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: e.id }),
+        timeout: 12000
+      })
+        .then(function () {
+          galEvict(e.id);
+          toast('deleted ' + e.name, 'ok');
+          return galLoad().then(function () {
+            gstatus('deleted ' + e.name + '. ' + galName(G.active) +
+                    ' is still on the panel.');
+          });
+        }, function (err) {
+          // The firmware answers the two refusals with different codes so that
+          // this can say two different things. Both are 409, and "conflict" is
+          // not a sentence anyone can act on.
+          var says = err.code === 'busy'
+            ? (e.name + ' is the buddy the board is wearing. Put another one on ' +
+               'the panel first, then delete this one.')
+            : err.code === 'state'
+              ? (e.name + ' is the only buddy left, and a board with no buddy has ' +
+                 'nothing to fall back to. Add another one first.')
+              : ('the board refused to delete ' + e.name + ': ' + err.message);
+          gstatus(says, true);
+          toast('delete refused', 'err');
+        })
+        .then(function () {
+          G.busy = false;
+          $('gal-strip').classList.remove('busy');
+        });
+    });
+}
+
+// EOS_GALLERY_SLUG_MAX. The board's rule is a whitelist - a-z, 0-9 and '-',
+// one to twenty-four bytes - and it is a whitelist because a slug becomes a
+// filename. Everything that leaves here already satisfies it, so a name the
+// board would reject is never sent and never half-uploaded.
+var GAL_SLUG_MAX = 24;
+
+// A .vox filename turned into a slug: lowercase, no punctuation, inside the
+// board's length rule, and never one that is already taken. Never overwriting
+// is the entire point of this control, so a collision suffixes rather than
+// replaces.
+function galSlug(name, taken) {
+  var s = String(name || '').replace(/\.vox$/i, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, GAL_SLUG_MAX);
+  if (!s) s = 'buddy';
+  if (!taken[s]) return s;
+  var stub = s.slice(0, GAL_SLUG_MAX - 3);
+  for (var n = 2; n < 100; n++) {
+    if (!taken[stub + '-' + n]) return stub + '-' + n;
+  }
+  return null;
+}
+
+// The one import in this tab, and it cannot cost anybody their penguin: with a
+// gallery it writes a NEW slot and leaves the panel where it was, and without
+// one it does what it always did - loads into the editor and touches nothing -
+// while saying out loud that Save would replace the only model this board has.
+function galAdd(f) {
+  var ed = B.ed;
+  return f.arrayBuffer().then(function (ab) {
+    var u8 = new Uint8Array(ab), r;
+    try {
+      // fromVox checks against the caps this board reported, so a file
+      // MagicaVoxel is happy with can still be refused here - which is the
+      // point, and is why the message carries the numbers.
+      r = ed.fromVox(u8);
+    } catch (err) {
+      bstatus(f.name + ' will not load: ' + err.message, true);
+      toast('bad .vox: ' + err.message, 'err');
+      return;
+    }
+    buildPal();
+    syncDim();
+    buddySync();
+
+    if (!G.has) {
+      B.src = f.name + ' (imported, not on the board)';
+      buddyWho();
+      bstatus('imported ' + f.name + ': ' + ed.count() + ' voxels in a ' +
+              r.size.join('x') + ' box. This firmware keeps one buddy slot, so ' +
+              'Save to board would replace ' + (B.slot || 'buddy') +
+              ' - export that one first if you want it back.');
+      toast('imported ' + f.name, 'ok');
+      return;
+    }
+
+    var taken = Object.create(null);
+    G.entries.forEach(function (x) { taken[x.id] = 1; });
+    var slug = galSlug(f.name, taken);
+    if (!slug) {
+      gstatus('there are already a hundred slots named after ' + f.name +
+              '. Rename the file and try again.', true);
+      return;
+    }
+
+    // Re-encoded rather than uploaded as it arrived. A MagicaVoxel file can
+    // carry chunks eos_vox_parse() skips, and those bytes still count against
+    // the staging buffer; writing the editor's own subset means the file the
+    // board receives is one the board can read, at the size it was quoted.
+    var vox;
+    try {
+      vox = ed.toVox();
+    } catch (err2) {
+      bstatus('imported, but it cannot be written back: ' + err2.message, true);
+      return;
+    }
+
+    $('b-name').value = slug;
+    buddyWho();
+    var meta = metaFromForm();
+    meta.model.file = slug + '.vox';
+
+    var dir = B.dir || BUDDY_DIRS[0], rows = [];
+    gstatus('adding ' + slug + ' to the gallery, ' + bytes(vox.length) + '...');
+    return api('/api/fs/mkdir' + qp({ path: dir }), { method: 'POST' })
+      .then(null, function () { return null; })
+      .then(function () {
+        // uploadRow draws into the Files tab's queue, which is where every
+        // other upload in this app reports, and is out of sight from here.
+        var ui = uploadRow(slug + '.vox');
+        rows.push(ui);
+        return putChunks(dir + '/' + slug + '.vox', new Blob([vox]), ui);
+      })
+      .then(function () {
+        var ui = uploadRow(slug + '.json');
+        rows.push(ui);
+        return putChunks(dir + '/' + slug + '.json',
+          new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' }), ui);
+      })
+      .then(function () {
+        B.src = dir + '/' + slug + '.vox';
+        B.slot = slug;
+        B.slotFile = B.src;
+        buddyWho();
+        bstatus('added ' + slug + ': ' + ed.count() + ' voxels in a ' +
+                r.size.join('x') + ' box. The editor is on it now, and Save to ' +
+                'board writes it back to this slot.');
+        toast('added ' + slug, 'ok');
+        return galLoad().then(function () {
+          gstatus('added ' + slug + ' to the gallery. It is NOT on the panel: ' +
+                  galName(G.active) + ' still is. Click the new card when you ' +
+                  'want the board to wear it.');
+        });
+      }, function (err) {
+        gstatus('could not add ' + slug + ': ' + err.message, true);
+        toast('add failed', 'err');
+      })
+      .then(function () {
+        rows.forEach(function (row) { row.row.remove(); });
+      });
+  });
+}
+
 
 // ================================================================ CONSOLE
 

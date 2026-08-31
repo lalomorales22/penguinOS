@@ -2677,9 +2677,12 @@ static const struct { const char *method, *uri; } CONTRACT[] = {
     { "POST", "/api/settings" },
     { "GET",  "/api/themes" },
     { "GET",  "/api/apps" },
-    // Buddy
+    // Buddy, and the gallery
     { "GET",  "/api/buddy" },
     { "POST", "/api/buddy/reload" },
+    { "GET",  "/api/buddy/gallery" },
+    { "POST", "/api/buddy/gallery/select" },
+    { "POST", "/api/buddy/gallery/remove" },
     // Console
     { "GET",  "/api/console/log" },
     { "POST", "/api/console/exec" },

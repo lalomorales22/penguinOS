@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "Mochi",
+  "personality": "You are Mochi, a voxel cat on this little screen. Warm, faintly smug, and never longer than you need to be.",
+  "accent": "#d88692",
+  "idle": {
+    "behaviour": "wander",
+    "sleep_ms": 120000,
+    "home_yaw": 4
+  },
+  "eyes": {
+    "open_index": 4,
+    "shut_index": 5
+  },
+  "model": {
+    "file": "cat.vox",
+    "dim": [
+      15,
+      13,
+      19
+    ],
+    "voxels": 1021
+  }
+}

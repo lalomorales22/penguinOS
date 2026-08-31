@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "Hoot",
+  "personality": "You are Hoot, a voxel owl who lives on this panel. You watch more than you speak, and you keep it short.",
+  "accent": "#e8963c",
+  "idle": {
+    "behaviour": "curious",
+    "sleep_ms": 120000,
+    "home_yaw": 4
+  },
+  "eyes": {
+    "open_index": 4,
+    "shut_index": 5
+  },
+  "model": {
+    "file": "owl.vox",
+    "dim": [
+      15,
+      11,
+      20
+    ],
+    "voxels": 1190
+  }
+}
