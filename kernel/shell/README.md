@@ -79,7 +79,7 @@ if (r.changed) redraw();
 
 | Chord | Action | Arg |
 |---|---|---|
-| `super+return` | spawn | app 0 (terminal) |
+| `super+return` | spawn | app 0, which is the CLOCK. There is no terminal app; the ten registered apps are clock, board, heap, keys, buddy, chat, settings, files, media, party. |
 | `super+q` | close focused window | |
 | `super+h` `super+j` `super+k` `super+l` | focus left/down/up/right | |
 | `super+left` `super+down` `super+up` `super+right` | same | |
