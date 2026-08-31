@@ -21,6 +21,7 @@ idf_component_register(
         "eos_shell_input.c"
         "eos_setup_screen.c"
         "eos_web_embed.c"
+        "eos_seed_buddy.c"
         "eos_settings_bind.c"
     REQUIRES
         eos_kernel
@@ -33,6 +34,8 @@ idf_component_register(
         "${CMAKE_CURRENT_LIST_DIR}/../../web/style.css"
         "${CMAKE_CURRENT_LIST_DIR}/../../web/setup.js"
         "${CMAKE_CURRENT_LIST_DIR}/../../web/voxel-editor.js"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/penguin.vox"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/buddy.json"
 )
 
 # Same promise the kernel makes. These files are kernel code that happens to
