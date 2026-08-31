@@ -436,6 +436,9 @@ static int      s_nchr;
 static uint16_t s_svc_start, s_svc_end;
 static uint16_t s_sub[SUB_MAX];     // value handles we accept notifications from
 static int      s_nsub;
+// The handle that actually delivers keyboard reports, latched on the first
+// one that arrives. Zero until then. See choose_reports().
+static uint16_t s_kbd_handle;
 static uint16_t s_cccd[SUB_MAX];    // CCCDs still to be written
 static int      s_ncccd, s_cccd_i;
 static bool     s_subscribed;
@@ -519,6 +522,7 @@ static void bond_erase(void)
 static void gatt_reset(void)
 {
     s_nchr = s_nsub = s_ncccd = s_cccd_i = 0;
+    s_kbd_handle = 0;
     s_svc_start = s_svc_end = 0;
     s_subscribed = false;
 }
@@ -535,6 +539,7 @@ static void link_ready(void)
     eos_ble_bond_t b;
 
     s_subscribed = true;
+
     set_state(EOS_BLE_READY);
 
     // The bond record is written only now, when a keyboard has actually
@@ -619,38 +624,47 @@ static int on_proto_written(uint16_t conn, const struct ble_gatt_error *err,
     return 0;
 }
 
-// Which characteristics to listen to is decided once, here, and the two cases
-// are exclusive on purpose. Boot protocol mode gives a keyboard whose report
-// layout is fixed by the spec at eight bytes, which is the only layout this
-// host understands; asking for it and then also subscribing to the report-mode
-// characteristics would double every keystroke on a keyboard that ignored the
-// request.
+// Which characteristics to listen to. Subscribe to BOTH the boot keyboard
+// characteristic and every notifying input report, because asking for boot
+// protocol mode is a request and not all keyboards honour it.
+//
+// The K809 - a keyboard with a trackpad - advertises boot support, accepts the
+// protocol-mode write, and then goes on sending report-mode notifications
+// anyway on three separate handles: 63 for keys, 67 for media keys, 59 for the
+// trackpad. Subscribing to boot alone meant listening to a handle that never
+// fired while forty-six real reports were dropped one line later.
+//
+// The original reason for choosing one or the other was that a keyboard
+// honouring boot mode AND notifying its report characteristics would deliver
+// every keystroke twice. That risk is real but it is not symmetric: guessing
+// wrong the other way delivers nothing at all. So subscribe to everything and
+// resolve the ambiguity from what actually arrives - the first handle to
+// deliver a keyboard-shaped report becomes the keyboard, and later reports of
+// that shape from any other handle are ignored.
 static void choose_reports(void)
 {
     uint16_t proto = 0, boot = 0;
     int i;
 
     s_nsub = 0;
+    s_kbd_handle = 0;
     for (i = 0; i < s_nchr; i++) {
         if (s_chr[i].uuid == UUID_PROTO)    proto = s_chr[i].val_handle;
         if (s_chr[i].uuid == UUID_BOOT_KBD) boot  = s_chr[i].val_handle;
     }
 
-    if (boot) {
-        s_sub[s_nsub++] = boot;
-        if (proto) {
-            static const uint8_t boot_mode = 0x00;
-            ESP_LOGI(TAG, "using boot protocol mode");
-            if (ble_gattc_write_flat(s_conn, proto, &boot_mode, 1,
-                                     on_proto_written, NULL) == 0) return;
-        }
-    } else {
-        for (i = 0; i < s_nchr && s_nsub < SUB_MAX; i++) {
-            if (s_chr[i].uuid != UUID_REPORT) continue;
-            if (!(s_chr[i].props & BLE_GATT_CHR_PROP_NOTIFY)) continue;
-            s_sub[s_nsub++] = s_chr[i].val_handle;
-        }
-        ESP_LOGI(TAG, "using report protocol mode, %d input reports", s_nsub);
+    if (boot && s_nsub < SUB_MAX) s_sub[s_nsub++] = boot;
+    for (i = 0; i < s_nchr && s_nsub < SUB_MAX; i++) {
+        if (s_chr[i].uuid != UUID_REPORT) continue;
+        if (!(s_chr[i].props & BLE_GATT_CHR_PROP_NOTIFY)) continue;
+        s_sub[s_nsub++] = s_chr[i].val_handle;
+    }
+    ESP_LOGI(TAG, "listening on %d handles%s", s_nsub, boot ? " (boot + reports)" : "");
+
+    if (boot && proto) {
+        static const uint8_t boot_mode = 0x00;
+        if (ble_gattc_write_flat(s_conn, proto, &boot_mode, 1,
+                                 on_proto_written, NULL) == 0) return;
     }
 
     ble_gattc_disc_all_dscs(s_conn, s_svc_start, s_svc_end, on_dsc, NULL);
@@ -922,12 +936,17 @@ static int ble_gap_event(struct ble_gap_event *ev, void *arg)
         // or a vendor report. The HAL would survive it - it bounds-checks
         // everything - but it would read the first byte as modifiers and
         // invent a chord out of a volume key.
-        // TEMPORARY DIAGNOSTIC - what does this keyboard actually send?
-        ESP_LOGI(TAG, "hidrep len=%u  %02x %02x %02x %02x %02x %02x %02x %02x",
-                 (unsigned)got, rep[0], got>1?rep[1]:0, got>2?rep[2]:0, got>3?rep[3]:0,
-                 got>4?rep[4]:0, got>5?rep[5]:0, got>6?rep[6]:0, got>7?rep[7]:0);
-        if (got < KBD_REPORT_BYTES) return 0;
-        eos_input_hid_report(rep, (uint8_t)got, now_ms());
+        // A keyboard-shaped report. The first handle to deliver one owns the
+        // keyboard from here on, so a device that honours boot mode AND
+        // notifies its report characteristic does not type everything twice.
+        if (got >= KBD_REPORT_BYTES) {
+            if (!s_kbd_handle) {
+                s_kbd_handle = ev->notify_rx.attr_handle;
+                ESP_LOGI(TAG, "keyboard reports on handle %u", (unsigned)s_kbd_handle);
+            }
+            if (ev->notify_rx.attr_handle != s_kbd_handle) return 0;
+            eos_input_hid_report(rep, (uint8_t)got, now_ms());
+        }
         return 0;
     }
 

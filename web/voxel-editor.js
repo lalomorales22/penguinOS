@@ -18,6 +18,20 @@
  * Hard limits come from eos_vox.h and are enforced here rather than discovered
  * on the board: 32 per axis, 4096 voxels, palette index 0 means empty and is
  * never stored. A file this editor writes is a file eos_vox_parse() accepts.
+ *
+ * Those are the FORMAT's limits, and a board is allowed to be smaller than the
+ * format. GET /api/buddy reports the voxel pool and staging buffer it actually
+ * has - on esp32c6 that is 1536 voxels and 7264 bytes, not 4096 and 17480 -
+ * and setLimits() installs them, so a model too big for the board is refused
+ * while it is being built rather than after it has been uploaded. Nothing here
+ * ever raises a limit past the format's; a board may only narrow them.
+ *
+ * The one non-obvious constraint on the writer: SIZE is written from the
+ * model's occupied bounds, not from the editing grid. eos_buddy.c centres and
+ * scales the avatar on sx/sy/sz, so declaring a 22-cube around a 15x13x22
+ * penguin draws it small and off-centre on the panel. Voxel coordinates are
+ * identical either way, so a tight SIZE costs nothing and a loose one is a bug
+ * you only see on the glass.
  */
 (function (global) {
 'use strict';
@@ -27,6 +41,48 @@ var MAX_VOX = 4096;      // EOS_VOX_MAX_VOXELS
 var YAW_STEPS = 32;      // EOS_BUDDY_YAW_STEPS
 var CUSTOM_BASE = 209;   // palette slots 209..255 are the colour picker's
 var SHADE = [1.0, 0.80, 0.62];  // z faces, y faces, x faces - eos_buddy shade[3]
+
+// ------------------------------------------------------------------ limits
+
+// Every file this editor writes has the same shape, so its length is a
+// function of the voxel count alone: 8 signature + 12 MAIN + (12+12) SIZE +
+// (12+4+4n) XYZI + (12+1024) RGBA. That is the arithmetic the comment over
+// EOS_APPS_VOX_BYTES does, and having it here lets the editor quote the exact
+// size of a model it has not written yet.
+var VOX_FIXED = 8 + 12 + (12 + 12) + (12 + 4) + (12 + 1024);   // 1096
+function voxBytes(n) { return VOX_FIXED + 4 * n; }
+
+function defaultLimits() {
+  return { voxels: MAX_VOX, bytes: voxBytes(MAX_VOX), dim: MAX_DIM };
+}
+
+function numIn(v, lo, hi, dflt) {
+  v = Math.floor(Number(v));
+  if (!isFinite(v) || v < lo || v > hi) return dflt;
+  return v;
+}
+
+// Takes the `limits` object out of GET /api/buddy and turns it into something
+// safe to enforce. A board can only ever narrow the format's ceilings, so
+// every field is clamped into the format's range and a missing or nonsense
+// one falls back to the format. The voxel and byte caps are then reconciled
+// into the tighter of the two, because two numbers that disagree is two
+// numbers the owner has to reason about while trying to draw a penguin.
+function sanitizeLimits(l) {
+  var d = defaultLimits(), out;
+  if (!l || typeof l !== 'object') return d;
+  out = {
+    voxels: numIn(l.voxels, 1, MAX_VOX, d.voxels),
+    bytes:  numIn(l.bytes, voxBytes(1), d.bytes, d.bytes),
+    dim:    numIn(l.dim, 2, MAX_DIM, d.dim)
+  };
+  var byBytes = Math.floor((out.bytes - VOX_FIXED) / 4);
+  if (byBytes < out.voxels) out.voxels = Math.max(1, byBytes);
+  // out.bytes stays the board's own number. It is what gets quoted back to
+  // the owner, and quoting them a figure they will not find in eos_apps.h
+  // helps nobody.
+  return out;
+}
 
 // ------------------------------------------------------------------ colour
 
@@ -144,16 +200,31 @@ function istag(a, o, s) {
   return true;
 }
 
-function writeVox(grid, pal) {
+function writeVox(grid, pal, limits) {
+  var lim = sanitizeLimits(limits);
   var d = grid.dim, list = [], x, y, z, c;
+  var mx = 0, my = 0, mz = 0;
   // (z,y,x) ascending, which is the order eos_vox_finish() sorts into anyway.
   for (z = 0; z < d; z++) for (y = 0; y < d; y++) for (x = 0; x < d; x++) {
     c = grid.d[grid.at(x, y, z)];
-    if (c) list.push(x, y, z, c);
+    if (!c) continue;
+    list.push(x, y, z, c);
+    if (x >= mx) mx = x + 1;
+    if (y >= my) my = y + 1;
+    if (z >= mz) mz = z + 1;
   }
   var n = list.length / 4;
-  if (n > MAX_VOX) throw new Error('too many voxels: ' + n + ' of ' + MAX_VOX);
-  if (d > MAX_DIM) throw new Error('grid larger than ' + MAX_DIM);
+  if (n > lim.voxels)
+    throw new Error('this board holds ' + lim.voxels + ' voxels and the model has ' + n);
+  var nb = voxBytes(n);
+  if (nb > lim.bytes)
+    throw new Error('this board stages ' + lim.bytes + ' bytes of .vox and this is ' + nb);
+  if (d > lim.dim) throw new Error('grid larger than ' + lim.dim);
+
+  // eos_vox_parse() calls a zero dimension EOS_VOX_ERR_DIM, so an empty model
+  // is written as a legal 1x1x1 with no voxels in it rather than as a file the
+  // board will refuse to read back.
+  if (!n) { mx = my = mz = 1; }
 
   var szSize = 12, szXyzi = 4 + 4 * n, szRgba = 1024;
   var children = (12 + szSize) + (12 + szXyzi) + (12 + szRgba);
@@ -163,7 +234,7 @@ function writeVox(grid, pal) {
   tag(buf, o, 'MAIN'); w32(buf, o + 4, 0); w32(buf, o + 8, children); o += 12;
 
   tag(buf, o, 'SIZE'); w32(buf, o + 4, szSize); w32(buf, o + 8, 0); o += 12;
-  w32(buf, o, d); w32(buf, o + 4, d); w32(buf, o + 8, d); o += 12;
+  w32(buf, o, mx); w32(buf, o + 4, my); w32(buf, o + 8, mz); o += 12;
 
   tag(buf, o, 'XYZI'); w32(buf, o + 4, szXyzi); w32(buf, o + 8, 0); o += 12;
   w32(buf, o, n); o += 4;
@@ -181,9 +252,34 @@ function writeVox(grid, pal) {
   return buf;
 }
 
+// What eos_vox_finish() will leave once it has culled. A voxel with all six
+// neighbours occupied draws no face and is dropped on the board, which is why
+// GET /api/buddy reports 572 voxels for a penguin whose file holds 1280. The
+// editor shows both numbers rather than letting the owner conclude that half
+// the model failed to upload. Out of bounds counts as empty here exactly as it
+// does in eos_vox_occupied(), so the shell of the model always survives.
+function countDrawn(grid) {
+  var d = grid.dim, g = grid.d, n = 0, x, y, z;
+  var solid = function (X, Y, Z) {
+    if (X < 0 || Y < 0 || Z < 0 || X >= d || Y >= d || Z >= d) return false;
+    return g[(Z * d + Y) * d + X] !== 0;
+  };
+  for (z = 0; z < d; z++) for (y = 0; y < d; y++) for (x = 0; x < d; x++) {
+    if (!g[(z * d + y) * d + x]) continue;
+    if (solid(x + 1, y, z) && solid(x - 1, y, z) &&
+        solid(x, y + 1, z) && solid(x, y - 1, z) &&
+        solid(x, y, z + 1) && solid(x, y, z - 1)) continue;
+    n++;
+  }
+  return n;
+}
+
 // Mirrors eos_vox_parse()'s rules so a file this editor opens is a file the
-// board opens. Throws with the same reasons the C returns.
-function readVox(u8) {
+// board opens. Throws with the same reasons the C returns. `limits` is
+// optional and narrows the format's ceilings to the board's, so a file that
+// parses but will not fit is refused here with the board's own numbers.
+function readVox(u8, limits) {
+  var lim = sanitizeLimits(limits);
   if (!u8 || u8.length < 8) throw new Error('truncated');
   if (!istag(u8, 0, 'VOX ')) throw new Error('not a .vox file');
   var ver = r32(u8, 4);
@@ -197,6 +293,7 @@ function readVox(u8) {
 
   var pos = body + mc, end = pos + mk;
   var grid = null, pal = null, sx = 0, sy = 0, sz = 0, haveSize = false, haveXyzi = false;
+  var nRead = 0;
 
   while (pos + 12 <= end) {
     var clen = r32(u8, pos + 4), klen = r32(u8, pos + 8), cb = pos + 12;
@@ -207,15 +304,17 @@ function readVox(u8) {
       if (clen < 12) throw new Error('truncated SIZE');
       sx = r32(u8, cb); sy = r32(u8, cb + 4); sz = r32(u8, cb + 8);
       if (!sx || !sy || !sz) throw new Error('zero dimension');
-      if (sx > MAX_DIM || sy > MAX_DIM || sz > MAX_DIM)
-        throw new Error('model is larger than ' + MAX_DIM + ' on an axis');
+      if (sx > lim.dim || sy > lim.dim || sz > lim.dim)
+        throw new Error('model is ' + sx + 'x' + sy + 'x' + sz +
+                        ', larger than ' + lim.dim + ' on an axis');
       haveSize = true;
 
     } else if (!haveXyzi && istag(u8, pos, 'XYZI')) {
       if (!haveSize) throw new Error('XYZI before SIZE');
       if (clen < 4) throw new Error('truncated XYZI');
       var n = r32(u8, cb);
-      if (n > MAX_VOX) throw new Error('model has ' + n + ' voxels, max ' + MAX_VOX);
+      if (n > lim.voxels)
+        throw new Error('model has ' + n + ' voxels and the limit is ' + lim.voxels);
       if (n > (clen - 4) / 4) throw new Error('truncated XYZI');
       // One cubic grid holds a non-cubic model; the editor keeps it square.
       grid = new Grid(Math.max(sx, sy, sz));
@@ -226,6 +325,7 @@ function readVox(u8) {
         if (u8[q + 3] === 0) continue;
         grid.set(u8[q], u8[q + 1], u8[q + 2], u8[q + 3]);
       }
+      nRead = n;
       haveXyzi = true;
 
     } else if (!pal && istag(u8, pos, 'RGBA')) {
@@ -240,7 +340,10 @@ function readVox(u8) {
     pos = cb + clen + klen;
   }
   if (!haveSize || !haveXyzi) throw new Error('no SIZE and XYZI pair in the file');
-  return { grid: grid, pal: pal, size: [sx, sy, sz] };
+  // count is what the file declared; grid.n is what survived, which differs
+  // only if the file repeated a cell. Both are reported because a silent drop
+  // is the sort of thing that gets blamed on the upload.
+  return { grid: grid, pal: pal, size: [sx, sy, sz], count: nRead, kept: grid.n };
 }
 
 // ----------------------------------------------------------------- camera
@@ -307,6 +410,10 @@ function Editor(opt) {
   this.grid = new Grid(16);
   this.pal = buildPalette();
   this.customUsed = new Uint8Array(256);
+  // The format's ceilings until a board tells us its own. Nothing is allowed
+  // to be built that these forbid, so an editor that never reaches a board
+  // still writes a file every board can read.
+  this.limits = sanitizeLimits(opt.limits);
 
   this.color = 1 + 5 * 16 + 9;    // a mid green, an inoffensive default
   this.tool = 'build';
@@ -346,13 +453,30 @@ Editor.MAX_DIM = MAX_DIM;
 Editor.MAX_VOX = MAX_VOX;
 Editor.CUSTOM_BASE = CUSTOM_BASE;
 
+// Installs the caps GET /api/buddy reported. Called after a load, so it has to
+// cope with a model that is already over them: it does NOT delete voxels -
+// throwing away a penguin because a number arrived late would be indefensible
+// - it reports the overage and lets the UI say so, and the save path refuses.
+// Returns the number of voxels over the new cap, zero when the model fits.
+Editor.prototype.setLimits = function (l) {
+  this.limits = sanitizeLimits(l);
+  this._changed('limits');
+  return Math.max(0, this.grid.n - this.limits.voxels);
+};
+
+// The exact byte length toVox() would produce right now.
+Editor.prototype.byteSize = function () { return voxBytes(this.grid.n); };
+
+// What the board will actually draw, after eos_vox_finish() culls the buried.
+Editor.prototype.drawnCount = function () { return countDrawn(this.grid); };
+
 // ------------------------------------------------------------ model state
 
 Editor.prototype.count = function () { return this.grid.n; };
 Editor.prototype.dim = function () { return this.grid.dim; };
 
 Editor.prototype.setDim = function (nd) {
-  nd = Math.max(2, Math.min(MAX_DIM, nd | 0));
+  nd = Math.max(2, Math.min(this.limits.dim, nd | 0));
   if (nd === this.grid.dim) return 0;
   var before = this.grid.n;
   this.grid = this.grid.resized(nd);
@@ -431,7 +555,7 @@ Editor.prototype._put = function (x, y, z, ci) {
   }
   var old = this.grid.d[k];
   if (old === ci) return;
-  if (ci !== 0 && old === 0 && this.grid.n >= MAX_VOX) return;
+  if (ci !== 0 && old === 0 && this.grid.n >= this.limits.voxels) return;
   this.grid.set(x, y, z, ci);
   if (this.stroke) this.stroke.push(k, old, ci);
 };
@@ -922,10 +1046,10 @@ Editor.prototype._bindInput = function () {
 
 // ------------------------------------------------------------------ files
 
-Editor.prototype.toVox = function () { return writeVox(this.grid, this.pal); };
+Editor.prototype.toVox = function () { return writeVox(this.grid, this.pal, this.limits); };
 
 Editor.prototype.fromVox = function (u8) {
-  var r = readVox(u8);
+  var r = readVox(u8, this.limits);
   this.grid = r.grid;
   if (r.pal) {
     this.pal = r.pal;
@@ -947,6 +1071,10 @@ global.EOSVox = {
   Grid: Grid,
   writeVox: writeVox,
   readVox: readVox,
+  countDrawn: countDrawn,
+  voxBytes: voxBytes,
+  defaultLimits: defaultLimits,
+  sanitizeLimits: sanitizeLimits,
   buildPalette: buildPalette,
   hex2rgb: hex2rgb,
   rgb2hex: rgb2hex,

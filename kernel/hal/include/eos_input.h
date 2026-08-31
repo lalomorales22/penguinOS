@@ -168,6 +168,7 @@ typedef enum {
     EOS_SRC_TOUCH,
     EOS_SRC_WEB,        // the phone page
     EOS_SRC_SERIAL,     // USB serial console
+    EOS_SRC_MOUSE,      // a HID pointing device: the K809's trackpad, or a mouse
 } eos_src_t;
 
 static inline const char *eos_src_name(uint8_t s)
@@ -179,6 +180,7 @@ static inline const char *eos_src_name(uint8_t s)
     case EOS_SRC_TOUCH:    return "touch";
     case EOS_SRC_WEB:      return "web";
     case EOS_SRC_SERIAL:   return "serial";
+    case EOS_SRC_MOUSE:    return "mouse";
     }
     return "?";
 }
@@ -194,7 +196,32 @@ typedef enum {
     EOS_EV_TOUCH_UP,
     EOS_EV_CONNECT,     // a source came up: keyboard bonded, phone page opened
     EOS_EV_DISCONNECT,  // and went away. Held keys from that source are cleared.
+
+    // The pointer. Appended rather than filed next to the touch events on
+    // purpose: nothing serialises these numbers today, but the web page and
+    // the serial console both name events by their symbol and a renumbering
+    // that only shows up as a wrong event two components away is not worth
+    // the tidier enum.
+    //
+    // All four carry the cursor's ABSOLUTE position in screen pixels in x,y —
+    // never the raw relative delta, which is consumed by eos_pointer.c and
+    // never leaves it. `key` carries the EOS_BTN_* bitmap: the button that
+    // changed for DOWN/UP and for CLICK, and the buttons currently held for
+    // MOVE. `mods` is the keyboard modifier state, so ctrl+click is one test.
+    EOS_EV_POINTER_MOVE,
+    EOS_EV_POINTER_DOWN,
+    EOS_EV_POINTER_UP,
+    EOS_EV_CLICK,       // press and release on the same spot; see EOS_POINTER_SLOP
 } eos_ev_t;
+
+// ------------------------------------------------------------------ buttons
+//
+// HID boot-mouse byte 0, verbatim, for the same reason the keycodes are HID
+// usages verbatim: no translation table between the radio and the queue.
+
+#define EOS_BTN_LEFT    0x01
+#define EOS_BTN_RIGHT   0x02
+#define EOS_BTN_MIDDLE  0x04
 
 // 16 bytes, asserted below. At EOS_INPUT_QUEUE the ring costs 512 bytes of
 // static RAM, which is a real fraction of what is left on a board sitting at
@@ -316,6 +343,15 @@ void eos_input_inject_text(uint16_t ch, uint8_t src, uint32_t now_ms);
 // EOS_EV_TOUCH_DOWN / _MOVE / _UP.
 void eos_input_inject_touch(uint8_t type, int16_t x, int16_t y,
                             uint8_t src, uint32_t now_ms);
+
+// One pointer event, already resolved to an absolute screen position. type is
+// one of EOS_EV_POINTER_MOVE / _DOWN / _UP / EOS_EV_CLICK and `btn` is an
+// EOS_BTN_* bitmap. This is the ONLY door pointer events come through, and it
+// takes absolute pixels because the cursor's position and its acceleration
+// belong to kernel/shell/eos_pointer.c, not to the HAL: the HAL has no idea
+// how big the screen is. ISR/callback safe.
+void eos_input_inject_pointer(uint8_t type, int16_t x, int16_t y, uint8_t btn,
+                              uint8_t src, uint32_t now_ms);
 
 // A source appeared or went away. Going away clears that source's held keys.
 void eos_input_inject_conn(uint8_t src, bool up, uint32_t now_ms);
