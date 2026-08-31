@@ -42,3 +42,30 @@ solid extent at each level and grows outward from it.
 
 Both are the same mistake in different clothes: reasoning about the model in
 model space when what matters is the surface the camera sees.
+
+## Swapping the buddy, and getting Pip back
+
+The seeder writes `penguin.vox` onto `/int` only when nothing is there. That is
+deliberate — a reboot must not overwrite a buddy you made — but it also means
+importing your own model is a one-way door until the file is removed.
+
+To restore the shipped penguin:
+
+```bash
+curl -X POST 'http://<board>/api/fs/remove?path=/int/buddy/buddy.vox'
+# then reboot; the seeder writes Pip back on the next boot
+```
+
+**Back the old one up first** if you want it, because remove is remove:
+
+```bash
+curl -o mine.vox 'http://<board>/api/fs/read?path=/int/buddy/buddy.vox'
+```
+
+Note the path is a **query parameter**, not a JSON body. `/api/fs/remove`,
+`/api/fs/read` and `/api/fs/write` all take it that way, and sending JSON gets
+you `{"error":"bad_argument"}`, which reads like a bad path rather than a bad
+call shape.
+
+`user/` holds models imported onto this board and pulled back off it. They are
+not seeded and nothing reads them; it is a shelf.
