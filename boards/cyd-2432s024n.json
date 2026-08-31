@@ -21,13 +21,13 @@
     "lvgl": false,
     "palette_entries": 256,
     "full_framebuffer": false,
-    "band_height": 40,
+    "band_height": 16,
     "min_tile_w": 80,
     "min_tile_h": 40,
     "double_buffer": false,
     "animations": false,
     "heap_budget_bytes": 148188,
-    "reason": "MEASURED BY penguinOS ITSELF, not by a probe, and the distinction is the whole point of this field. A bare bring-up probe on this board reports free=281612 / largest=147456; penguinOS at app_main reports free=148188 / largest=110592. The difference is the OS's own static footprint, and a budget taken from the probe is not a budget the OS can ever honour. Recording the probe figure here made the display backend size its strips at 293 rows and ask heap_caps_malloc for 281,280 contiguous DMA bytes out of a 110,592-byte largest block; it failed with EOS_ERR_POOL and the board booted blind. band_height 40 and full_framebuffer false follow from the same measurement: two 40-row strips at 240 wide is 38,400 bytes, which fits the largest block with room left for Wi-Fi, NimBLE, the web server and the buddy. A full 240x320 frame would need 153,600 bytes for one and 307,200 for the two the backend double-buffers - more than this board's entire free heap. That is what keeps it at tier 0, and the number that decides it is the largest BLOCK, never the free total."
+    "reason": "MEASURED BY penguinOS ITSELF, not by a probe, and then measured again against what the RADIO needs. A bare probe reports free=281612; the OS at app_main reports 148188. Sizing the display from the probe figure asked for 281,280 contiguous DMA bytes out of a 110,592-byte largest block and the board booted blind. band_height is 16, not the 40 that first fit, because fitting is not the test - what matters is what is left afterwards. At 40 rows the two strips take 38,400 bytes and boot ends with 7,168 free; esp_http_server starts, but the AP's DHCP server can no longer allocate a reply, so clients associate and are dropped without ever getting an address. The browser then has nowhere to send a request and the failure looks like a dead web server rather than a starved one. At 16 rows the strips take 15,360 and that memory goes back to the radio. The cost is more SPI transactions per frame - 20 bands instead of 8 - which this board can afford far more easily than it can afford a captive portal that never hands out an IP."
   },
   "display": {
     "controller": "ILI9341",
