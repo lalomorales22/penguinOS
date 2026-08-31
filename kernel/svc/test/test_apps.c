@@ -685,10 +685,27 @@ static void t_abort(void)
     eq(POSTN("/api/fs/write?path=/int/ab.bin&offset=128&final=0", chunk, 8), 409,
        "and the handle is gone");
 
-    // The partial file is left where it is, exactly as the idle timeout leaves
-    // it. The client knows what it was uploading and can remove it.
-    eq(GET("/api/fs/stat?path=/int/ab.bin"), 200, "the partial file survives an abort");
-    ok(has("\"size\":128"), "with what had been written");
+    // An abort leaves NOTHING behind and, more importantly, leaves whatever was
+    // already at the target alone. Uploads are written to <path>.part and only
+    // renamed onto the target once the last chunk has synced, so an upload that
+    // never finishes cannot destroy the file it was replacing. Writing straight
+    // at the target truncated it on the FIRST chunk, and that is what cost the
+    // owner their buddy: a save that failed left /int/buddy with no buddy.vox
+    // at all, and the web app then reported a board that "describes a buddy" it
+    // could not find.
+    eq(GET("/api/fs/stat?path=/int/ab.bin"), 404, "an aborted upload leaves no file");
+    eq(GET("/api/fs/stat?path=/int/ab.bin.part"), 404, "and no partial either");
+
+    // The claim that actually matters: replacing a file cannot lose it.
+    eq(POSTN("/api/fs/write?path=/int/keep.bin&offset=0&final=1", chunk, 32), 200,
+       "a file exists to be replaced");
+    eq(GET("/api/fs/stat?path=/int/keep.bin"), 200, "it is there");
+    ok(has("\"size\":32"), "at its original size");
+    eq(POSTN("/api/fs/write?path=/int/keep.bin&offset=0&final=0", chunk, 64), 200,
+       "an upload starts over it");
+    eq(POST("/api/fs/upload/abort?path=/int/keep.bin"), 200, "and then fails");
+    eq(GET("/api/fs/stat?path=/int/keep.bin"), 200, "the original is still there");
+    ok(has("\"size\":32"), "still 32 bytes, untouched by the upload that failed");
 
     // No path aborts whatever is open, which is a client that has lost track.
     eq(POSTN("/api/fs/write?path=/int/ab2.bin&offset=0&final=0", chunk, 8), 200, "another opens");
@@ -717,9 +734,12 @@ static void t_upload_timeout(void)
     eq(POSTN("/api/fs/write?path=/int/other2.bin&offset=0&final=1", chunk, 4), 200,
        "and after it the next upload is accepted");
 
-    eq(GET("/api/fs/stat?path=/int/gone.bin"), 200,
-       "the abandoned partial file is left on the filesystem");
-    ok(has("\"size\":32"), "with what arrived before the phone walked away");
+    // The idle timeout ends an upload the same way an abort does, and for the
+    // same reason: a phone that walked away must not have left the target
+    // truncated behind it.
+    eq(GET("/api/fs/stat?path=/int/gone.bin"), 404,
+       "the abandoned upload leaves no file behind");
+    eq(GET("/api/fs/stat?path=/int/gone.bin.part"), 404, "nor its partial");
 
     // The timeout is a console line, not a silent drop: an owner watching the
     // Console tab is the only person who can see this happen.
@@ -770,7 +790,10 @@ static void t_mutations(void)
         eq(POST("/api/fs/rename?from=/int/ren2.txt&to=/int/busy.bin"), 409,
            "and renaming onto it is busy");
         eq(POST("/api/fs/upload/abort?path=/int/busy.bin"), 200, "abort releases it");
-        eq(POST("/api/fs/remove?path=/int/busy.bin"), 200, "and then it removes");
+        // And there is nothing left at the target to remove: the upload never
+        // finalised, so it never landed there in the first place.
+        eq(POST("/api/fs/remove?path=/int/busy.bin"), 404,
+           "and the target was never created, so there is nothing to remove");
     }
 }
 
