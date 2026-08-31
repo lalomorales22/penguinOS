@@ -98,3 +98,31 @@ Restore with:
 ```bash
 esptool --port <port> write-flash 0x0 boards/waveshare-c6-lcd-13/backup/factory-4MB.bin
 ```
+
+## State, as of the last session
+
+Everything below was verified on this physical board, not inferred.
+
+| Works | |
+|---|---|
+| Boot | 271 ms to first frame; tiles, tab groups, status bar, theme |
+| WiFi | joins at boot, survives reflash, `penguin1.local` |
+| Provisioning | QR on the panel → phone joins the AP → pick network → joined |
+| Filesystem | LittleFS on `/int`, mounts in 8 ms, 960 KB |
+| Settings | persisted to `/int/settings.json`, survive a reflash |
+| Web app | served from flash, all 31 endpoints resolve |
+| Pip | 572 voxels on the panel, seeded to `/int` on first boot |
+| megabrain | reachable, and **a question was asked and answered end to end** |
+
+| Not done | Why it matters |
+|---|---|
+| **The BLE keyboard has never been paired** | The HID host, the pairing endpoints and the passkey screen are all written and host-tested, but no keyboard has ever connected to this board. Until one does, `super+return` opening a window on real hardware is a claim, not a fact. |
+| **Pip has no personality** | `buddy.json` carries a personality prompt and `brain.system` in settings is empty, so nothing feeds one to the other. He answers as a generic assistant. One wiring job. |
+| **`! megabrain went quiet` on a good stream** | A completed reply reports an error at the end. The text arrives intact, so it is the end-of-stream detection, not the parser. |
+| **The HTTP server has one task, not four** | Asking a question parks the whole server for up to `EOS_HTTPD_STREAM_TOTAL_MS` (120 s) — the Files tab freezes until Pip answers. The honest fix is a second task for streaming. |
+| **No file has been uploaded through the Files tab** | The routes answer and the path traversal is fuzzed, but nothing has been written over HTTP on hardware. |
+| **The microSD pins are still unknown** | An output-only JTAG scan cannot see MISO. Restore `backup/factory-4MB.bin` and read `GPIO_FUNCn_IN_SEL_CFG` at `0x60091154`. |
+
+Nothing here blocks moving to another board. The kernel is board-independent by
+construction; what a new board needs is a profile, a directory beside it, and a
+pinout — and the JTAG recovery in this file is the procedure for getting one.
