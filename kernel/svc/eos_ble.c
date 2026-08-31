@@ -922,10 +922,25 @@ static int ble_gap_event(struct ble_gap_event *ev, void *arg)
         // or a vendor report. The HAL would survive it - it bounds-checks
         // everything - but it would read the first byte as modifiers and
         // invent a chord out of a volume key.
+        // TEMPORARY DIAGNOSTIC - what does this keyboard actually send?
+        ESP_LOGI(TAG, "hidrep len=%u  %02x %02x %02x %02x %02x %02x %02x %02x",
+                 (unsigned)got, rep[0], got>1?rep[1]:0, got>2?rep[2]:0, got>3?rep[3]:0,
+                 got>4?rep[4]:0, got>5?rep[5]:0, got>6?rep[6]:0, got>7?rep[7]:0);
         if (got < KBD_REPORT_BYTES) return 0;
         eos_input_hid_report(rep, (uint8_t)got, now_ms());
         return 0;
     }
+
+    case BLE_GAP_EVENT_CONN_UPDATE_REQ:
+    case BLE_GAP_EVENT_L2CAP_UPDATE_REQ:
+        // Take what the keyboard asks for. It knows its own power budget, and
+        // the alternative - letting the two sides keep proposing - is the
+        // renegotiation loop that made this link unusable. Returning 0 accepts.
+        return 0;
+
+    case BLE_GAP_EVENT_CONN_UPDATE:
+        ESP_LOGI(TAG, "conn params settled, status %d", ev->conn_update.status);
+        return 0;
 
     default:
         return 0;
@@ -999,6 +1014,16 @@ eos_err_t eos_ble_init(const eos_ble_cfg_t *cfg)
     // be done before the controller starts.
     esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
 #endif
+
+    // NimBLE logs connection-parameter renegotiation at INFO, and a peripheral
+    // that keeps asking produces those lines about a millisecond apart -
+    // thousands a second, from inside the host task, into both the UART and
+    // eos_apps' console ring. That is not diagnostics, it is a load source: it
+    // starved the very task that has to service HID notifications, so a
+    // keyboard that was connected, bonded and subscribed delivered nothing and
+    // the link eventually fell over with an LL response timeout (0x222). Warn
+    // and above still reaches the log; the chatter does not.
+    esp_log_level_set("NimBLE", ESP_LOG_WARN);
 
     if (nimble_port_init() != ESP_OK) {
         ESP_LOGE(TAG, "nimble_port_init failed");

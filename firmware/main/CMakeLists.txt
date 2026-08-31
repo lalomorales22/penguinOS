@@ -36,6 +36,12 @@ idf_component_register(
         "${CMAKE_CURRENT_LIST_DIR}/../../web/voxel-editor.js"
         "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/penguin.vox"
         "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/buddy.json"
+        "${EOS_KERNEL_DIR}/theme/themes/carbon.json"
+        "${EOS_KERNEL_DIR}/theme/themes/catppuccin-mocha.json"
+        "${EOS_KERNEL_DIR}/theme/themes/ember.json"
+        "${EOS_KERNEL_DIR}/theme/themes/goldleaf.json"
+        "${EOS_KERNEL_DIR}/theme/themes/gruvbox.json"
+        "${EOS_KERNEL_DIR}/theme/themes/tokyonight.json"
 )
 
 # Same promise the kernel makes. These files are kernel code that happens to
