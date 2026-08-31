@@ -26,21 +26,21 @@
 #include "eos_wm.h"
 #include "eos_bar.h"
 #include "eos_keys.h"
+#include "eos_launcher.h"
+#include "eos_pointer.h"
 #include "eos_theme.h"
 #include "eos_display.h"
 #include "eos_buddy.h"
 
-// The app ids the boot glue opens windows for. They are the index into
-// eos_shell_app_names() and they select which body a tile draws, which is why
-// they are named here rather than being loose integers in main.c.
-typedef enum {
-    EOS_APP_CLOCK = 0,   // uptime, in the 12x20 face
-    EOS_APP_BOARD,       // what the descriptor says this board is
-    EOS_APP_HEAP,        // free and largest-block, live
-    EOS_APP_KEYS,        // the compiled-in keymap, formatted from the table
-    EOS_APP_BUDDY,       // the voxel avatar, and the mood it is in
-    EOS_APP_COUNT
-} eos_app_id_t;
+// The app ids, the tile bodies and the one-line summaries used to live here,
+// in eos_shell_draw.c and in main.c: three lists that had to be kept in the
+// same order by hand, and a switch that had to be edited to match. They are
+// one table now — see eos_app_registry.h — and this file is back to what its
+// name says: chrome, bar, tabs, overlay and the frame loop.
+//
+// This header includes the registry and not the other way round, so an app
+// body may include this one for the live numbers without making a cycle.
+#include "eos_app_registry.h"
 
 const char *const *eos_shell_app_names(void);   // EOS_APP_COUNT entries
 
@@ -50,7 +50,11 @@ const char *const *eos_shell_app_names(void);   // EOS_APP_COUNT entries
 // The numeric fields exist because the scene has no way to reach them: heap
 // and uptime are IDF's, and the shell must not learn to call esp_timer just to
 // draw a clock. main.c reads them once per frame and hands them over.
-typedef struct {
+//
+// Tagged, unusually for this codebase, because eos_app_registry.h has to name
+// the type before this header exists to define it: an app body is handed a
+// pointer to one and the registry cannot include the file that includes it.
+typedef struct eos_shell_view {
     const eos_theme_t      *theme;
     const eos_wm_t         *wm;
     const eos_bar_status_t *bar;
@@ -69,6 +73,23 @@ typedef struct {
     uint32_t heap_free;
     uint32_t heap_largest;
     uint32_t uptime_ms;
+
+    // The app launcher overlay. NULL, or a launcher that is not open, draws
+    // nothing at all and costs the scene one branch. When it IS open it is the
+    // last thing painted, over every tile and over the bar, because that is
+    // what an overlay means: the list is the only thing the keyboard is
+    // talking to while it is up.
+    const eos_launcher_t *launcher;
+
+    // The trackpad's cursor. NULL, or a cursor no device has moved yet, draws
+    // nothing. It is the very last thing painted, above even the launcher,
+    // because an arrow that the thing it is pointing at can cover is not a
+    // cursor. The `visible_ms` beside it is the clock the visibility timeout
+    // is measured against: eos_pointer_visible() needs a now, the scene is
+    // replayed once per band, and reading a clock inside the scene would let
+    // two bands disagree about whether the arrow is on screen.
+    const eos_pointer_t *pointer;
+    uint32_t             pointer_ms;
 
     // Four lines of board identity for the "board" window. NULL entries are
     // skipped, so a caller that knows less writes less. The first is drawn in
@@ -121,10 +142,32 @@ void eos_shell_buddy_shade(const eos_vox_pal_t *pal, eos_buddy_cfg_t *cfg);
 // the window that took it.
 uint32_t eos_shell_buddy_bytes(void);
 
+// The launcher's panel geometry for THIS panel and this theme's UI face. The
+// launcher model cannot work it out alone — it knows nothing about fonts or
+// about how big the glass is — so the scene, which knows both, hands it over.
+// Call it once at boot and again after a theme change, then feed the answer to
+// eos_launcher_set_geom(). It is pure, so the hit test and the renderer are
+// looking at the same rectangle by construction rather than by agreement.
+void eos_shell_launcher_geom(const eos_theme_t *t, eos_launcher_geom_t *g);
+
+// What this theme's chrome does to a tile rect, in the form the pointer needs
+// to find a tile's close box. Same shape as the call above and for the same
+// reason: the model cannot see a font, the scene can, and the answer is stored
+// once so that the x on the glass and the x a click is tested against are one
+// rectangle. Call it at boot and again after a theme change.
+void eos_shell_tile_chrome(const eos_theme_t *t, eos_pointer_chrome_t *ch);
+
 // Damage helpers. These only compute rectangles; they call eos_display_damage()
 // so main.c does not have to re-derive the bar height or re-run the layout.
 void eos_shell_damage_all(void);
 void eos_shell_damage_bar(const eos_shell_view_t *v);
+
+// Declares the two rects the arrow moved between: the hole it left and the
+// place it went. Two and never the whole screen — the backend is banded and a
+// 240-row repaint per trackpad report would not keep up, while two 7x11 boxes
+// are under two hundred pixels of SPI. Returns false when the cursor has not
+// moved since the last committed frame and nothing was damaged.
+bool eos_shell_damage_pointer(const eos_shell_view_t *v);
 
 // Damages the visible tile showing `app`, if it has one on the current
 // workspace. Returns false when that app is not on screen — hidden behind a

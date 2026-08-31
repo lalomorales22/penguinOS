@@ -720,3 +720,16 @@ ul.plain li { margin-bottom: 7px; }
 @media (prefers-reduced-motion: reduce) {
   .pbar i { animation: none !important; width: 100%; opacity: .5; }
 }
+
+/* The buddy's name and the file it came out of. A blank canvas next to a panel
+   that is visibly wearing a penguin is the failure this line exists to make
+   impossible: it always says either whose face is loaded or that none is. */
+.vx-who {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border-unfocused);
+  border-radius: var(--radius);
+}
+.vx-who b { font-size: 15px; }
+.vx-who .mono { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

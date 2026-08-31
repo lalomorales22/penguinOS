@@ -23,6 +23,8 @@ set(_eos_kernel_srcs
     "${EOS_KERNEL_DIR}/theme/eos_theme.c"
     "${EOS_KERNEL_DIR}/shell/eos_bar.c"
     "${EOS_KERNEL_DIR}/shell/eos_keys.c"
+    "${EOS_KERNEL_DIR}/shell/eos_launcher.c"
+    "${EOS_KERNEL_DIR}/shell/eos_pointer.c"
     "${EOS_KERNEL_DIR}/avatar/eos_vox.c"
     "${EOS_KERNEL_DIR}/avatar/eos_buddy.c"
     "${EOS_KERNEL_DIR}/svc/eos_brain.c"

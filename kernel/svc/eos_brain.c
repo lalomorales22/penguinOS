@@ -353,7 +353,9 @@ eos_brain_parse_t eos_brain_parser_feed(eos_brain_parser_t *p, const uint8_t *da
     return EOS_BRAIN_PARSE_MORE;
 }
 
-eos_brain_parse_t eos_brain_parser_finish(eos_brain_parser_t *p)
+// Shared tail of finish() and abort(). `complete` says whether this particular
+// way of losing the socket leaves the response whole.
+static eos_brain_parse_t end_of_stream(eos_brain_parser_t *p, bool complete)
 {
     if (!p) return EOS_BRAIN_PARSE_ERROR;
     if (p->st == P_ERR)  return EOS_BRAIN_PARSE_ERROR;
@@ -362,12 +364,38 @@ eos_brain_parse_t eos_brain_parser_finish(eos_brain_parser_t *p)
     flush_text(p);
     p->buf_len = 0;             // a dangling partial character can never complete
 
-    if (p->st == P_EOF_BODY) {  // read-until-close: the close IS the terminator
+    if (complete) {
         p->st = P_DONE;
         return EOS_BRAIN_PARSE_DONE;
     }
     fail(p, EOS_BRAIN_ERR_TRUNCATED);
     return EOS_BRAIN_PARSE_ERROR;
+}
+
+// Two questions decide whether a stream that stopped arriving is a finished
+// reply or a lost one, and they are separate questions. The first is the
+// framing's: P_TRAILER is only ever reached by reading the zero-length chunk,
+// so every byte of the body is already in hand and the blank line still owed
+// carries nothing. The second is the socket's: P_EOF_BODY has no framing at
+// all, so the orderly close is the only thing that can say the reply ended
+// there rather than was cut off. Everything else — mid-chunk, mid-size line,
+// mid-header, short of a content-length — is a body with known bytes missing,
+// and is truncated no matter how the connection ended.
+eos_brain_parse_t eos_brain_parser_finish(eos_brain_parser_t *p)
+{
+    if (!p) return EOS_BRAIN_PARSE_ERROR;
+    return end_of_stream(p, p->st == P_EOF_BODY || p->st == P_TRAILER);
+}
+
+eos_brain_parse_t eos_brain_parser_abort(eos_brain_parser_t *p)
+{
+    if (!p) return EOS_BRAIN_PARSE_ERROR;
+    return end_of_stream(p, p->st == P_TRAILER);
+}
+
+bool eos_brain_parser_body_complete(const eos_brain_parser_t *p)
+{
+    return p && (p->st == P_DONE || p->st == P_TRAILER);
 }
 
 int             eos_brain_parser_status(const eos_brain_parser_t *p) { return p ? p->status : 0; }
@@ -847,6 +875,12 @@ static bool step(eos_brain_t *b)
             r = eos_brain_parser_feed(&b->parser, rx, (size_t)n);
         } else if (n == 0) {
             if ((now - b->t_last) >= b->cfg.idle_ms) {
+                // A server that sends the whole reply and then neither closes
+                // nor writes the trailer's blank line has still answered. The
+                // silence is its keep-alive, not a lost reply, so end on the
+                // framing rather than call a finished answer a timeout.
+                if (eos_brain_parser_body_complete(&b->parser))
+                    return complete(b, eos_brain_parser_finish(&b->parser));
                 sock_close(b);
                 if (b->probing) {
                     b->probing = false;
@@ -858,8 +892,10 @@ static bool step(eos_brain_t *b)
                 return false;
             }
             return false;                       // nothing yet; yield
-        } else {
+        } else if (n == EOS_BRAIN_EOF) {
             r = eos_brain_parser_finish(&b->parser);
+        } else {
+            r = eos_brain_parser_abort(&b->parser);
         }
         if (r == EOS_BRAIN_PARSE_MORE) return true;
         return complete(b, r);

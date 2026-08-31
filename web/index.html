@@ -104,8 +104,9 @@
     <div class="vx-stage" id="vx-stage">
       <canvas id="vx-canvas"></canvas>
       <div class="vx-hud">
-        <span id="vx-count">0 / 4096</span>
-        <span id="vx-dims">16 x 16 x 16</span>
+        <span id="vx-count">0 / 4096 voxels</span>
+        <span id="vx-dims">1 x 1 x 1 in a 16 grid</span>
+        <span id="vx-drawn">0 drawn</span>
       </div>
       <div class="vx-prev">
         <canvas id="vx-preview" width="112" height="112"></canvas>
@@ -119,6 +120,11 @@
     </div>
 
     <div class="vx-side">
+
+      <div class="vx-who">
+        <b id="b-title">no buddy loaded</b>
+        <span class="mono" id="b-where">nothing loaded</span>
+      </div>
 
       <div class="seg" id="vx-tools" role="group" aria-label="tool">
         <button type="button" class="on" data-tool="build">Build</button>
@@ -200,8 +206,12 @@
             <option value="32">32 cubed - max</option>
           </select>
         </label>
-        <p class="hint">The board rejects a model over 32 on any axis or over 4096
-          voxels. Shrinking the grid drops anything outside it.</p>
+        <p class="hint" id="b-caps">The board reports its own limits when the tab
+          loads.</p>
+        <p class="hint">Shrinking the grid drops anything outside it. The box the
+          file declares is the model's bounds, or the box it arrived in, whichever
+          is larger - that box is what the panel centres and scales the buddy
+          inside.</p>
       </fieldset>
 
       <div class="toolbar">

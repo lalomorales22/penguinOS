@@ -9,14 +9,22 @@
 #include "eos_font.h"
 #include "eos_input.h"
 
-// The five windows the boot glue opens. Short on purpose: a tab label has
-// 117/6 = 19 cells to live in on this panel, and a truncated name reads as a
-// rendering bug rather than as a long name.
-static const char *const APP_NAMES[EOS_APP_COUNT] = {
-    "clock", "board", "heap", "keys", "buddy"
-};
+// The names, taken from the one table rather than kept as a second list in
+// the same order. eos_shell_status_sync() and main.c both want a plain array
+// of pointers and the registry is an array of structs, so the pointers are
+// restacked here on every call. Ten stores, no allocation, and no way for the
+// two lists to fall out of step — which is exactly what they used to do.
+static const char *name_of[EOS_APP_COUNT];
 
-const char *const *eos_shell_app_names(void) { return APP_NAMES; }
+const char *const *eos_shell_app_names(void)
+{
+    int i;
+    for (i = 0; i < EOS_APP_COUNT; i++) {
+        const eos_app_t *a = eos_app_at(i);
+        name_of[i] = a ? a->name : "?";
+    }
+    return name_of;
+}
 
 // Pixels between two bar segments, and the bar's own left/right margin. The
 // bar model lays segments out inside a width it is given, so the margin is
@@ -31,22 +39,23 @@ const char *const *eos_shell_app_names(void) { return APP_NAMES; }
 // calls and the theme's font-name lookup are not, and they would otherwise run
 // six times for an identical answer.
 
-typedef struct {
-    const eos_font_t *ui, *tiny, *med, *big;
-    int16_t border;
-    eos_color_t bg, surface, text, muted, accent;
-    eos_color_t bfoc, bunf, barbg, barfg, tabact, tabinact;
-    eos_color_t ok, warn;
-} skin_t;
+// It is eos_app_ctx_t under its old name. The chrome below has always called
+// it the skin and every line that reads s->accent still does; the app bodies
+// are handed the same struct, so there is one description of "what this theme
+// resolved to this frame" and not one for the scene and one for the apps.
+typedef eos_app_ctx_t skin_t;
 
 static const eos_font_t *face_or(const eos_font_t *want, const eos_font_t *fallback)
 {
     return want ? want : fallback;
 }
 
-static void skin_build(skin_t *s, const eos_theme_t *t)
+static void skin_build(skin_t *s, const eos_shell_view_t *v)
 {
+    const eos_theme_t *t = v->theme;
+
     memset(s, 0, sizeof(*s));
+    s->view = v;
 
     // The theme names a face; the shell resolves it exactly once, through the
     // font component's own mapping, so an unknown name falls back in one place
@@ -57,9 +66,11 @@ static void skin_build(skin_t *s, const eos_theme_t *t)
     s->big  = face_or(eos_font_get(EOS_FONT_BIG),  s->ui);
 
     s->border = t->m.border > 0 ? t->m.border : 1;
+    eos_shell_tile_chrome(t, &s->chrome);
 
     s->bg       = eos_theme_role_index(t, EOS_ROLE_BG);
     s->surface  = eos_theme_role_index(t, EOS_ROLE_SURFACE);
+    s->overlay  = eos_theme_role_index(t, EOS_ROLE_OVERLAY);
     s->text     = eos_theme_role_index(t, EOS_ROLE_TEXT);
     s->muted    = eos_theme_role_index(t, EOS_ROLE_MUTED);
     s->accent   = eos_theme_role_index(t, EOS_ROLE_ACCENT);
@@ -82,11 +93,10 @@ static void skin_build(skin_t *s, const eos_theme_t *t)
 static int16_t text_fit(int16_t x, int16_t y, const eos_font_t *f,
                         eos_color_t c, const char *s, int16_t max_w)
 {
-    int n;
-    if (!f || !s || max_w <= 0) return 0;
-    n = eos_text_fit(f, s, -1, (int)max_w);
-    if (n <= 0) return 0;
-    return (int16_t)eos_display_text(x, y, f, c, s, n);
+    // One line, because the app bodies need the identical rule and a second
+    // copy of it is how a tab label and a tile label start truncating at
+    // different widths. See eos_app_text() in eos_app_registry.c.
+    return eos_app_text(x, y, f, c, s, max_w);
 }
 
 // --------------------------------------------------------------- status bar
@@ -127,85 +137,11 @@ static void draw_bar(const eos_shell_view_t *v, const skin_t *s, eos_rect_t bar)
                  bar_role_color(s, seg[i].role), seg[i].text, seg[i].w);
 }
 
-// --------------------------------------------------------------- tile bodies
-
-static void body_clock(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
-{
-    char buf[16];
-    uint32_t sec = v->uptime_ms / 1000u;
-    int16_t y;
-
-    snprintf(buf, sizeof buf, "%02u:%02u:%02u",
-             (unsigned)(sec / 3600u), (unsigned)((sec / 60u) % 60u), (unsigned)(sec % 60u));
-
-    y = (int16_t)(r.y + (r.h - (int16_t)s->big->h) / 2);
-    if (y < r.y) y = r.y;
-    eos_display_text_center(r, y, s->big, s->accent, buf);
-
-    y = (int16_t)(y + (int16_t)s->big->h + 3);
-    if (y + (int16_t)s->ui->h <= r.y + r.h)
-        eos_display_text_center(r, y, s->ui, s->muted, "uptime");
-}
-
-static void body_board(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
-{
-    int16_t y = r.y;
-    int i;
-
-    for (i = 0; i < 4; i++) {
-        const eos_font_t *f = (i == 0) ? s->med : s->ui;
-        if (!v->board_line[i]) continue;
-        if (y + (int16_t)f->h > r.y + r.h) break;
-        text_fit(r.x, y, f, (i == 0) ? s->text : s->muted, v->board_line[i], r.w);
-        y = (int16_t)(y + (int16_t)f->h + 2);
-    }
-}
-
-static void body_heap(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
-{
-    char buf[16];
-    int16_t y = r.y;
-
-    text_fit(r.x, y, s->ui, s->muted, "free", r.w);
-    y = (int16_t)(y + (int16_t)s->ui->h + 1);
-    snprintf(buf, sizeof buf, "%u", (unsigned)v->heap_free);
-    text_fit(r.x, y, s->med, s->text, buf, r.w);
-    y = (int16_t)(y + (int16_t)s->med->h + 4);
-
-    if (y + (int16_t)s->ui->h + (int16_t)s->med->h + 1 > r.y + r.h) return;
-    text_fit(r.x, y, s->ui, s->muted, "largest block", r.w);
-    y = (int16_t)(y + (int16_t)s->ui->h + 1);
-    snprintf(buf, sizeof buf, "%u", (unsigned)v->heap_largest);
-    text_fit(r.x, y, s->med, s->text, buf, r.w);
-}
-
-static void body_keys(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
-{
-    // Four binds out of the seventy-two, chosen because they are the ones a
-    // human will try first on a board that has no keyboard attached yet.
-    static const struct { uint8_t mods; uint16_t key; } SHOW[] = {
-        { EOS_MOD_SUPER,                   EOS_KEY_ENTER },
-        { EOS_MOD_SUPER,                   EOS_KEY_Q     },
-        { EOS_MOD_SUPER,                   EOS_KEY_TAB   },
-        { EOS_MOD_SUPER,                   EOS_KEY_2     },
-    };
-    int16_t y = r.y;
-    size_t i;
-
-    if (!v->keys) return;
-    for (i = 0; i < sizeof SHOW / sizeof SHOW[0]; i++) {
-        const eos_keybind_t *b = eos_keys_lookup(v->keys, SHOW[i].mods, SHOW[i].key);
-        char chord[32], line[48];
-        if (!b) continue;
-        if (y + (int16_t)s->ui->h > r.y + r.h) break;
-        eos_keys_format(b, chord, (int)sizeof chord);
-        snprintf(line, sizeof line, "%s %s", chord,
-                 eos_keys_action_name((eos_action_t)b->action));
-        text_fit(r.x, y, s->ui, s->muted, line, r.w);
-        y = (int16_t)(y + (int16_t)s->ui->h + 1);
-    }
-}
-
+// The tile bodies used to be here, five functions and a switch. They are one
+// per app file now and the table in eos_app_registry.c says which is which;
+// the only one still in this file is the buddy, below, because the avatar is
+// rendered into an offscreen box before the frame opens and that machinery and
+// its body have to agree on where the box landed.
 
 // The rect a tile's body gets, once the border, the header and the rule under
 // it are taken off. Shared with buddy_prepare(), which has to know where the
@@ -337,8 +273,9 @@ static void buddy_prepare(const eos_shell_view_t *v, const skin_t *s)
     buddy_ready = true;
 }
 
-static void body_buddy(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
+void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
 {
+    const eos_shell_view_t *v = s->view;
     char mood[12];
     const char *name;
     int16_t y;
@@ -399,10 +336,69 @@ static void draw_tab_cell(const skin_t *s, const eos_tile_t *t, const char *labe
     eos_display_clip_pop();
 }
 
-static void draw_tile(const eos_shell_view_t *v, const skin_t *s, const eos_tile_t *t)
+// --------------------------------------------------------------- close box
+//
+// The owner asked to be able to close windows, and pointed at a trackpad while
+// asking. super+q was already the keyboard half; this is the other one.
+//
+// EOS_POINTER_CLOSE_W is the box's width and it is a constant rather than a
+// multiple of the face height because the x inside it is drawn from pixels and
+// not from a glyph: eleven columns is what a legible diagonal cross needs at
+// this scale with a pixel of air on each side, and a box that grew with the
+// font would leave the cross rattling around inside it.
+#define CLOSE_W 11
+
+// The metrics eos_pointer.c needs to find that box without being able to see a
+// font. Pure, and the box is computed by eos_pointer_close_box() on BOTH sides
+// — the painter below calls it too — so the x on the glass and the rectangle a
+// click is tested against are the same rectangle by construction.
+void eos_shell_tile_chrome(const eos_theme_t *t, eos_pointer_chrome_t *ch)
 {
-    const char *name = (t->app_id < EOS_APP_COUNT) ? APP_NAMES[t->app_id] : "?";
-    eos_rect_t r = t->rect, inner, body;
+    const eos_font_t *ui;
+
+    if (!ch) return;
+    ui = t ? eos_font_get(eos_font_id_from_name(eos_theme_font(t))) : NULL;
+    ch->border  = t && t->m.border > 0 ? t->m.border : 1;
+    ch->hdr_h   = ui ? (int16_t)ui->h : 8;
+    ch->close_w = CLOSE_W;
+}
+
+// The cross, drawn pixel by pixel inside `box`, centred, with one column and
+// one row of air all round. Pixels rather than an 'x' from the UI face for two
+// reasons: the face is the theme's to choose and a proportional one would put
+// the glyph somewhere the hit box is not, and a lower-case x in a 6x8 face is
+// four pixels of smudge that reads as dirt on the panel rather than as a
+// control.
+//
+// Two loops over the same span, so the two diagonals are the same length and
+// the cross is symmetric at every size. Nothing is latched: the function is
+// pure over (box, colour) and is safe to replay once per band.
+static void draw_close_x(eos_rect_t box, eos_color_t c)
+{
+    int16_t n, x0, y0, i;
+
+    if (box.w < 5 || box.h < 5) return;
+
+    // The largest odd square that leaves a pixel of margin, so the two
+    // diagonals cross on a single pixel instead of between two of them.
+    n = box.w < box.h ? box.w : box.h;
+    n = (int16_t)(n - 4);
+    if (n < 3) n = 3;
+    if ((n & 1) == 0) n--;
+
+    x0 = (int16_t)(box.x + (box.w - n) / 2);
+    y0 = (int16_t)(box.y + (box.h - n) / 2);
+    for (i = 0; i < n; i++) {
+        eos_display_pixel((int16_t)(x0 + i), (int16_t)(y0 + i), c);
+        eos_display_pixel((int16_t)(x0 + n - 1 - i), (int16_t)(y0 + i), c);
+    }
+}
+
+static void draw_tile(const skin_t *s, const eos_tile_t *t)
+{
+    const eos_app_t *app = eos_app_at((int)t->app_id);
+    const char *name = app ? app->name : "?";
+    eos_rect_t r = t->rect, inner, body, close;
     int16_t hdr_h, id_w;
     char idbuf[8];
 
@@ -416,35 +412,252 @@ static void draw_tile(const eos_shell_view_t *v, const skin_t *s, const eos_tile
     if (eos_rect_empty(inner) || !s->ui) return;
     if (!eos_display_clip_push(inner)) return;
 
-    // Header: name on the left in the focus colour, window id on the right in
-    // the 4x6 face. The id is what makes a screenshot readable against the
-    // layout arithmetic in eos_wm.c, which is the whole reason it is drawn.
+    // Header: name on the left in the focus colour, then the window id in the
+    // 4x6 face, then the close box hard against the right edge. The id is what
+    // makes a screenshot readable against the layout arithmetic in eos_wm.c,
+    // which is the whole reason it is drawn.
     hdr_h = (int16_t)s->ui->h;
-    text_fit(inner.x, inner.y, s->ui, t->focused ? s->text : s->muted, name, inner.w);
+
+    // The close box takes the right-hand end of the header, so the window id
+    // that used to sit there moves left by exactly its width. The id is the
+    // number eos_wm.c's layout arithmetic is checked against in a screenshot
+    // and it stays; it just stops being the thing under the cursor when
+    // somebody aims at the x.
+    close = eos_pointer_close_box(&s->chrome, t);
+    if (!eos_rect_empty(close))
+        draw_close_x(close, t->focused ? s->text : s->muted);
+
+    text_fit(inner.x, inner.y, s->ui, t->focused ? s->text : s->muted, name,
+             (int16_t)(inner.w - close.w));
 
     snprintf(idbuf, sizeof idbuf, "%d", (int)t->win);
     id_w = (int16_t)eos_text_width(s->tiny, idbuf, -1);
-    if (id_w > 0 && id_w < inner.w / 2)
-        text_fit((int16_t)(inner.x + inner.w - id_w), (int16_t)(inner.y + 1),
-                 s->tiny, s->muted, idbuf, id_w);
+    if (id_w > 0 && id_w + close.w < inner.w / 2)
+        text_fit((int16_t)(inner.x + inner.w - close.w - id_w),
+                 (int16_t)(inner.y + 1), s->tiny, s->muted, idbuf, id_w);
 
     eos_display_hline(inner.x, (int16_t)(inner.y + hdr_h + 1), inner.w,
                       t->focused ? s->accent : s->bunf);
 
     body = tile_body(s, t);
-    if (!eos_rect_empty(body) && eos_display_clip_push(body)) {
-        switch ((eos_app_id_t)t->app_id) {
-        case EOS_APP_CLOCK: body_clock(v, s, body); break;
-        case EOS_APP_BOARD: body_board(v, s, body); break;
-        case EOS_APP_HEAP:  body_heap (v, s, body); break;
-        case EOS_APP_KEYS:  body_keys (v, s, body); break;
-        case EOS_APP_BUDDY: body_buddy(v, s, body); break;
-        case EOS_APP_COUNT: break;
-        }
+    if (app && app->draw && !eos_rect_empty(body) && eos_display_clip_push(body)) {
+        // The one place the ctx differs per tile. It is copied rather than
+        // mutated in place because `s` is the frame's skin and is shared by
+        // every tile in every band; writing the focus flag into it would leave
+        // the last tile drawn deciding what the others thought they were.
+        eos_app_ctx_t c = *s;
+        c.focused = t->focused;
+        app->draw(&c, body);
         eos_display_clip_pop();
     }
 
     eos_display_clip_pop();
+}
+
+// --------------------------------------------------------------- launcher
+//
+// The app list the owner asked for: super+space, a single column, arrow keys,
+// enter. The MODEL is kernel/shell/eos_launcher.c — which item is highlighted
+// and where the view is scrolled to are decided there and only read here.
+//
+// The geometry is read back out of the launcher rather than recomputed,
+// because this function runs once per band and the hit test that decides what
+// the trackpad is pointing at runs somewhere else entirely. One stored
+// rectangle means the pixels and the pointer cannot drift apart.
+
+void eos_shell_launcher_geom(const eos_theme_t *t, eos_launcher_geom_t *g)
+{
+    const eos_display_info_t *info = eos_display_info();
+    const eos_font_t *ui;
+    int16_t h;
+
+    if (!g) return;
+    ui = t ? eos_font_get(eos_font_id_from_name(eos_theme_font(t))) : NULL;
+    h  = ui ? (int16_t)ui->h : 8;
+    eos_launcher_layout(g, info->w, info->h, h);
+}
+
+// One cell's advance in a face that may be proportional. eos_font_t carries
+// cell_w only for the fixed faces, so this asks the measurer instead of
+// reading a field that is zero on half the fonts in the tree.
+static int16_t cell_adv(const eos_font_t *f)
+{
+    int16_t w = f ? (int16_t)eos_text_width(f, "n", -1) : 6;
+    return w > 0 ? w : 6;
+}
+
+// One row. The name is drawn first in full and the description gets whatever
+// is left, because a truncated name is a row you cannot identify and a
+// truncated sentence is still a hint.
+static void draw_launcher_row(const skin_t *s, const eos_launcher_geom_t *g,
+                              const eos_launcher_item_t *it, int16_t row_y,
+                              bool selected)
+{
+    eos_rect_t row = eos_rect((int16_t)(g->x + g->pad), row_y,
+                              (int16_t)(g->w - 2 * g->pad), g->row_h);
+    int16_t tx, ty, name_w, left, cw;
+    eos_color_t cname, cdesc;
+
+    if (eos_rect_empty(row) || !s->ui) return;
+
+    if (selected) {
+        eos_display_fill(row, s->accent);
+        cname = s->bg;          // the accent's own background, so the row reads
+        cdesc = s->bg;          // as one block of colour and not as two inks
+    } else {
+        cname = s->text;
+        cdesc = s->muted;
+    }
+
+    // Two pixels of gutter inside the highlight bar, and the text sits on the
+    // row's vertical centre: (12 - 8) / 2 is 2 on the shipped 6x8 face.
+    cw = cell_adv(s->ui);
+    tx = (int16_t)(row.x + 2);
+    ty = (int16_t)(row.y + (row.h - (int16_t)s->ui->h) / 2);
+    left = (int16_t)(row.w - 4);
+
+    name_w = text_fit(tx, ty, s->ui, cname, it->name, left);
+    if (!it->desc) return;
+
+    // Three cells of gap. Below about eight cells of remaining width the
+    // description is nothing but an ellipsis, so it is dropped instead.
+    tx   = (int16_t)(tx + name_w + 3 * cw);
+    left = (int16_t)(row.x + row.w - 2 - tx);
+    if (left < 8 * cw) return;
+    text_fit(tx, ty, s->ui, cdesc, it->desc, left);
+}
+
+static void draw_launcher(const eos_shell_view_t *v, const skin_t *s)
+{
+    const eos_launcher_t *l = v->launcher;
+    const eos_launcher_geom_t *g;
+    eos_rect_t panel;
+    char head[24];
+    int top, rows, count, i;
+
+    if (!l || !eos_launcher_is_open(l) || !s->ui) return;
+
+    g     = &l->geom;
+    panel = eos_rect(g->x, g->y, g->w, g->h);
+    if (eos_rect_empty(panel)) return;
+
+    eos_display_fill(panel, s->overlay);
+    eos_display_border(panel, 1, s->accent);
+    if (!eos_display_clip_push(panel)) return;
+
+    count = eos_launcher_count(l);
+    top   = eos_launcher_top(l);
+    rows  = eos_launcher_rows(l);
+
+    // The heading carries the position in the list, which is the only thing
+    // that tells a reader there is more list off the bottom of a full screen.
+    snprintf(head, sizeof head, "apps  %d/%d",
+             (count > 0) ? eos_launcher_selected(l) + 1 : 0, count);
+    text_fit((int16_t)(g->x + g->pad + 2), g->title_y, s->ui, s->muted,
+             head, (int16_t)(g->w - 2 * g->pad - 4));
+    eos_display_hline((int16_t)(g->x + g->pad), g->rule_y,
+                      (int16_t)(g->w - 2 * g->pad), s->accent);
+
+    if (count == 0) {
+        text_fit((int16_t)(g->x + g->pad + 2), g->list_y, s->ui, s->muted,
+                 "no apps", (int16_t)(g->w - 2 * g->pad - 4));
+        eos_display_clip_pop();
+        return;
+    }
+
+    for (i = 0; i < rows; i++) {
+        int idx = top + i;
+        if (idx >= count) break;
+        draw_launcher_row(s, g, &l->item[idx],
+                          (int16_t)(g->list_y + i * g->row_h),
+                          idx == eos_launcher_selected(l));
+    }
+
+    // Two carets at the right edge saying which way the list continues. They
+    // are drawn over the row rather than beside it because there is no spare
+    // column on a 224 px panel, and a row whose description runs under the
+    // caret is a row that was already truncated.
+    {
+        int16_t cw = cell_adv(s->ui);
+        int16_t cx = (int16_t)(g->x + g->w - g->pad - 2 - cw);
+        if (top > 0)
+            text_fit(cx, g->list_y, s->ui, s->text, "^", cw);
+        if (top + rows < count)
+            text_fit(cx, (int16_t)(g->list_y + (rows - 1) * g->row_h),
+                     s->ui, s->text, "v", cw);
+    }
+
+    eos_display_clip_pop();
+}
+
+// ---------------------------------------------------------------- cursor
+//
+// An arrow that has to stay visible on cyd-amber's near-black surface and on
+// carbon's near-white one, over a tile body, over an accent-coloured tab and
+// over the bar. No single colour does that, so the arrow is drawn twice: the
+// triangle's interior in the theme's TEXT colour and its boundary in the
+// theme's BG colour. Those two are the pair every theme is required to keep
+// legible against each other, so whichever of them disappears into whatever is
+// underneath, the other one does not, and the shape survives as either a light
+// arrow with a dark rim or a dark arrow with a light rim.
+//
+// The shape is the triangle (0,0)-(6,6)-(0,10): the simplified pointer every
+// windowing system has drawn since the eighties, at the smallest size where it
+// still reads as an arrow next to a 6x8 font. The hot spot is its tip, at the
+// top-left pixel, which is what makes the click land where the point is.
+//
+// Two 11-entry bitmask tables rather than a bitmap: eos_display_blit() takes a
+// bitmap of palette indices and would need a 77-byte buffer built per frame,
+// while these are 22 bytes of flash and one shift per pixel. Bit n of a row is
+// x offset n.
+#define CUR_H 11
+static const uint8_t CUR_EDGE[CUR_H] = {
+    0x01, 0x03, 0x05, 0x09, 0x11, 0x21, 0x41, 0x11, 0x09, 0x05, 0x03
+};
+static const uint8_t CUR_FILL[CUR_H] = {
+    0x00, 0x00, 0x02, 0x06, 0x0E, 0x1E, 0x3E, 0x0E, 0x06, 0x02, 0x00
+};
+
+static void draw_cursor(const eos_shell_view_t *v, const skin_t *s)
+{
+    eos_rect_t box;
+    int16_t px, py;
+    int row, col;
+
+    if (!v->pointer) return;
+
+    // The LATCHED position and the latched visibility, never the live ones.
+    // x, y and last_ms are written from the NimBLE host task, which preempts
+    // this one, and this function runs once per band: reading them here would
+    // let band 1 paint the arrow in one place and band 2 in another, and the
+    // pixels of the first are then outside every rect the next frame repaints.
+    // eos_pointer_latch() froze both before the frame opened.
+    if (!eos_pointer_shown(v->pointer, v->pointer_ms)) return;
+    box = eos_pointer_rect(v->pointer);
+    if (eos_rect_empty(box)) return;
+
+    // box is the arrow's box clipped to the panel, and the clip only ever
+    // takes rows and columns off its far edges - x and y are already inside
+    // the screen because the cursor is clamped - so box.x, box.y IS the hot
+    // spot, and the shape below is drawn from it exactly as before.
+    px = box.x;
+    py = box.y;
+
+    // Per pixel, not per run. Seventy-seven pixel calls is nothing next to the
+    // band the frame is already pushing, and the clip stack drops the ones
+    // outside the band on its own — which is what makes the arrow correct when
+    // it straddles two bands, and is the whole re-runnability rule applied to
+    // the one thing on screen that moves every frame.
+    for (row = 0; row < CUR_H; row++) {
+        uint8_t edge = CUR_EDGE[row], fill = CUR_FILL[row];
+        for (col = 0; col < 8; col++) {
+            uint8_t bit = (uint8_t)(1u << col);
+            if (fill & bit)
+                eos_display_pixel((int16_t)(px + col), (int16_t)(py + row), s->text);
+            else if (edge & bit)
+                eos_display_pixel((int16_t)(px + col), (int16_t)(py + row), s->bg);
+        }
+    }
 }
 
 // ------------------------------------------------------------------ frame
@@ -469,7 +682,15 @@ static void scene(const eos_shell_view_t *v, const skin_t *s)
 
     n = eos_wm_layout(v->wm, eos_rect(0, 0, info->w, info->h),
                       tiles, EOS_MAX_WINDOWS * 2);
-    for (i = 0; i < n; i++) draw_tile(v, s, &tiles[i]);
+    for (i = 0; i < n; i++) draw_tile(s, &tiles[i]);
+
+    // Last, over everything. An overlay that a tile could paint over is not
+    // an overlay.
+    draw_launcher(v, s);
+
+    // And the arrow over that. It is the one thing on the glass that is
+    // pointing AT the overlay, so it cannot be under it.
+    draw_cursor(v, s);
 }
 
 void eos_shell_draw_frame(const eos_shell_view_t *v)
@@ -478,7 +699,7 @@ void eos_shell_draw_frame(const eos_shell_view_t *v)
     eos_rect_t band;
 
     if (!v || !v->theme || !v->wm) return;
-    skin_build(&s, v->theme);
+    skin_build(&s, v);
 
     // Once, before the frame opens. See the buddy section: this is the whole
     // reason the avatar has an offscreen box at all.
@@ -497,6 +718,25 @@ void eos_shell_damage_bar(const eos_shell_view_t *v)
 {
     if (!v || !v->wm) return;
     eos_display_damage(bar_rect(v));
+}
+
+bool eos_shell_damage_pointer(const eos_shell_view_t *v)
+{
+    eos_rect_t was, now;
+
+    if (!v || !v->pointer) return false;
+    if (!eos_pointer_dirty(v->pointer, v->pointer_ms)) return false;
+
+    // The order is deliberate: the hole first, the arrow second. The damage
+    // list coalesces neighbours once it is full, and when the cursor has moved
+    // only a pixel or two these two boxes overlap and collapse into one band
+    // barely larger than either of them.
+    was = eos_pointer_drawn_rect(v->pointer);
+    now = eos_pointer_rect(v->pointer);
+    if (!eos_rect_empty(was)) eos_display_damage(was);
+    if (!eos_rect_empty(now) && eos_pointer_visible(v->pointer, v->pointer_ms))
+        eos_display_damage(now);
+    return true;
 }
 
 static bool app_tiles(const eos_shell_view_t *v, uint16_t app_id, bool damage)

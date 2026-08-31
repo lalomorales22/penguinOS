@@ -80,6 +80,8 @@
 #include "eos_brain_bridge.h"
 #include "eos_shell_draw.h"
 #include "eos_shell_input.h"
+#include "eos_app_registry.h"
+#include "eos_led.h"
 #include "eos_setup_screen.h"
 #include "eos_settings.h"
 #include "eos_settings_bind.h"
@@ -106,6 +108,13 @@ static const char *TAG = "eos";
 // IDLE_TICK_MS the moment the buddy is behind a tab.
 #define BUDDY_TICK_MS 100
 
+// And how long it sleeps while the trackpad's cursor is awake. 33 ms is 30 fps
+// and is what a cursor has to hit before it stops feeling attached to the
+// finger pushing it. It buys that with two 7x11 damage rects - under 400 bytes
+// of SPI a frame, less than the buddy costs at a third of the rate - and it
+// lasts only as long as EOS_POINTER_IDLE_MS after the last report.
+#define POINTER_TICK_MS 33
+
 // The shell state lives for the life of the image and is not small
 // (eos_wm_t alone is about 900 bytes), so it is static rather than stacked on
 // a task that also runs the compositor.
@@ -114,6 +123,7 @@ static eos_theme_t       theme;
 static eos_keymap_t      keys;
 static eos_shell_state_t shell;
 static eos_shell_input_t input;
+static eos_launcher_t    launcher;
 static eos_bar_status_t  bar;
 
 // The services. Both are meant for BSS and say so in their own headers:
@@ -321,12 +331,20 @@ static void open_windows(const eos_board_t *b)
 // disagreeing with nothing on screen to say so. It goes in the log instead.
 static void apply_autostart(const char *id)
 {
-    const char *const *names = eos_shell_app_names();
     int i;
 
     if (!id || !id[0]) return;
-    for (i = 0; i < EOS_APP_COUNT; i++) {
-        if (strcmp(id, names[i]) != 0 || win_of[i] < 0) continue;
+
+    // Resolved through eos_app_index_of(), which matches the registry's `id`
+    // column — the same column /api/apps publishes and the same one
+    // web/README.md tells the page to send back. It used to be matched against
+    // eos_shell_app_names(), which is the `name` column: the TAB LABEL, which
+    // a row is free to spell differently and which is not what anybody was
+    // ever offered to choose from. They agree for every row in the table
+    // today, so this fixed nothing visible and closed the one seam left where
+    // the app list existed twice.
+    i = eos_app_index_of(id);
+    if (i >= 0 && i < EOS_APP_COUNT && win_of[i] >= 0) {
         eos_wm_focus_win(&wm, win_of[i]);
         ESP_LOGI(TAG, "start  autostart focuses \"%s\" (window %d)", id, win_of[i]);
         return;
@@ -487,44 +505,32 @@ static void apps_reboot(void *ctx, uint32_t in_ms)
     reboot_armed = true;
 }
 
-// What /api/apps reports, and it is the four windows open_windows() actually
-// opens. The ids are eos_shell_app_names() rather than a second list, because
-// sys.autostart carries one of them back and two spellings of the same id is
-// how an autostart picker offers a window that cannot be opened.
+// What /api/apps reports. It is a restatement of the app registry in
+// eos_httpd's vocabulary and it invents nothing: the id, the name, the summary
+// and the tier all come out of the same table the tab labels, the launcher and
+// sys.autostart read. That is the whole point of the table — the summaries
+// used to live here, in a second array that had to be kept in the same order
+// as an enum in another file, and adding a window meant remembering to.
 //
-// The summaries are here and not in eos_shell_draw.c because a tab label has
-// nineteen cells on this panel and these are sentences; they exist for the web
-// page and would never fit the glass.
-static const char *const APP_SUMMARY[EOS_APP_COUNT] = {
-    "uptime, in the large face",
-    "what this board is, or its address once it has joined",
-    "free heap and largest block, live",
-    "the compiled-in keymap",
-    "the voxel avatar, and the mood megabrain has put it in",
-};
-
+// The strings are borrowed, not copied, which eos_apps.h asks for: they are
+// string literals in eos_app_registry.c and they outlive the image.
 static eos_apps_app_t app_catalog[EOS_APP_COUNT];
 
 static void build_app_catalog(const eos_board_t *b)
 {
-    const char *const *names = eos_shell_app_names();
-    int i;
+    int i, n = eos_app_count();
 
-    for (i = 0; i < EOS_APP_COUNT; i++) {
-        app_catalog[i].id       = names[i];
-        app_catalog[i].name     = names[i];
-        app_catalog[i].summary  = APP_SUMMARY[i];
-        // Every window on this board draws with eos_display and eos_font and
-        // nothing else, so all five run at tier 0 — the buddy included: its
-        // renderer is a software rasteriser writing 8-bit indices into a
-        // buffer this file owns, and it asks the panel for nothing a text
-        // window does not. The field is here because the picker shows it and
-        // because the first window that needs a compositor will be the one
-        // that has to say so.
-        app_catalog[i].tier_min = 0;
+    if (n > EOS_APP_COUNT) n = EOS_APP_COUNT;
+    for (i = 0; i < n; i++) {
+        const eos_app_t *a = eos_app_at(i);
+        if (!a) continue;
+        app_catalog[i].id       = a->id;
+        app_catalog[i].name     = a->name;
+        app_catalog[i].summary  = a->summary;
+        app_catalog[i].tier_min = a->tier_min;
     }
     (void)b;
-    eos_apps_set_apps(app_catalog, EOS_APP_COUNT);
+    eos_apps_set_apps(app_catalog, n);
 }
 
 // ------------------------------------------------------- pairing passkey
@@ -618,6 +624,7 @@ void app_main(void)
     char status[48];
     char last_status[48];
     uint32_t heap_boot, last_sec = 0;
+    bool input_moved = false;
     screen_t screen = SCREEN_SETUP, last_screen = SCREEN_PASSKEY;
     uint32_t last_passkey = 0;
     bool dirty, net_ok, mood_moved;
@@ -762,6 +769,70 @@ void app_main(void)
     eos_shell_input_init(&input, &wm, &shell, &keys,
                          eos_board_screen(b), theme.m.bar_h);
 
+    // The app launcher. Its list is the app registry, unfiltered and in
+    // registry order — the same table /api/apps and the tab labels come from —
+    // so an app added there appears in the overlay without anyone remembering
+    // to add it twice. The registry's strings are static storage that outlives
+    // everything, which is what makes the launcher borrowing rather than
+    // copying them safe here; a caller handing it stack strings would not be.
+    //
+    // A registry longer than EOS_LAUNCHER_MAX is refused item by item rather
+    // than truncated silently, so the log line below is the place that would
+    // say so: the count it prints is what the overlay will actually show.
+    {
+        eos_launcher_geom_t lg;
+        int i, n = eos_app_count();
+
+        eos_launcher_init(&launcher);
+        for (i = 0; i < n; i++) {
+            const eos_app_t *a = eos_app_at(i);
+            if (a) eos_launcher_add(&launcher, a->name, a->summary, (uint16_t)i);
+        }
+
+        // Geometry needs the panel and the theme's UI face, so it is computed
+        // by the scene and handed back. Recomputed on a live theme change,
+        // below, because a theme may name a different face and the row height
+        // is derived from the face's height.
+        eos_shell_launcher_geom(&theme, &lg);
+        eos_launcher_set_geom(&launcher, &lg);
+        eos_shell_input_launcher(&input, &launcher);
+        ESP_LOGI(TAG, "shell  launcher %d of %d apps, %d rows of %d px, panel %dx%d",
+                 eos_launcher_count(&launcher), n, (int)lg.rows, (int)lg.row_h,
+                 (int)lg.w, (int)lg.h);
+    }
+
+    // The cursor. It needs the panel's size to clamp itself and gets it here,
+    // from the same board rect the window manager was just handed, so the
+    // arrow and the tiles can never disagree about where the edge is. It draws
+    // nothing until the trackpad actually says something, so a board with no
+    // pointing device paired is not carrying an arrow it cannot move.
+    //
+    // The chrome beside it is what makes the x in a tile's header clickable:
+    // the same numbers the scene paints the box from, handed to the dispatcher
+    // that tests clicks against it. Recomputed on a theme change, below, for
+    // the same reason the launcher's geometry is.
+    {
+        eos_rect_t scr = eos_board_screen(b);
+        eos_pointer_chrome_t ch;
+
+        eos_pointer_init(eos_pointer_shared(), scr.w, scr.h);
+        eos_shell_tile_chrome(&theme, &ch);
+        eos_shell_input_chrome(&input, &ch);
+
+        // The three things between eos_shell_input_init() above and
+        // heap_step("shell") below take no heap at all: the dispatcher, the
+        // launcher and the cursor are file statics claimed before app_main
+        // ran, so the step's delta will read zero and there would otherwise be
+        // no line saying where the bytes actually went. It prints them here
+        // for the same reason eos_shell_buddy_bytes() and eos_app_bss_bytes()
+        // print theirs.
+        ESP_LOGI(TAG, "shell  input %u B, launcher %u B, cursor %u B of static RAM; "
+                      "close box %dx%d px, border %d",
+                 (unsigned)sizeof input, (unsigned)sizeof launcher,
+                 (unsigned)sizeof(eos_pointer_t),
+                 (int)ch.close_w, (int)(ch.border + 1 + ch.hdr_h), (int)ch.border);
+    }
+
     // The desktop's windows exist from here on even while SETUP owns the glass.
     // Opening them later would mean the first desktop frame declares damage for
     // tiles the backend has not banded.
@@ -873,6 +944,21 @@ void app_main(void)
             ESP_LOGE(TAG, "brain  client refused to start - the bar stays \"no brain\"");
         }
     }
+
+    // 8c. The windows. After the brain block and OUTSIDE it, both deliberately.
+    //     After, because the Chat window reaches megabrain through the same
+    //     four port pointers the web app does and they are assigned above.
+    //     Outside, because a board whose brain task refused to start still has
+    //     nine other windows and a Chat tile that should read "no megabrain
+    //     client on this board" rather than not existing.
+    //
+    //     This is also where the WS2812 on GPIO8 is claimed. A board that
+    //     declares no LED, or one whose RMT channels are all spoken for, comes
+    //     back absent and the Media and Party windows say so.
+    eos_app_bind(&httpd, &settings.v, b, &buddy);
+    ESP_LOGI(TAG, "apps   %d windows%s, %" PRIu32 " B of static RAM, led %s",
+             eos_app_count(), eos_app_table_ok() ? "" : " - THE TABLE IS BROKEN",
+             eos_app_bss_bytes(), eos_led_present() ? "up on GPIO8" : "absent");
     heap_step("brain");
 
     if (eos_httpd_start(&httpd) == 0) {
@@ -910,6 +996,8 @@ void app_main(void)
     view.bar   = &bar;
     view.keys  = &keys;
     view.buddy = &buddy;
+    view.pointer  = eos_pointer_shared();
+    view.launcher = &launcher;
     board_lines(b, &view, &net);
 
     // sys.autostart, after the windows exist and before the first frame. It
@@ -968,6 +1056,14 @@ void app_main(void)
         // no request is arriving.
         eos_apps_tick(now);
 
+        // The windows that move on their own: the chat draining the megabrain
+        // relay, the files list rescanning, the party driving the LED and the
+        // avatar's mood. It is here and not inside the desktop branch because
+        // the chat drain must keep running whatever is on the glass — the relay
+        // stops pumping its socket when its ring fills, and a consumer that
+        // paused during a passkey screen would wedge a reply behind it.
+        eos_app_tick(&view, now);
+
         // A model uploaded through /api/fs/write and reloaded on an HTTP worker
         // is adopted HERE, on the task that ticks the state machine and draws
         // it, so the swap cannot land inside a frame. That is the whole
@@ -1014,6 +1110,40 @@ void app_main(void)
         dirty = (screen != last_screen);
         last_screen = screen;
 
+        // ONE drain of the event ring, on every pass, whatever is on the glass.
+        // It used to be two: this call inside the desktop branch, and a
+        // discard loop at the foot of the loop for every other screen. Two
+        // consumers of one queue is two places that have to agree about what
+        // an event off the desktop means, and the order between them was
+        // wrong — the discard ran after the desktop branch, so the first pass
+        // that reached the desktop dispatched the whole backlog the setup
+        // screen had collected. eos_shell_input_set_active() moved that rule
+        // inside the dispatcher, where it is one branch of the ladder in
+        // eos_shell_input.h and not a second code path.
+        //
+        // The answer only means anything to the desktop, which is the only
+        // scene an event can move; the other two ignore it because the pump
+        // has already thrown their events away.
+        eos_shell_input_set_active(&input, screen == SCREEN_DESKTOP);
+        input_moved = eos_shell_input_pump(&input);
+
+        // A full ring drops the NEWEST event and counts it, which is the right
+        // trade — losing a key-up latches nothing, because the HAL's held table
+        // is updated whether or not the event made it into the queue — but a
+        // dropped EOS_EV_CLICK is a click that simply did not happen, and until
+        // this line nothing in the image ever read the counter. Logged on the
+        // change and not per drop: a burst is one line, and a board that never
+        // overflows never says anything.
+        {
+            static uint32_t last_drop;
+            uint32_t d = eos_input_dropped();
+            if (d != last_drop) {
+                ESP_LOGW(TAG, "input  ring full, %u event%s dropped in total",
+                         (unsigned)d, d == 1 ? "" : "s");
+                last_drop = d;
+            }
+        }
+
         switch (screen) {
         case SCREEN_PASSKEY:
             if (bst.passkey != last_passkey) dirty = true;
@@ -1059,7 +1189,7 @@ void app_main(void)
             view.heap_free    = bar.free_heap;
             view.heap_largest = heap_largest();
 
-            if (eos_shell_input_pump(&input)) {
+            if (input_moved) {
                 // A move can change every tile and the pips at once, so the
                 // whole screen is declared rather than guessed at rect by rect.
                 eos_shell_damage_all();
@@ -1074,6 +1204,23 @@ void app_main(void)
                 // palette and holds indices, not colours, so it has to be
                 // rebuilt or the avatar keeps wearing the previous theme.
                 buddy_adopt();
+                // And the launcher's rows are sized from the theme's UI face,
+                // which a theme is allowed to change. Recomputing here is what
+                // keeps the highlight bar and the hit test on the same grid as
+                // the glyphs after a switch.
+                //
+                // And the close box, for the same reason: it is measured from
+                // the face's height, and a hit box on the old face's grid is a
+                // hit box that is not where the x is.
+                {
+                    eos_launcher_geom_t lg;
+                    eos_pointer_chrome_t ch;
+
+                    eos_shell_launcher_geom(&theme, &lg);
+                    eos_launcher_set_geom(&launcher, &lg);
+                    eos_shell_tile_chrome(&theme, &ch);
+                    eos_shell_input_chrome(&input, &ch);
+                }
                 eos_shell_damage_all();
                 dirty = true;
             } else if (dirty) {
@@ -1101,22 +1248,47 @@ void app_main(void)
             }
             net_dirty = false;
 
+            // And whatever an app changed: a token that arrived, a directory
+            // that was rescanned, an effect that is mid-animation. Each of them
+            // is one tile-sized rect and none of them is a full screen, which
+            // is why this is a separate call and not folded into the branch
+            // above. Safe after eos_shell_damage_all() for the same reason the
+            // pointer is: an overlapping rect unions in and changes nothing.
+            if (eos_app_damage(&view)) dirty = true;
+
+            // The arrow, last and on its own. It moves independently of every
+            // branch above - a trackpad report changes no tile and no bar - so
+            // its two rects are declared here rather than inside any of them,
+            // and they are two rects and not a screen: 154 pixels against
+            // 57,600, on a banded backend that could not push the second
+            // number at the rate a trackpad reports.
+            //
+            // Safe after eos_shell_damage_all(): a rect that overlaps the
+            // full-screen entry unions into it and changes nothing.
+            view.pointer_ms = now;
+
+            // ONE read of the cursor, held for the whole frame. Its position
+            // is written from the NimBLE host task, which preempts this one,
+            // and a frame reads it three times: here for the damage rects,
+            // once per band while the scene is replayed, and again at the
+            // commit below. A trackpad report landing between any two of those
+            // leaves them disagreeing, and the arrow painted at the position
+            // no rect covered stays on the glass. The latch is what makes all
+            // three the same number; motion that arrives mid-frame moves the
+            // cursor as it always did and is picked up by the next latch.
+            eos_pointer_latch(eos_pointer_shared(), now);
+            if (eos_shell_damage_pointer(&view)) dirty = true;
+
             if (dirty) {
                 last_sec = sec;
                 eos_shell_draw_frame(&view);
+                // AFTER the draw, never before. The damage above is the
+                // difference between where the arrow was and where it is, and
+                // committing early would collapse that difference to nothing
+                // and leave the old arrow on the glass.
+                eos_pointer_commit(eos_pointer_shared(), now);
             }
             break;
-        }
-
-        // Keystrokes are drained on every pass, not only on the desktop, and
-        // off the desktop they are drained and DISCARDED. Two reasons: a
-        // keyboard paired while the setup screen is up would otherwise deliver
-        // its first thirty-two keys the instant the desktop appeared, and a
-        // super+q dispatched behind a screen the user cannot see closes a window
-        // they never asked to close.
-        if (screen != SCREEN_DESKTOP) {
-            eos_event_t drop;
-            while (eos_shell_input_next(&drop)) { }
         }
 
         // The avatar is the only thing on this board that animates, so it is
@@ -1124,7 +1296,22 @@ void app_main(void)
         // cheap; a whole screen at 10 Hz would not be, and neither would the
         // setup screen at 10 Hz, so this is gated on the buddy actually being
         // on the glass.
-        vTaskDelay(pdMS_TO_TICKS((screen == SCREEN_DESKTOP && buddy_shown)
-                                 ? BUDDY_TICK_MS : IDLE_TICK_MS));
+        // A moving cursor is the second thing that earns a faster loop, and it
+        // earns a faster one than the buddy: 10 fps reads as an animation and
+        // as lag. It costs two 7x11 rects a frame and it stops on its own when
+        // the trackpad goes quiet for EOS_POINTER_IDLE_MS, so an idle board is
+        // still an idle board. The first report after a quiet spell waits out
+        // whatever tick was already running - up to 250 ms - because nothing
+        // here wakes on a BLE notification; every one after it is at this rate.
+        {
+            uint32_t tick = IDLE_TICK_MS;
+            if (screen == SCREEN_DESKTOP) {
+                if (eos_pointer_visible(eos_pointer_shared(), now))
+                    tick = POINTER_TICK_MS;
+                else if (buddy_shown || eos_app_wants_fast())
+                    tick = BUDDY_TICK_MS;
+            }
+            vTaskDelay(pdMS_TO_TICKS(tick));
+        }
     }
 }

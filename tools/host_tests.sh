@@ -40,6 +40,14 @@ run brain   -Ikernel/svc/include kernel/svc/eos_brain.c kernel/svc/test/test_bra
 run shell   -Ikernel/wm/include -Ikernel/hal/include -Ikernel/shell/include \
             kernel/wm/eos_wm.c kernel/shell/eos_keys.c kernel/shell/eos_bar.c \
             kernel/shell/test/test_shell.c
+run launcher -Ikernel/wm/include -Ikernel/hal/include -Ikernel/shell/include \
+            -Iboards/generated kernel/wm/eos_wm.c kernel/shell/eos_keys.c \
+            kernel/shell/eos_bar.c kernel/shell/eos_launcher.c \
+            kernel/shell/test/test_launcher.c
+run pointer -Ikernel/hal/include -Ikernel/wm/include -Ikernel/shell/include \
+            -Ikernel/svc/include -Iboards/generated \
+            kernel/shell/eos_pointer.c kernel/wm/eos_wm.c kernel/hal/eos_input.c \
+            kernel/svc/eos_ble.c kernel/shell/test/test_pointer.c
 run font    -Ikernel/font/include -Ikernel/hal/include -Ikernel/wm/include \
             kernel/font/eos_font.c kernel/font/test/test_font.c
 run integ   -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
@@ -75,11 +83,51 @@ run apps    -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include \
             kernel/svc/test/test_apps.c
 run draw    -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
-            -Iboards/generated -Ifirmware/main \
+            -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
             firmware/main/test/test_shell_draw.c firmware/main/eos_buddy_model.c \
+            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c \
+            firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
+            firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
+            firmware/main/eos_led.c \
+            kernel/hal/backend/storage/eos_storage_idf.c \
             kernel/hal/backend/esp_lcd/eos_display_st7789.c kernel/wm/eos_wm.c \
             kernel/theme/eos_theme.c kernel/shell/eos_bar.c kernel/shell/eos_keys.c \
+            kernel/shell/eos_launcher.c kernel/shell/eos_pointer.c \
+            kernel/hal/eos_input.c \
             kernel/font/eos_font.c kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c -lm
+run appsui  -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
+            -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
+            -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
+            firmware/main/test/test_apps_ui.c \
+            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c \
+            firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
+            firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
+            firmware/main/eos_led.c firmware/main/eos_shell_draw.c \
+            kernel/hal/backend/esp_lcd/eos_display_st7789.c \
+            kernel/hal/backend/storage/eos_storage_idf.c \
+            kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+            kernel/wm/eos_wm.c kernel/theme/eos_theme.c kernel/shell/eos_bar.c \
+            kernel/shell/eos_keys.c kernel/shell/eos_launcher.c \
+            kernel/shell/eos_pointer.c kernel/hal/eos_input.c \
+            kernel/font/eos_font.c \
+            kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c -lm
+run dispatch -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
+            -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
+            -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
+            firmware/main/test/test_dispatch.c firmware/main/eos_shell_input.c \
+            firmware/main/eos_shell_draw.c firmware/main/eos_buddy_model.c \
+            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c \
+            firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
+            firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
+            firmware/main/eos_led.c \
+            kernel/hal/backend/esp_lcd/eos_display_st7789.c \
+            kernel/hal/backend/storage/eos_storage_idf.c \
+            kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+            kernel/wm/eos_wm.c kernel/theme/eos_theme.c kernel/shell/eos_bar.c \
+            kernel/shell/eos_keys.c kernel/shell/eos_launcher.c \
+            kernel/shell/eos_pointer.c kernel/hal/eos_input.c \
+            kernel/font/eos_font.c \
+            kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c -lm
 run setup   -Wpedantic -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/font/include -Ikernel/qr/include -Ifirmware/main \
             firmware/main/test/test_setup_screen.c firmware/main/eos_setup_screen.c \

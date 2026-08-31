@@ -110,10 +110,36 @@ static int frame(void)
     int n = 0;
 
     memset(cover, 0, sizeof cover);
-    skin_build(&s, view.theme);
+    skin_build(&s, &view);
     buddy_prepare(&view, &s);
     eos_display_frame_begin();
     while (eos_display_frame_band(&band)) { scene(&view, &s); take_band(); n++; }
+    eos_display_frame_end();
+    return n;
+}
+
+// The same frame, with the trackpad reporting BETWEEN bands. That is the real
+// shape of the hazard: scene() is re-run once per band and reads the cursor
+// every time, and the BLE host task that moves it preempts the task drawing.
+// Without eos_pointer_latch() band 1 and band 2 paint the arrow in two
+// different places and the first one's pixels are outside every rect the next
+// frame repaints, so a fragment of it stays on the glass.
+static int frame_jostled(eos_pointer_t *p)
+{
+    skin_t s;
+    eos_rect_t band;
+    int n = 0;
+
+    memset(cover, 0, sizeof cover);
+    skin_build(&s, &view);
+    buddy_prepare(&view, &s);
+    eos_display_frame_begin();
+    while (eos_display_frame_band(&band)) {
+        scene(&view, &s);
+        take_band();
+        n++;
+        eos_pointer_feed(p, 9, 9, 0, view.pointer_ms);
+    }
     eos_display_frame_end();
     return n;
 }
@@ -338,6 +364,123 @@ int main(int argc, char **argv)
        buddy_at_x + buddy_bm.w <= br.x + br.w &&
        buddy_at_y + buddy_bm.h <= br.y + br.h,
        "and it lands inside the tile it was measured for");
+
+    // The close box, checked on the COMPOSITED PANEL rather than against the
+    // renderer's arithmetic. eos_pointer_close_box() is what the dispatcher
+    // tests a trackpad click against and it is what draw_tile() paints into;
+    // this is the one check that can tell whether those two rectangles are the
+    // same rectangle, because it reads the pixels back out of the frame.
+    {
+        eos_tile_t tl[EOS_MAX_WINDOWS * 2];
+        eos_pointer_chrome_t ch;
+        int nt, ti, boxed = 0;
+
+        eos_shell_tile_chrome(&theme, &ch);
+        nt = eos_wm_layout(&wm, eos_rect(0, 0, W, H), tl, EOS_MAX_WINDOWS * 2);
+        for (ti = 0; ti < nt; ti++) {
+            eos_rect_t box = eos_pointer_close_box(&ch, &tl[ti]);
+            if (eos_rect_empty(box)) continue;
+            boxed++;
+            ck(ink_in(box) >= 5,
+               "the tile's close box has a cross painted in it");
+            ck(box.x + box.w <= tl[ti].rect.x + tl[ti].rect.w,
+               "and the box the pixels went into is inside its tile");
+        }
+        ck(boxed >= 2, "at least two visible tiles carry a close box");
+    }
+
+    // The cursor against the banded backend, which is the constraint the whole
+    // arrow was designed around. A trackpad reports about fifty times a second
+    // and the panel has no framebuffer; if a moved cursor damaged the screen,
+    // the board would be pushing 115 KB per report and could not keep up. So
+    // the two rects it declares must come back as strictly fewer bands than a
+    // full frame, and the pixels it moves must be a small fraction of 57,600.
+    {
+        eos_pointer_t cur;
+        int full_bands = bands, moved_bands, i, moved_px = 0;
+
+        // One count on each axis: inside the accel curve's unity zone, so the
+        // arrow moves exactly one pixel off centre and is nowhere near an edge
+        // the clamp could pin it against. A big first shove would park it in
+        // the corner, where the second report moves it nowhere and the check
+        // below would be measuring the clamp instead of the damage.
+        eos_pointer_init(&cur, W, H);
+        eos_pointer_feed(&cur, 1, 1, 0, 1000);
+        view.pointer    = &cur;
+        view.pointer_ms = 1000;
+
+        eos_display_damage_all();
+        frame();                       // the arrow is on the glass and committed
+        eos_pointer_commit(&cur, 1000);
+        memcpy(prev, shot, sizeof shot);
+
+        eos_pointer_feed(&cur, 3, 2, 0, 1030);
+        view.pointer_ms = 1030;
+        ck(eos_shell_damage_pointer(&view),
+           "a cursor that moved declares damage");
+        moved_bands = frame();
+        ck(moved_bands > 0, "and the frame that follows composites something");
+        ck(moved_bands < full_bands,
+           "in fewer bands than a full-screen frame: the arrow damages two rects");
+
+        for (i = 0; i < H * W; i++)
+            if (((uint16_t *)shot)[i] != ((uint16_t *)prev)[i]) moved_px++;
+        ck(moved_px > 0, "the arrow actually moved on the glass");
+        ck(moved_px < 400,
+           "and fewer than four hundred pixels changed, not the panel");
+
+        // A cursor that has not moved since the last committed frame declares
+        // nothing at all, which is what lets an idle board stay idle.
+        eos_pointer_commit(&cur, 1030);
+        ck(!eos_shell_damage_pointer(&view),
+           "a cursor that has not moved damages nothing");
+
+        // And the latch, which is what makes any of the above true when the
+        // trackpad is actually moving. Two frames drawn from the same latched
+        // position: one undisturbed, one with a report landing between every
+        // pair of bands. They must be the same picture, and the commit must
+        // record the position that was PAINTED and not the one the pad had
+        // reached by the time the last band went out.
+        {
+            eos_pointer_t quiet, jostled;
+            int16_t painted_x, painted_y;
+
+            eos_pointer_init(&quiet, W, H);
+            eos_pointer_feed(&quiet, 12, 8, 0, 2000);
+            painted_x = quiet.x;
+            painted_y = quiet.y;
+            view.pointer    = &quiet;
+            view.pointer_ms = 2000;
+            eos_pointer_latch(&quiet, 2000);
+            eos_display_damage_all();
+            frame();
+            memcpy(prev, shot, sizeof shot);
+
+            eos_pointer_init(&jostled, W, H);
+            eos_pointer_feed(&jostled, 12, 8, 0, 2000);
+            view.pointer = &jostled;
+            eos_pointer_latch(&jostled, 2000);
+            eos_display_damage_all();
+            frame_jostled(&jostled);
+
+            ck(jostled.x != painted_x,
+               "the trackpad really did move while the frame was going out");
+            ck(memcmp(prev, shot, sizeof shot) == 0,
+               "and the frame painted the latched arrow, not a smear of two");
+
+            eos_pointer_commit(&jostled, 2000);
+            ck(eos_pointer_drawn_rect(&jostled).x == painted_x &&
+               eos_pointer_drawn_rect(&jostled).y == painted_y,
+               "the commit records where the arrow was painted, not where the pad got to");
+            ck(eos_shell_damage_pointer(&view),
+               "so the motion it missed is what the next frame repaints");
+        }
+
+        view.pointer = NULL;
+        view.pointer_ms = 0;
+        eos_display_damage_all();
+        bands = frame();
+    }
 
     // The re-runnability rule, checked where it can actually fail. The avatar
     // sorts its voxel array in place on every render, so a second frame drawn

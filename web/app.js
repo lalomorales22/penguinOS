@@ -937,7 +937,24 @@ function bindSettings() {
 
 // ================================================================== BUDDY
 
-var B = { ed: null, meta: null, loaded: false, centred: false };
+// dir and limits arrive from GET /api/buddy and are the board describing
+// itself; everything below prefers them over anything compiled in here. `over`
+// is how many voxels the loaded model is past the caps that arrived with it,
+// which is zero for every model the board itself wrote and non-zero only if
+// somebody put a file on the filesystem by hand.
+var B = {
+  ed: null, meta: null, loaded: false, centred: false,
+  dir: null, over: 0, src: null, capsKnown: false
+};
+
+// The directory the firmware keeps the buddy in. EOS_APPS_BUDDY_DIR has been
+// /int/buddy since the internal filesystem became the default; web/README.md
+// still documents /sd/buddy, and an SD card is a legal place for one. A board
+// that answered /api/buddy tells us which, and a board that 404ed that route
+// tells us nothing, so both get tried in the firmware's own order.
+var BUDDY_DIRS = ['/int/buddy', '/sd/buddy'];
+
+function buddyDirs() { return B.dir ? [B.dir] : BUDDY_DIRS.slice(); }
 
 function buddyInit() {
   if (B.ed) return;
@@ -949,6 +966,8 @@ function buddyInit() {
 
   buildPal();
   buddySync();
+  buddyCaps();
+  buddyWho();
 
   var tools = $('vx-tools');
   Array.prototype.forEach.call(tools.children, function (b) {
@@ -997,6 +1016,7 @@ function buddyInit() {
   $('b-yaw').oninput = function (e) {
     $('b-yawtxt').textContent = e.target.value + ' / 32';
   };
+  $('b-name').oninput = buddyWho;
   $('b-eyeclear').onclick = function () {
     B.ed.eyeIndex = 0;
     B.ed.blinkIndex = 0;
@@ -1022,14 +1042,24 @@ function buddyInit() {
     e.target.value = '';
     if (!f) return;
     f.arrayBuffer().then(function (ab) {
+      var r;
       try {
-        B.ed.fromVox(new Uint8Array(ab));
-        buildPal();
-        syncDim();
-        toast('imported ' + f.name, 'ok');
+        r = B.ed.fromVox(new Uint8Array(ab));
       } catch (err) {
-        toast('bad .vox: ' + err.message, 'err');
+        // fromVox() checks against the caps this board reported, so a file
+        // MagicaVoxel is happy with can still be refused here - which is the
+        // point, and is why the message carries the numbers.
+        bstatus(f.name + ' will not load: ' + err.message, true);
+        return toast('bad .vox: ' + err.message, 'err');
       }
+      B.src = f.name + ' (imported, not on the board)';
+      buildPal();
+      syncDim();
+      buddyWho();
+      buddySync();
+      bstatus('imported ' + f.name + ': ' + B.ed.count() + ' voxels in a ' +
+              r.size.join('x') + ' box. Save to board to put it on the panel.');
+      toast('imported ' + f.name, 'ok');
     });
   };
 
@@ -1091,11 +1121,17 @@ function syncDim() {
 function buddySync() {
   var ed = B.ed;
   if (!ed) return;
-  var n = ed.count(), max = window.EOSVox.MAX_VOX;
+  var n = ed.count(), max = ed.limits.voxels;
   var c = $('vx-count');
   c.textContent = n + ' / ' + max + ' voxels';
   c.className = n >= max ? 'over' : '';
-  $('vx-dims').textContent = ed.dim() + ' x ' + ed.dim() + ' x ' + ed.dim();
+  // The grid is the room to draw in; the box is what eos_buddy.c will centre
+  // and scale the avatar inside. They are different numbers and showing only
+  // the first is how a model ends up rendering off-centre on the panel with
+  // nothing on screen having warned about it.
+  var box = ed.declaredSize();
+  $('vx-dims').textContent = box.join(' x ') + ' in a ' + ed.dim() + ' grid';
+  $('vx-drawn').textContent = ed.drawnCount() + ' drawn, ' + bytes(ed.byteSize());
   $('vx-cur').style.background = ed.colorHex(ed.color);
   $('vx-curtxt').textContent = 'index ' + ed.color;
   $('vx-zlabel').textContent = 'z ' + ed.zLayer;
@@ -1123,9 +1159,13 @@ function metaFromForm() {
       open_index: ed.eyeIndex | 0,
       shut_index: ed.blinkIndex | 0
     },
+    // The box the .vox declares, not the editing grid. eos_apps.c treats this
+    // block as advisory and reports from the parsed model instead, so this is
+    // only ever read by a person - which is exactly why it should not say 22
+    // cubed about a penguin that is 15x13x22.
     model: {
       file: 'buddy.vox',
-      dim: [ed.dim(), ed.dim(), ed.dim()],
+      dim: ed.declaredSize(),
       voxels: ed.count()
     }
   };
@@ -1147,6 +1187,7 @@ function metaToForm(m) {
   B.ed.eyeIndex = eyes.open_index | 0;
   B.ed.blinkIndex = eyes.shut_index | 0;
   buddySync();
+  buddyWho();
 }
 
 function bstatus(msg, bad) {
@@ -1155,67 +1196,221 @@ function bstatus(msg, bad) {
   p.style.color = bad ? 'var(--err)' : '';
 }
 
-function buddyLoad() {
-  bstatus('loading...');
-  var meta = api('/api/buddy', { timeout: 10000 }).catch(function () { return null; });
-  var vox = apiRaw('/api/fs/read' + qp({ path: '/int/buddy/buddy.vox' }), { timeout: 20000 })
-    .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
-    .catch(function () { return null; });
+// Tries each candidate directory in turn and resolves with the first
+// buddy.vox that came back 200, or with null when none of them did. A 404 is
+// an answer, not a failure: it is how a board with no model says so.
+function fetchVox(dirs) {
+  if (!dirs.length) return Promise.resolve(null);
+  var dir = dirs[0], path = dir + '/buddy.vox';
+  // No .catch(). A rejection here is the transport, not a missing file, and it
+  // is left to propagate: falling through to the next directory would report
+  // "the board has no buddy" about a board that simply did not answer.
+  return apiRaw('/api/fs/read' + qp({ path: path }), { timeout: 20000 })
+    .then(function (r) {
+      if (!r.ok) return fetchVox(dirs.slice(1));
+      return r.arrayBuffer().then(function (ab) {
+        return { dir: dir, path: path, bytes: new Uint8Array(ab) };
+      });
+    });
+}
 
-  return Promise.all([meta, vox]).then(function (res) {
-    var m = res[0], ab = res[1];
-    if (ab) {
-      try {
-        B.ed.fromVox(new Uint8Array(ab));
+// One line saying whose face is on screen and which file it came out of. The
+// difference between "this board has no buddy" and "this board has one and
+// this tab could not read it" is the whole of what the owner needs to know,
+// and a blank canvas says neither.
+function buddyWho() {
+  var name = $('b-name').value.trim();
+  $('b-title').textContent = name || (B.src ? 'unnamed buddy' : 'no buddy loaded');
+  $('b-where').textContent = B.src || 'nothing loaded';
+}
+
+// The caps line, written from the board's own numbers so nothing here has to
+// agree with eos_apps.h by hand.
+//
+// A board with no buddy at all answers /api/buddy with a 404 and so reports no
+// limits, and there is no other route that carries them. Guessing this board's
+// would be worse than saying so: the .vox format's ceilings are the only
+// honest fallback, they are the largest anything could be, and the sentence
+// says out loud that the real ones may be lower. The first successful save
+// re-asks, so this is provisional exactly once.
+function buddyCaps() {
+  var l = B.ed.limits;
+  $('b-caps').textContent = B.capsKnown
+    ? ('This board holds ' + l.voxels + ' voxels, stages ' + l.bytes +
+       ' bytes of .vox and takes ' + l.dim + ' on an axis. A model past that is ' +
+       'refused here, before the upload, rather than by the board afterwards.')
+    : ('This board has no buddy yet, so it has not said how big a model it can ' +
+       'hold. These are the .vox format\'s own limits - ' + l.voxels +
+       ' voxels, ' + l.bytes + ' bytes, ' + l.dim + ' on an axis - and this ' +
+       'board may well hold fewer. It will say so the first time you save.');
+}
+
+function buddyLoad() {
+  var ed = B.ed;
+  bstatus('asking the board about its buddy...');
+  B.loaded = true;
+
+  return api('/api/buddy', { timeout: 10000 })
+    .then(null, function (e) {
+      // web/README.md: a 404 on a board with no buddy.json and no model is
+      // normal and the editor is written for it. Anything else is not.
+      if (e.status === 404) return null;
+      throw e;
+    })
+    .then(function (d) {
+      var meta = d ? (d.buddy || d) : null;
+      B.meta = meta;
+      B.dir = (d && typeof d.dir === 'string' && d.dir.charAt(0) === '/') ? d.dir : null;
+
+      // Installed BEFORE the file is parsed, so a model this board cannot hold
+      // is refused by the same numbers the board would have refused it with.
+      B.over = ed.setLimits(d && d.limits);
+      B.capsKnown = !!(d && d.limits);
+      buddyCaps();
+      if (meta) metaToForm(meta);
+
+      return fetchVox(buddyDirs()).then(function (got) {
+        if (!got) {
+          B.src = null;
+          buddyWho();
+          if (!d) {
+            bstatus('this board has no buddy yet. Draw one and press Save to board.');
+          } else {
+            bstatus('the board describes a buddy but there is no buddy.vox in ' +
+                    (B.dir || BUDDY_DIRS.join(' or ')) +
+                    (d.error ? ' - it says: ' + d.error : ''), true);
+          }
+          return;
+        }
+
+        var r;
+        try {
+          r = ed.fromVox(got.bytes);
+        } catch (e) {
+          B.src = null;
+          buddyWho();
+          bstatus(got.path + ' is ' + bytes(got.bytes.length) +
+                  ' and will not parse: ' + e.message, true);
+          return;
+        }
+
+        B.dir = got.dir;
+        B.src = got.path;
+        B.over = Math.max(0, ed.count() - ed.limits.voxels);
         buildPal();
         syncDim();
-      } catch (e) {
-        bstatus('buddy.vox is not readable: ' + e.message, true);
-        return;
-      }
-    }
-    if (m) metaToForm(m.buddy || m);
-    B.loaded = true;
-    bstatus(ab ? 'loaded from the board' : 'no buddy.vox on the card yet');
-  }, function (e) {
-    bstatus('load failed: ' + e.message, true);
-  });
+        buddyWho();
+        buddySync();
+
+        // The board reports the count AFTER eos_vox_finish() has dropped the
+        // fully buried voxels, and the file holds the count before. Saying
+        // both is the only way 1280 on this screen and 572 in /api/buddy stop
+        // looking like a broken upload.
+        var msg = ed.count() + ' voxels in a ' + r.size.join('x') + ' box, ' +
+                  bytes(got.bytes.length) + ', from ' + got.path +
+                  '. The board draws ' + ed.drawnCount() +
+                  ' of them once the buried ones are hidden.';
+        if (r.count !== r.kept) msg += ' ' + (r.count - r.kept) + ' repeated cells merged.';
+        if (d && d.error) msg += ' The board reports: ' + d.error;
+        if (B.over > 0) {
+          msg = ed.count() + ' voxels from ' + got.path + ' and this board holds ' +
+                ed.limits.voxels + '. It is on screen, but erase ' + B.over +
+                ' of them before saving.';
+        }
+        bstatus(msg, B.over > 0 || !!(d && d.error));
+      });
+    })
+    .then(null, function (e) {
+      B.src = null;
+      buddyWho();
+      bstatus('the board did not answer: ' + e.message, true);
+    });
 }
 
 function buddySave() {
-  var ed = B.ed;
+  var ed = B.ed, dir = B.dir || BUDDY_DIRS[0];
   if (!ed.count()) return toast('model is empty', 'err');
+
+  // Refused here, with the board's own numbers, rather than after the owner
+  // has watched a 7 KB upload finish and the panel fall back to the built-in
+  // penguin. toVox() enforces the same caps; this exists so the message names
+  // what to do about it instead of only what went wrong.
+  var l = ed.limits, n = ed.count(), nb = ed.byteSize();
+  if (n > l.voxels) {
+    bstatus('this board holds ' + l.voxels + ' voxels and the model has ' + n +
+            '. Erase ' + (n - l.voxels) + ' and save again.', true);
+    return toast(n + ' voxels, ' + l.voxels + ' allowed', 'err');
+  }
+  if (nb > l.bytes) {
+    bstatus('this board stages ' + l.bytes + ' bytes of .vox and this model is ' +
+            nb + '.', true);
+    return toast('model is ' + bytes(nb) + ', board takes ' + bytes(l.bytes), 'err');
+  }
+
   var vox;
   try {
     vox = ed.toVox();
   } catch (e) {
+    bstatus('the model cannot be written: ' + e.message, true);
     return toast(e.message, 'err');
   }
   var meta = metaFromForm();
-  bstatus('saving ' + bytes(vox.length) + ' ...');
+  var box = ed.declaredSize().join('x');
+  bstatus('saving ' + bytes(vox.length) + ' to ' + dir + ' ...');
   $('b-save').disabled = true;
 
   // mkdir is allowed to fail: it usually fails because it is already there.
   var rows = [];
-  return api('/api/fs/mkdir' + qp({ path: '/int/buddy' }), { method: 'POST' })
+  return api('/api/fs/mkdir' + qp({ path: dir }), { method: 'POST' })
     .catch(function () { return null; })
     .then(function () {
       var ui = uploadRow('buddy.vox');
       rows.push(ui);
-      return putChunks('/int/buddy/buddy.vox', new Blob([vox]), ui);
+      return putChunks(dir + '/buddy.vox', new Blob([vox]), ui);
     })
     .then(function () {
       var ui = uploadRow('buddy.json');
       rows.push(ui);
       var j = new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' });
-      return putChunks('/int/buddy/buddy.json', j, ui);
+      return putChunks(dir + '/buddy.json', j, ui);
     })
     .then(function () {
+      // The one call that tells us whether the board could actually parse what
+      // it was just handed. Swallowing its error is how an upload that the
+      // board rejected reads as a success and the panel quietly keeps the
+      // compiled-in penguin.
       return api('/api/buddy/reload', { method: 'POST', timeout: 12000 })
-        .catch(function () { return null; });
+        .then(function (d) { return { ok: true, d: d }; },
+              function (e) { return { ok: false, e: e }; });
     })
-    .then(function () {
-      bstatus('saved to /int/buddy - the board reloaded it');
+    .then(function (rl) {
+      B.dir = dir;
+      B.src = dir + '/buddy.vox';
+      buddyWho();
+      if (rl && !rl.ok) {
+        bstatus('the ' + bytes(vox.length) + ' file is on the board, but it refused ' +
+                'to load it: ' + rl.e.message + '. The panel is still drawing ' +
+                'whatever it had.', true);
+        toast('board refused the model', 'err');
+        return;
+      }
+      var got = rl && rl.d && (rl.d.buddy || rl.d);
+      var drew = got && got.model ? got.model.voxels : null;
+      // The board answers /api/buddy properly now that it has one, so this is
+      // the first and only chance to replace the format's provisional ceilings
+      // with the board's real ones. It costs one request, on the rare path.
+      if (!B.capsKnown) {
+        api('/api/buddy', { timeout: 8000 }).then(function (d2) {
+          if (!d2 || !d2.limits) return;
+          B.over = ed.setLimits(d2.limits);
+          B.capsKnown = true;
+          buddyCaps();
+          buddySync();
+        }, function () { /* the caps line stays provisional, which is true */ });
+      }
+      bstatus('saved ' + n + ' voxels in a ' + box + ' box to ' + dir +
+              ' and the board reloaded it' +
+              (drew != null ? '. It is drawing ' + drew + ' of them.' : '.'));
       toast('buddy saved', 'ok');
     }, function (e) {
       bstatus('save failed: ' + e.message, true);

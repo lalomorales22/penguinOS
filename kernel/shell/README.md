@@ -1,14 +1,20 @@
-# kernel/shell — keybinds and the status bar model
+# kernel/shell — keybinds, the status bar model and the app launcher
 
-Two pieces of pure logic. No allocation, no hardware, no LVGL, no drawing.
+Pure logic. No allocation, no hardware, no LVGL, no drawing.
 
 | File | What |
 |---|---|
 | `include/eos_keys.h` | keybind table, action enum, dispatch, keys.json |
 | `include/eos_bar.h` | status bar segment model and the width fitter |
+| `include/eos_launcher.h` | the app list: selection, scroll, keys, hit test |
+| `include/eos_pointer.h` | the cursor: acceleration, clamping, clicks, hit test, tile chrome |
 | `eos_keys.c` | table, JSON parser, dispatch against `eos_wm` |
 | `eos_bar.c` | segment builders and the two-pass fitter |
+| `eos_launcher.c` | the list, the wrapping highlight and the scroll invariant |
+| `eos_pointer.c` | relative counts in, an absolute arrow and a focus change out |
 | `test/test_shell.c` | host test: scripted keypresses + printed bars |
+| `test/test_launcher.c` | host test: the launcher, and that super+q still closes |
+| `test/test_pointer.c` | host test: sign extension, the curve, the clamp, the click, the close box |
 
 ```bash
 cc -std=c99 -Wall -Wextra -O1 -Ikernel/wm/include -Ikernel/hal/include \
@@ -252,3 +258,141 @@ one.
 
 The test writes and removes `eos_shell_test_keys.json` in the working directory
 to exercise the file path.
+
+## The launcher
+
+`super+space` opens it, up/down (or `k`/`j`) move the highlight, enter opens the
+selected app, escape closes it. It wraps at both ends and it scrolls, so a list
+longer than the panel is still reachable; the selection can never be off screen,
+because every function that moves it re-clamps the view afterwards.
+
+It draws nothing. `firmware/main/eos_shell_draw.c` paints the overlay from the
+model's stored `eos_launcher_geom_t`, and the hit test reads that same
+rectangle back, so what the pointer thinks it is over and what is on the glass
+cannot drift apart.
+
+Two rules keep it from swallowing the keyboard:
+
+* any chord carrying SUPER is handed straight back to `eos_keys`, which is what
+  lets a second `super+space` close the list and `super+q` close a window from
+  inside it;
+* every HID usage the launcher does not bind comes back `EOS_LAUNCHER_PASS`.
+  Eleven usages are launcher keys; the other 245 are not, and `test_launcher.c`
+  sweeps all 256 to prove it.
+
+Pointer support is coordinates, not a device: `eos_launcher_hover()` and
+`eos_launcher_click()` take screen pixels, so a trackpad cursor, a touch panel
+and a tap injected from the phone page all drive it through the same two calls.
+
+```bash
+cc -std=c99 -Wall -Wextra -O1 -Ikernel/wm/include -Ikernel/hal/include \
+   -Ikernel/shell/include -Iboards/generated kernel/wm/eos_wm.c \
+   kernel/shell/eos_keys.c kernel/shell/eos_bar.c kernel/shell/eos_launcher.c \
+   kernel/shell/test/test_launcher.c -o /tmp/test_launcher && /tmp/test_launcher
+```
+
+204 checks, 0 failed.
+
+## Where the dispatcher is
+
+Everything in this component is a model: it answers questions and changes its
+own state, and nothing in it reads an event queue. The one place that does is
+`firmware/main/eos_shell_input.c`, which drains kernel/hal's ring and offers
+each event down a fixed ladder — inactive, locked, the launcher, the keymap, the
+focused window, dropped. The order and the argument for it are written at the
+top of `firmware/main/eos_shell_input.h`, and `firmware/main/test/test_dispatch.c`
+drives all six rungs against the real models in this directory.
+
+Two rules from that ladder are worth knowing here, because they constrain what
+these models may assume:
+
+* **The launcher is offered every key before the keymap is.** Not because the
+  default table binds no bare arrows — it does not, today — but because someone
+  may bind one in `keys.json` tomorrow. `eos_launcher_key()` therefore has to
+  hand back every SUPER chord and every usage it does not bind, and the host
+  suite sweeps all 256 usages to prove exactly eleven are eaten.
+* **A global chord that a bind claimed is consumed whether or not it moved
+  anything.** `eos_key_result_t` carries `handled` and `changed` for exactly
+  this reason: `changed` is about the screen and `handled` is about the key, and
+  a caller that tests the wrong one sends `super+left` at the left edge on to
+  the focused window as a bare left arrow.
+
+## The pointer
+
+The K809's trackpad sends three-byte HID boot-mouse reports on a handle of its
+own. `kernel/svc/eos_ble.c` decodes them with `eos_ble_decode_mouse()` and hands
+the signed counts to `eos_pointer_feed()`, which is the only place in penguinOS
+that knows where the cursor is.
+
+`byte 1` and `byte 2` are **signed**. Reading them as `uint8_t` gives a cursor
+that can travel right and down and never left or up, and it pins itself in the
+bottom-right corner on the first swipe. The decode is in the portable half of
+`eos_ble.c` so the host suite can hand it `0xFF` and check it comes back `-1`.
+
+Acceleration is two regimes and all integer, because the C6 has no FPU:
+
+* at or below **2 counts** in one report the gain is exactly **1.0** — a slow
+  drag moves one pixel per count and can be parked on a one-pixel tile border;
+* above that it rises **0.625x per extra count**, capped at **5.0x**, so a ten
+  count flick moves 40 px and crosses this 240 px panel in four reports.
+
+Sub-pixel remainders are carried in Q4, so a fractional gain does not quantise
+slow motion away; the division truncates toward zero rather than shifting, so
+left and right cover exactly the same ground.
+
+A click is a press and a release within `EOS_POINTER_SLOP` pixels of each
+other. On a tiling window manager it means exactly three things — focus the tile
+under it, raise the tab under it, or **close the window whose x it landed on** —
+and all three are lookups against the layout `eos_wm_layout()` already computed.
+There is no drag and no resize: a tiling layout comes from a tree, and a dragged
+window would have nowhere to land.
+
+### The close box
+
+The owner asked for windows that can be closed, with a trackpad in their hand.
+`super+q` was already the keyboard half; the x at the right of every visible
+tile's header is the other one. Both end in `eos_wm_close()`, so the two doors
+lead to one implementation and `eos_wm` keeps deciding which sibling absorbs the
+space.
+
+`eos_pointer.c` cannot see a font, so the renderer hands it the three numbers it
+needs as an `eos_pointer_chrome_t`: the theme's border, the UI face's height and
+the box's width. `firmware/main/eos_shell_draw.c` fills one in with
+`eos_shell_tile_chrome()` at boot and again on a theme change — a hit box
+measured on the old face's grid is a hit box in the wrong place.
+
+`eos_pointer_close_box()` computes the rectangle, and **both** sides call it: the
+painter draws the cross inside whatever it returns, and the hit test tests
+against whatever it returns. They are the same rectangle by construction rather
+than by agreement, and `firmware/main/test/test_shell_draw.c` closes the loop
+from the other end by reading the composited panel back and counting ink inside
+the box the dispatcher would use.
+
+The box is `close_w` wide or it does not exist. A tile that cannot spare it and
+still keep half its header for the window's name gets none: an earlier version
+shrank to fit, and since `draw_close_x()` refuses to paint anything under
+`EOS_POINTER_CLOSE_MIN` pixels, that produced a rectangle that closed a window
+with nothing on the glass to say so.
+
+A NULL chrome, or a `close_w` of zero, disables the box everywhere and changes
+nothing else — which is what a panel too narrow to spare the pixels should do,
+and what every caller written before there was one still sees.
+
+The hit test answers the close box **before** the tile it sits in, because it is
+drawn inside that tile's rect and every point in it is also a point in the tile.
+Tab strips do not overlap it, so the order between those two is free; this one
+is not.
+
+Motion events coalesce in the HAL ring. A swipe is hundreds of reports and the
+ring is 32 events, so without that the click at the end of a swipe would be the
+event that got dropped.
+
+```bash
+cc -std=c99 -Wall -Wextra -O1 -Ikernel/hal/include -Ikernel/wm/include \
+   -Ikernel/shell/include -Ikernel/svc/include -Iboards/generated \
+   kernel/shell/eos_pointer.c kernel/wm/eos_wm.c kernel/hal/eos_input.c \
+   kernel/svc/eos_ble.c kernel/shell/test/test_pointer.c -o /tmp/test_pointer \
+   && /tmp/test_pointer
+```
+
+604 checks, 0 failed.

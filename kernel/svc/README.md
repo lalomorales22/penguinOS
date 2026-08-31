@@ -143,6 +143,41 @@ It handles the status line, headers, and all three body framings the server can
 produce (chunked, content-length, read-until-close), because a fallback path
 that silently mis-frames is worse than one that does not exist.
 
+### The end-of-stream rule
+
+A stream that stops arriving is either a finished reply or a lost one, and two
+independent facts decide which. The **framing** says whether the body is all
+here: a content-length satisfied, or a chunked body whose zero-length chunk has
+been read (`eos_brain_parser_body_complete()`). The **socket** says whether it
+ended in an orderly way: `eos_brain_parser_finish()` for a FIN,
+`eos_brain_parser_abort()` for a reset or a transport error. Success needs one
+of them, and which one depends on the framing:
+
+| At the moment the bytes stop | FIN | reset / error |
+|---|---|---|
+| read-until-close body | complete | **truncated** |
+| chunked, zero-length chunk read | complete | complete |
+| chunked, mid-chunk or mid-size-line | truncated | truncated |
+| content-length not satisfied | truncated | truncated |
+| still in the headers | truncated | truncated |
+
+The two asymmetric rows are the whole point. A read-until-close body carries no
+framing of its own, so the orderly close is the *only* evidence the reply ended
+where it did; a socket that broke destroys that evidence and the reply has to be
+reported as lost. A chunked body that has already read its zero-length chunk is
+complete on its own framing and stays complete however the socket ended — the
+blank line that closes the trailer section carries nothing, and a reply that has
+to wait out a stream deadline because a server did not bother to send two bytes
+is a false error on an answer that arrived.
+
+The same rule ends a stream that goes silent without closing at all: on the idle
+deadline, a body the framing has already proved complete settles as success
+instead of as a timeout.
+
+Measured against the live mini: it does send `0\r\n\r\n` and it does then close.
+`MEGABRAIN_CAPTURE` in the test is those exact bytes, replayed at every read
+size from 1 to `EOS_BRAIN_RX_MAX`.
+
 ### The UTF-8 rule
 
 A chunk boundary falls wherever the writer flushed, which is regularly in the
