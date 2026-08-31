@@ -228,7 +228,7 @@ void eos_keys_defaults(eos_keymap_t *km)
 
     eos_keys_clear(km);
 
-    eos_keys_bind(km, S, EOS_KEY_ENTER, EOS_ACT_SPAWN, 0);   // app 0 = terminal
+    eos_keys_bind(km, S, EOS_KEY_ENTER, EOS_ACT_SPAWN, 0);   // app 0 = clock; there is no terminal app
     eos_keys_bind(km, S, EOS_KEY_Q,      EOS_ACT_CLOSE, 0);
 
     eos_keys_bind(km, SC, EOS_KEY_H, EOS_ACT_SPLIT_COLS, 0);

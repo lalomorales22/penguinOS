@@ -20,8 +20,25 @@ window manager stops splitting and turns that region into a **tab group**
 instead — so the layout degrades into something usable rather than into slivers.
 On a 240×320 panel that happens quickly, which is exactly why it exists.
 
-**A launcher, a status bar, and themes.** `super+space` opens the app list.
-Seven themes ship, switchable from the board or the web app.
+**Ten apps**, opened from the launcher with `super+space`:
+
+| | |
+|---|---|
+| `clock` | uptime in a large face |
+| `board` | what this board is, and its address once it has joined |
+| `heap` | live memory, which matters more than you'd think on these parts |
+| `keys` | every keybinding, on the glass |
+| `buddy` | the voxel avatar |
+| `chat` | talk to your model |
+| `settings` | network, Bluetooth, theme, model host |
+| `files` | browse the board's filesystem |
+| `media` | |
+| `party` | |
+
+There is deliberately **no terminal** — there's no shell to run in one.
+
+**A status bar and themes.** Seven themes ship, switchable from the board with
+`super+t` or from the web app.
 
 **A voxel buddy.** A little penguin called Pip lives on the desktop and wanders
 about. Four ship — a penguin, a cat, an owl and a robot — and you can upload
@@ -177,7 +194,7 @@ i3/Omarchy muscle memory, where `super` is the GUI/Windows key:
 
 | Chord | Action |
 |---|---|
-| `super+return` | new terminal window |
+| `super+return` | open another window of app 0 (the clock) |
 | `super+q` | close the focused window |
 | `super+space` | launcher |
 | `super+h` `j` `k` `l` | focus left / down / up / right (arrows work too) |
