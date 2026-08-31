@@ -66,7 +66,12 @@
     "row_offset": 0,
     "offset_reason": "VERIFIED, and worth stating because the C5 in this same registry needs col_offset 34. This panel is a full 240 columns of a 240-column ST7789 window, so no gap is applied. Evidence: the probe drew a 60x60 block at 0,0 and a 2px border around the whole frame, and both landed inside the visible area. An offset window would have pushed the block inboard and clipped the border on two edges.",
     "invert": true,
-    "invert_reason": "VERIFIED. esp_lcd_panel_invert_color(panel, true) is required, as IPS ST7789 panels generally are. Checked the unambiguous way rather than by eyeballing a colour ramp: the probe drew a pure red (255,0,0) 60x60 block at the origin, which renders cyan if inversion is wrong, and it was confirmed red on hardware. Red and cyan are exact complements, so there is no reading of that result other than the correct one."
+    "invert_reason": "VERIFIED. esp_lcd_panel_invert_color(panel, true) is required, as IPS ST7789 panels generally are. Checked the unambiguous way rather than by eyeballing a colour ramp: the probe drew a pure red (255,0,0) 60x60 block at the origin, which renders cyan if inversion is wrong, and it was confirmed red on hardware. Red and cyan are exact complements, so there is no reading of that result other than the correct one.",
+    "byte_swap": true,
+    "byte_swap_reason": "VERIFIED on hardware. The probe drew a pure red block and it came back red with the swap in place. Until the ESP32-S3-Touch-LCD-1.47 disagreed, this was not a field at all - the swap was hardcoded in eos_display_st7789.c - so this value is the old constant, confirmed rather than merely inherited.",
+    "mirror_x": false,
+    "mirror_y": false,
+    "mirror_reason": "Both false, which XORs to exactly the mirror bits the rotation already implied - so this board renders bit-for-bit as it did before mirror_x and mirror_y existed. Not a measurement: it is the old hardcoded behaviour made explicit. If text or the avatar ever renders backwards on this board, this pair is the first thing to check."
   },
   "inputs": {
     "bluetooth_keyboard": {
@@ -166,7 +171,9 @@
       "note": "MISO is not wired to the panel, so the controller can never be read back. Identity came from the GPIO matrix instead - see the jtag-pin-discovery gotcha."
     },
     "usb_serial": "58:E6:C5:15:F0:48",
-    "mac_allowlist": ["58:e6:c5:15:f0:48"],
+    "mac_allowlist": [
+      "58:e6:c5:15:f0:48"
+    ],
     "distinguishing_notes": [
       "Square 1.3 inch IPS panel, 240x240, on a 26.25 x 30.00 mm board with mounting holes at the corners.",
       "Native USB, so it enumerates as an Espressif usb_serial_jtag device (VID 0x303A, PID 0x1001), never as a CH340 or CP2102.",

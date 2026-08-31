@@ -184,6 +184,7 @@ typedef enum {
     EOS_TOUCH_XPT2046,   // resistive, SPI
     EOS_TOUCH_GT911,     // capacitive, I2C
     EOS_TOUCH_CST816,    // capacitive, I2C
+    EOS_TOUCH_AXS5106L,  // capacitive, I2C, addr 0x63; ESP32-S3-Touch-LCD-1.47
 } eos_touch_t;
 
 typedef enum { EOS_LED_NONE = 0, EOS_LED_GPIO_RGB, EOS_LED_WS2812 } eos_led_t;
@@ -234,6 +235,16 @@ typedef struct {
     uint8_t   wire_bytes;     // bytes per pixel on the bus: 0 (packed 1bpp), 2 or 3
     bool      bgr;            // panel is wired BGR rather than RGB
     bool      invert;         // controller inversion (most IPS panels want it)
+    // Whether a host-order 565 value must be byte-swapped to reach the panel.
+    // The C6 boards need it; the ESP32-S3-Touch-LCD-1.47 does not. Getting this
+    // and invert both wrong turns pure red into yellow, which looks like a
+    // palette bug rather than a wire-format one - so it is measured per board.
+    bool      byte_swap;
+    // XORed with the mirror bits the rotation implies. rotation says how the
+    // panel is MOUNTED; these say how its controller scans by default, and the
+    // two are independent. Without them, swap_xy with no mirror at all - which
+    // is what the ESP32-S3-Touch-LCD-1.47 needs - is not expressible.
+    bool      mirror_x, mirror_y;
     uint32_t  hz;             // bus clock. The 3.5in ILI9488 corrupts above 40 MHz.
     int16_t   col_offset;     // controller RAM window origin; nonzero on small ST77xx
     int16_t   row_offset;

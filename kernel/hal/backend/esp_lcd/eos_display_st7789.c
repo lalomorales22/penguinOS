@@ -105,6 +105,18 @@ static inline uint16_t swap16(uint16_t v)
     return (uint16_t)((uint16_t)(v >> 8) | (uint16_t)(v << 8));
 }
 
+// Host order to wire order. Whether that is a swap at all is a property of the
+// board, not of RGB565: the C6 panels want the bytes reversed and the
+// ESP32-S3-Touch-LCD-1.47 wants them as stored. This was a hardcoded swap until
+// a board disagreed, and the symptom was pure red rendering as yellow.
+//
+// The whole compositor works in wire order because only the palette LUT is
+// converted - so this runs 256 times at palette load, not once per pixel.
+static inline uint16_t wire16(uint16_t v)
+{
+    return (st.b && !st.b->panel.byte_swap) ? v : swap16(v);
+}
+
 // Blend two host-order 565 values in their own 5/6/5 fields. Cheaper and
 // closer than round-tripping through 8-bit channels, and the error is below
 // one step of the 5-bit axes.
@@ -134,7 +146,7 @@ static void lut_seed_from_theme(void)
     static eos_theme_t th;    // BSS, ~700 bytes; the main task stack is 3584
     eos_theme_default(&th);
     const uint16_t *p = eos_theme_palette565(&th);
-    for (int i = 0; i < EOS_PALETTE_MAX; i++) st.lut[i] = swap16(p[i]);
+    for (int i = 0; i < EOS_PALETTE_MAX; i++) st.lut[i] = wire16(p[i]);
     st.bg_index = th.role_idx[EOS_ROLE_BG];
 }
 
@@ -145,7 +157,7 @@ eos_err_t eos_display_palette(const uint32_t *rgb888, uint16_t first, uint16_t c
     for (uint16_t i = 0; i < count; i++) {
         uint16_t idx = (uint16_t)(first + i);
         if (idx == (uint16_t)EOS_COLOR_NONE) continue;   // sentinel, never a colour
-        st.lut[idx] = swap16(eos_rgb565(rgb888[i]));
+        st.lut[idx] = wire16(eos_rgb565(rgb888[i]));
     }
     return EOS_OK;
 }
@@ -158,7 +170,7 @@ eos_color_t eos_display_match(uint32_t rgb888)
     uint32_t best = 0xFFFFFFFFu;
     int bi = 0;
     for (int i = 0; i < (int)EOS_COLOR_NONE; i++) {     // 0..254, never the sentinel
-        uint32_t c = un565(swap16(st.lut[i]));
+        uint32_t c = un565(wire16(st.lut[i]));
         int dr = tr - (int)((c >> 16) & 0xFF);
         int dg = tg - (int)((c >>  8) & 0xFF);
         int db = tb - (int)( c        & 0xFF);
@@ -421,7 +433,7 @@ void eos_display_blit(int16_t x, int16_t y, const eos_bitmap_t *b)
                 if (a == 0) { if (has_bg) dst[i] = bg; continue; }
                 if (a == 255) { dst[i] = tint; continue; }
                 uint16_t under = has_bg ? bg : dst[i];
-                dst[i] = swap16(blend565(swap16(under), swap16(tint), a));
+                dst[i] = wire16(blend565(wire16(under), wire16(tint), a));
             }
             break;
 
@@ -597,12 +609,26 @@ static eos_err_t panel_start(const eos_board_t *b, uint32_t max_xfer)
 
     // rotation tracks how the panel is MOUNTED. 0 is the verified orientation
     // on this board; 1..3 follow the usual ST77xx mapping and are untested.
+    // Each rotation pairs swap_xy with exactly one mirror, which is what makes
+    // it a rotation rather than a reflection - but WHICH mirror depends on the
+    // panel's default scan order, and panels disagree. The board's mirror_x and
+    // mirror_y carry that difference and are XORed in, so a panel needing
+    // swap_xy with no mirror at all is expressible without a fifth case.
+    //
+    // Getting this wrong is invisible in logs: the picture is the right size,
+    // the right colours, and the right way up. Only handedness changes, so it
+    // shows up as text and avatars rendering backwards.
+    bool sw, mx, my;
     switch (b->panel.rotation & 3) {
-    case 0: esp_lcd_panel_swap_xy(st.panel, false); esp_lcd_panel_mirror(st.panel, false, false); break;
-    case 1: esp_lcd_panel_swap_xy(st.panel, true);  esp_lcd_panel_mirror(st.panel, true,  false); break;
-    case 2: esp_lcd_panel_swap_xy(st.panel, false); esp_lcd_panel_mirror(st.panel, true,  true);  break;
-    default:esp_lcd_panel_swap_xy(st.panel, true);  esp_lcd_panel_mirror(st.panel, false, true);  break;
+    case 0:  sw = false; mx = false; my = false; break;
+    case 1:  sw = true;  mx = true;  my = false; break;
+    case 2:  sw = false; mx = true;  my = true;  break;
+    default: sw = true;  mx = false; my = true;  break;
     }
+    mx = (mx != b->panel.mirror_x);
+    my = (my != b->panel.mirror_y);
+    esp_lcd_panel_swap_xy(st.panel, sw);
+    esp_lcd_panel_mirror(st.panel, mx, my);
 
     if (b->panel.col_offset || b->panel.row_offset) {
         int cx = b->panel.col_offset, cy = b->panel.row_offset;
