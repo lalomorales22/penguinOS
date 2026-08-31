@@ -417,6 +417,30 @@ void eos_input_inject_touch(uint8_t type, int16_t x, int16_t y,
     eos_input_push(&e);
 }
 
+// The pointer's four event types share the ring with the keyboard's, so a
+// click and the keypress that was chorded with it stay in the order they
+// happened. `mods` is snapshot here rather than by the caller for the same
+// reason it is in inject_touch: the modifier state lives behind s_smux and the
+// pointer's caller is a BLE callback that has no business taking that lock.
+void eos_input_inject_pointer(uint8_t type, int16_t x, int16_t y, uint8_t btn,
+                              uint8_t src, uint32_t now_ms)
+{
+    eos_event_t e;
+
+    if (type != EOS_EV_POINTER_MOVE && type != EOS_EV_POINTER_DOWN &&
+        type != EOS_EV_POINTER_UP   && type != EOS_EV_CLICK) return;
+
+    memset(&e, 0, sizeof e);
+    e.type = type;
+    e.src  = src;
+    e.key  = btn;              // an EOS_BTN_* bitmap, not a keycode
+    e.mods = eos_input_mods();
+    e.x    = x;
+    e.y    = y;
+    e.ms   = now_ms;
+    eos_input_push(&e);
+}
+
 void eos_input_inject_conn(uint8_t src, bool up, uint32_t now_ms)
 {
     SLOCK();

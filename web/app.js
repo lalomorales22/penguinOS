@@ -1158,7 +1158,7 @@ function bstatus(msg, bad) {
 function buddyLoad() {
   bstatus('loading...');
   var meta = api('/api/buddy', { timeout: 10000 }).catch(function () { return null; });
-  var vox = apiRaw('/api/fs/read' + qp({ path: '/sd/buddy/buddy.vox' }), { timeout: 20000 })
+  var vox = apiRaw('/api/fs/read' + qp({ path: '/int/buddy/buddy.vox' }), { timeout: 20000 })
     .then(function (r) { return r.ok ? r.arrayBuffer() : null; })
     .catch(function () { return null; });
 
@@ -1197,25 +1197,25 @@ function buddySave() {
 
   // mkdir is allowed to fail: it usually fails because it is already there.
   var rows = [];
-  return api('/api/fs/mkdir' + qp({ path: '/sd/buddy' }), { method: 'POST' })
+  return api('/api/fs/mkdir' + qp({ path: '/int/buddy' }), { method: 'POST' })
     .catch(function () { return null; })
     .then(function () {
       var ui = uploadRow('buddy.vox');
       rows.push(ui);
-      return putChunks('/sd/buddy/buddy.vox', new Blob([vox]), ui);
+      return putChunks('/int/buddy/buddy.vox', new Blob([vox]), ui);
     })
     .then(function () {
       var ui = uploadRow('buddy.json');
       rows.push(ui);
       var j = new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' });
-      return putChunks('/sd/buddy/buddy.json', j, ui);
+      return putChunks('/int/buddy/buddy.json', j, ui);
     })
     .then(function () {
       return api('/api/buddy/reload', { method: 'POST', timeout: 12000 })
         .catch(function () { return null; });
     })
     .then(function () {
-      bstatus('saved to /sd/buddy - the board reloaded it');
+      bstatus('saved to /int/buddy - the board reloaded it');
       toast('buddy saved', 'ok');
     }, function (e) {
       bstatus('save failed: ' + e.message, true);
