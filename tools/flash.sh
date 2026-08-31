@@ -534,11 +534,20 @@ build_image() {
     say "  project   $project"
     say "  build dir $bdir"
     run "$PY" -c 'import os,sys; os.makedirs(sys.argv[1], exist_ok=True)' "$bdir"
+    # Each build dir owns its own sdkconfig. Without this every board shares
+    # firmware/sdkconfig, which was harmless while all seven boards were
+    # esp32c6 and breaks the moment two TARGETS are in play: set-target
+    # rewrites the shared file, and the next board's build stops with
+    # "sdkconfig was generated for target 'esp32s3' but CMakeCache.txt
+    # contains 'esp32c6'". Separate -B dirs are NOT enough on their own.
+    local sdkcfg="$bdir/sdkconfig"
     run idf.py -C "$project" -B "$bdir" \
         -D EOS_BOARD_PROFILE="$profile" \
+        -D SDKCONFIG="$sdkcfg" \
         set-target "$EOS_PROFILE_TARGET" \
         || die "idf.py set-target failed"
-    run idf.py -C "$project" -B "$bdir" -D EOS_BOARD_PROFILE="$profile" build \
+    run idf.py -C "$project" -B "$bdir" -D EOS_BOARD_PROFILE="$profile" \
+        -D SDKCONFIG="$sdkcfg" build \
         || die "the build failed"
     return 0
 }
