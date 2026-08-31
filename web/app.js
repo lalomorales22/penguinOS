@@ -778,7 +778,7 @@ var GROUPS = [
   ]},
   { title: 'Megabrain', fields: [
     { key: 'brain.host', label: 'Host or IP', type: 'text', max: 47,
-      hint: 'Host only. The board builds /ask itself.' },
+      hint: 'Your computer\'s name or IP - the machine running the model, e.g. mymac.local. Host only; the board builds the rest of the URL itself.' },
     { key: 'brain.port', label: 'Port', type: 'number', min: 1, max: 65535 },
     { key: 'brain.model', label: 'Model', type: 'select', options: 'models', free: true, max: 31 },
     { key: 'brain.max', label: 'Max tokens', type: 'number', min: 16, max: 2048 },

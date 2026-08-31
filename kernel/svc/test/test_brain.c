@@ -13,6 +13,14 @@
 #include <stdlib.h>
 #include "eos_brain.h"
 
+/* The candidate mechanism is what these tests are about, not the value that
+   happens to ship. TEST_FALLBACK is now EMPTY on purpose - a literal
+   address only works on one network and points at a stranger's device on every
+   other - so the suite supplies its own and tests the empty default separately.
+   Depending on a shipped default being non-empty is what broke six checks when
+   it stopped being. */
+#define TEST_FALLBACK "10.99.0.7"
+
 static int checks = 0, fails = 0;
 
 #define CK(cond, msg) do { \
@@ -1140,6 +1148,7 @@ static void test_service_happy(void)
     hooks.ctx = &h;
 
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
 
     memset(&r, 0, sizeof r);
@@ -1167,8 +1176,8 @@ static void test_service_happy(void)
     CK(eos_brain_state(&b) == EOS_BRAIN_ST_IDLE, "the state falls back to idle");
 
     CK(t.opens == 2, "one connection for the health probe, one for the ask");
-    CKS(t.host[0], EOS_BRAIN_FALLBACK_HOST, "with no cache and no mDNS it lands on the fallback IP");
-    CKS(h.saved, EOS_BRAIN_FALLBACK_HOST, "the host that worked is written to the cache");
+    CKS(t.host[0], TEST_FALLBACK, "with no cache and no mDNS it lands on the fallback IP");
+    CKS(h.saved, TEST_FALLBACK, "the host that worked is written to the cache");
     CK(h.save_calls == 1, "the cache is written once, not per chunk");
 
     CK(strstr(t.sent, "GET /health HTTP/1.1") != NULL, "the probe is a GET on /health");
@@ -1226,6 +1235,7 @@ static void test_service_end_of_stream(void)
     memset(&w, 0, sizeof w);
     hooks.ctx = &h;
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
 
     memset(&r, 0, sizeof r);
@@ -1257,6 +1267,7 @@ static void test_service_end_of_stream(void)
     memset(&w, 0, sizeof w);
     hooks.ctx = &h;
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     CK(eos_brain_submit(&b, &r) > 0, "the request goes out");
     spin(&b);
@@ -1275,6 +1286,7 @@ static void test_service_end_of_stream(void)
     memset(&w, 0, sizeof w);
     hooks.ctx = &h;
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     CK(eos_brain_submit(&b, &r) > 0, "the request goes out");
     spin(&b);
@@ -1309,6 +1321,7 @@ static void test_service_discovery(void)
     memset(&w, 0, sizeof w);
 
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
 
     memset(&r, 0, sizeof r);
@@ -1322,11 +1335,11 @@ static void test_service_discovery(void)
 
     CKS(t.host[0], "10.0.0.7", "the cached host is tried first, before paying for mDNS");
     CKS(t.host[1], "192.168.0.55", "then the mDNS answer");
-    CKS(t.host[2], EOS_BRAIN_FALLBACK_HOST, "then the compiled-in fallback");
+    CKS(t.host[2], TEST_FALLBACK, "then the compiled-in fallback");
     CK(h.mdns_calls == 1, "mDNS is queried once, and only after the cache failed");
     CK(w.done_err == EOS_BRAIN_OK, "the request completes on the third candidate");
     CKS(w.text, "Hello there", "and streams normally");
-    CKS(h.saved, EOS_BRAIN_FALLBACK_HOST, "the cache is rewritten to the host that worked");
+    CKS(h.saved, TEST_FALLBACK, "the cache is rewritten to the host that worked");
     CK(eos_brain_link(&b) == EOS_BRAIN_LINK_UP, "link is up");
 
     // Nothing answers anywhere.
@@ -1337,12 +1350,47 @@ static void test_service_discovery(void)
     t.n = 3;
     memset(&w, 0, sizeof w);
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     CK(eos_brain_submit(&b, &r) > 0, "submit accepted with the mini switched off");
     spin(&b);
     CK(w.done_err == EOS_BRAIN_ERR_NO_HOST, "every candidate refusing gives NO_HOST");
     CK(eos_brain_link(&b) == EOS_BRAIN_LINK_DOWN, "and the status bar can read the link as down");
     CK(t.opens == 3, "each candidate was tried exactly once");
+
+    /* The SHIPPED fallback is empty, and that is the configuration a stranger
+       boots with. An empty candidate must be SKIPPED, not dialled: connecting
+       to "" would be meaningless, and the old non-empty default was worse than
+       meaningless because on somebody else's network that address belongs to
+       one of their devices. Failing cleanly is the correct outcome here. */
+    fake_reset(&t);
+    t.attempt[0].refuse = 1;          /* no usable cache */
+    t.attempt[1].refuse = 1;          /* mDNS answers nothing */
+    t.n = 2;
+
+    memset(&h, 0, sizeof h);
+    h.cached[0] = 0;                  /* nothing cached yet - a fresh board */
+    h.mdns[0]   = 0;                  /* and no penguinos-brain on the network */
+    hooks.ctx = &h;
+    memset(&w, 0, sizeof w);
+
+    eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = "";         /* exactly what ships */
+    eos_brain_set_event_cb(&b, w_event, &w);
+
+    memset(&r, 0, sizeof r);
+    r.prompt   = "ping";
+    r.on_token = w_token;
+    r.on_done  = w_done;
+    r.user     = &w;
+
+    CK(eos_brain_submit(&b, &r) > 0, "submit is accepted even with nowhere to send it");
+    spin(&b);
+
+    CK(!eos_brain_busy(&b), "an empty fallback does not leave the pump spinning");
+    CK(w.done_err != EOS_BRAIN_OK, "and the request fails rather than pretending to work");
+    for (int i = 0; i < t.opens; i++)
+        CK(t.host[i][0] != 0, "no candidate was dialled with an empty host");
     CK(strchr(w.order, 'X') != NULL, "a failure event was raised");
     CK(w.len == 0, "no text was invented");
 
@@ -1352,9 +1400,10 @@ static void test_service_discovery(void)
     t.attempt[1].refuse = 1;
     t.n = 2;
     memset(&h, 0, sizeof h);
-    snprintf(h.cached, sizeof h.cached, EOS_BRAIN_FALLBACK_HOST);
-    snprintf(h.mdns,   sizeof h.mdns,   EOS_BRAIN_FALLBACK_HOST);
+    snprintf(h.cached, sizeof h.cached, TEST_FALLBACK);
+    snprintf(h.mdns,   sizeof h.mdns,   TEST_FALLBACK);
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    b.cfg.fallback_host = TEST_FALLBACK;
     memset(&w, 0, sizeof w);
     eos_brain_set_event_cb(&b, w_event, &w);
     eos_brain_submit(&b, &r);
@@ -1386,6 +1435,7 @@ static void test_service_failures(void)
     memset(&w, 0, sizeof w);
     r.user = &w;
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, NULL);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     eos_brain_submit(&b, &r);
     spin(&b);
@@ -1401,6 +1451,7 @@ static void test_service_failures(void)
     t.n = 2;
     memset(&w, 0, sizeof w);
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, NULL);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     eos_brain_submit(&b, &r);
     spin(&b);
@@ -1417,6 +1468,7 @@ static void test_service_failures(void)
     t.n = 2;
     memset(&w, 0, sizeof w);
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, NULL);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     eos_brain_submit(&b, &r);
     {
@@ -1437,6 +1489,7 @@ static void test_service_failures(void)
     memset(&cfg, 0, sizeof cfg);
     cfg.idle_ms  = 500;
     cfg.total_ms = 2000;
+    cfg.fallback_host = TEST_FALLBACK;
     fake_reset(&t);
     arm(&t, 0, HEALTH_OK);
     t.attempt[1].data = "";
@@ -1458,6 +1511,7 @@ static void test_service_failures(void)
     arm(&t, 1, ASK_OK);
     t.n = 2;
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, NULL);
+    b.cfg.fallback_host = TEST_FALLBACK;
     CK(eos_brain_submit(&b, NULL) < 0, "a NULL request is refused");
     {
         eos_brain_req_t bad;
@@ -1487,6 +1541,7 @@ static void test_service_failures(void)
     t.n = 1;
     memset(&w, 0, sizeof w);
     eos_brain_init(&b, fake_tp(&t, &tp), NULL, NULL);
+    b.cfg.fallback_host = TEST_FALLBACK;
     eos_brain_set_event_cb(&b, w_event, &w);
     CK(eos_brain_probe(&b) > 0, "a bare probe is accepted");
     spin(&b);
