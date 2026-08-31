@@ -142,8 +142,8 @@ void eos_settings_defaults(eos_settings_t *s)
     memset(s, 0, sizeof *s);
 
     // net.host empty means "derive it from the MAC", which is eos_net's own
-    // default and gives esp-os-f048.local rather than six boards all claiming
-    // esp-os.local. brain.host empty means "discover it", which is eos_brain's
+    // default and gives penguinos-f048.local rather than six boards all claiming
+    // penguinos.local. brain.host empty means "discover it", which is eos_brain's
     // mDNS-then-fallback walk. Neither is a placeholder for a missing value —
     // empty is the answer.
     s->net_host[0]      = '\0';
@@ -466,7 +466,7 @@ eos_err_t eos_settings_route_commit(eos_settings_store_t *st)
 // ==========================================================================
 //
 // One document buffer for the image, in BSS. There is one settings store in an
-// ESP-OS image and only eos_settings_load() and eos_settings_flush() touch
+// penguinOS image and only eos_settings_load() and eos_settings_flush() touch
 // this, both from the OS loop — no HTTP worker reaches it, which is the same
 // rule that keeps flash erases off the request path.
 

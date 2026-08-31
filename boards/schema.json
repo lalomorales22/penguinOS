@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://esp-os/boards/schema.json",
-  "title": "ESP-OS board profile",
+  "$id": "https://penguinos/boards/schema.json",
+  "title": "penguinOS board profile",
   "description": "One board, described completely enough to bring it up without touching the hardware first. Panel controllers are not reliably probeable - the ILI9488 answers register 0xD3 with 00 7F DF, which matches no known part - so board identity comes from this registry plus a one-time human confirmation, never from a register read. Everything a hard-won debugging session produced belongs in here as a field with a reason, so it is never rediscovered.",
   "type": "object",
   "additionalProperties": false,
@@ -42,7 +42,7 @@
     "summary": {
       "type": "string",
       "minLength": 1,
-      "description": "One line: what this board is for in ESP-OS."
+      "description": "One line: what this board is for in penguinOS."
     },
     "chip": {
       "$ref": "#/$defs/chip"
@@ -275,7 +275,7 @@
         "heap_budget_bytes": {
           "type": "integer",
           "minimum": 1024,
-          "description": "Ceiling on what ESP-OS may claim from the heap at boot, framebuffers included. A policy number, not a measurement: it is the line the OS agrees not to cross so the radios still have room. Must be at least the render buffers this profile implies. Put it in `unverified` until it has been checked against a real heap dump on the board."
+          "description": "Ceiling on what penguinOS may claim from the heap at boot, framebuffers included. A policy number, not a measurement: it is the line the OS agrees not to cross so the radios still have room. Must be at least the render buffers this profile implies. Put it in `unverified` until it has been checked against a real heap dump on the board."
         },
         "reason": {
           "type": "string",
@@ -323,7 +323,7 @@
             "bsp",
             "custom"
           ],
-          "description": "esp_lcd = ESP-OS drives the panel through esp_lcd itself. bsp = a vendor BSP component owns panel init and the values here are advisory. custom = an ESP-OS driver."
+          "description": "esp_lcd = penguinOS drives the panel through esp_lcd itself. bsp = a vendor BSP component owns panel init and the values here are advisory. custom = an penguinOS driver."
         },
         "bsp_component": {
           "oneOf": [
@@ -1045,7 +1045,7 @@
         "partition_scheme": {
           "type": "string",
           "minLength": 1,
-          "description": "Name of the partition layout the build selects. ESP-OS ships one CSV per scheme name."
+          "description": "Name of the partition layout the build selects. penguinOS ships one CSV per scheme name."
         },
         "app_partition_kb": {
           "type": "integer",

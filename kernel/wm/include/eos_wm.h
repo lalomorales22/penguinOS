@@ -1,4 +1,4 @@
-// eos_wm — ESP-OS tiling window manager core.
+// eos_wm — penguinOS tiling window manager core.
 //
 // A binary space partition tree, one per workspace, laid out into a caller
 // supplied rect. Pure logic: no allocation, no hardware, no LVGL. The same

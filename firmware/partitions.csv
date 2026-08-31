@@ -1,4 +1,4 @@
-# ESP-OS partition table. Every board in this fleet has 4 MB of flash and
+# penguinOS partition table. Every board in this fleet has 4 MB of flash and
 # ota_slots 0, so the whole 4 MB is spent once and there is no second app slot
 # to fall back on. The one non-obvious constraint: the data partition MUST stay
 # labelled "int", because that string is peripherals.internal_fs.partition_label

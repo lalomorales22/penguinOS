@@ -3,7 +3,7 @@
   "schema_version": 1,
   "id": "wavvy-oled-c5",
   "name": "wavvy OLED (ESP32-C5 + SSD1306 128x64 I2C)",
-  "summary": "The smallest surface ESP-OS targets. 1bpp mono, 1KB of framebuffer, and the board that proves the window manager scales down.",
+  "summary": "The smallest surface penguinOS targets. 1bpp mono, 1KB of framebuffer, and the board that proves the window manager scales down.",
   "chip": {
     "target": "esp32c5",
     "variant": "ESP32-C5",

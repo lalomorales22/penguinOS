@@ -1,4 +1,4 @@
-# ESP-OS firmware. One IDF project; one board per image.
+# penguinOS firmware. One IDF project; one board per image.
 #
 # The board is a build-time choice and never a source edit. -DEOS_BOARD_ID=<id>
 # picks which boards/generated/<id>.h the kernel compiles against, and the IDF
@@ -53,7 +53,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig"
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(esp-os)
+project(penguinos)
 
 # Flashing an esp32 image built against a C6 pinout is a dead board and a long
 # afternoon. Catch it at configure time.
@@ -64,4 +64,4 @@ if(NOT IDF_TARGET STREQUAL EOS_BOARD_TARGET)
         "  idf.py fullclean && idf.py -DEOS_BOARD_ID=${EOS_BOARD_ID} set-target ${EOS_BOARD_TARGET}")
 endif()
 
-message(STATUS "ESP-OS board: ${EOS_BOARD_ID} (${EOS_BOARD_TARGET})")
+message(STATUS "penguinOS board: ${EOS_BOARD_ID} (${EOS_BOARD_TARGET})")

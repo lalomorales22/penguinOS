@@ -1,4 +1,4 @@
-# boards — the ESP-OS board registry
+# boards — the penguinOS board registry
 
 Panel controllers are not reliably probeable. The ILI9488 answers register `0xD3`
 with `00 7F DF`, which matches no known part; the Waveshare C5 does not wire MISO

@@ -21,13 +21,13 @@ boot
  │     ├── join succeeds (15 s budget) ──> RUN. mDNS at <name>.local
  │     └── join fails ─────────────────┐
  └── no credentials ───────────────────┴──> SETUP
-                                              SoftAP  esp-os-<last4 of MAC>
+                                              SoftAP  penguinos-<last4 of MAC>
                                               captive portal on 192.168.4.1
                                               the same web app, setup mode
 ```
 
 In SETUP the panel is the instruction sheet. It shows the AP name, the AP
-password, the URL, and a **QR code encoding `WIFI:S:esp-os-f048;T:WPA;P:...;;`**
+password, the URL, and a **QR code encoding `WIFI:S:penguinos-f048;T:WPA;P:...;;`**
 so a phone camera joins the AP by pointing at the screen. On a 240x240 panel a
 QR is comfortable; on the 128x64 OLED fall back to text.
 
@@ -80,7 +80,7 @@ in the web page. The existing `claude_term024` already puts the passkey on the
 panel, so this is proven on hardware, just not exposed over HTTP yet.
 
 Once bonded, the bond lives in NVS and the keyboard reconnects by itself after
-sleep. That is already working in `../ESP-OS-CY24`.
+sleep. That is already working in `../penguinOS-CY24`.
 
 ### Two gotchas from the existing build
 

@@ -1,6 +1,6 @@
-# esp-os — a tiling window OS for ESP32 panels
+# penguinos — a tiling window OS for ESP32 panels
 
-One firmware, one API, five very different screens. ESP-OS puts an Omarchy-style
+One firmware, one API, five very different screens. penguinOS puts an Omarchy-style
 tiling window manager, a themeable shell, a voxel buddy and a megabrain client on
 boards ranging from a 128x64 mono OLED to a 320x480 ILI9488 — including a Cheap
 Yellow Display with **20KB of free heap** once WiFi and BLE are up.

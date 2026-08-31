@@ -119,7 +119,7 @@
 #define EOS_KEY_RALT      0xE6
 #define EOS_KEY_RGUI      0xE7
 
-// 0xF0..0xFF are ESP-OS usages for hardware HID has no number for. They are
+// 0xF0..0xFF are penguinOS usages for hardware HID has no number for. They are
 // above the HID range on purpose so a real keyboard can never collide.
 #define EOS_KEY_BOOT      0xF0   // the BOOT / IO0 button every ESP32 board has
 #define EOS_KEY_USER1     0xF1

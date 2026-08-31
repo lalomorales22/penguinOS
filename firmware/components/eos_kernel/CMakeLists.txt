@@ -1,4 +1,4 @@
-# eos_kernel — the ESP-OS kernel, registered as an IDF component.
+# eos_kernel — the penguinOS kernel, registered as an IDF component.
 #
 # The sources are NOT here. They stay under kernel/ and are listed by relative
 # path, because the same files are compiled by six host test suites with a plain

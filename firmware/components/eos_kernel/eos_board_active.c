@@ -8,7 +8,7 @@
 // The one non-obvious constraint: this is the only file in the firmware that
 // names a board header, and it does not name one either — it includes whatever
 // EOS_BOARD_HEADER expands to, which CMake sets from EOS_BOARD_ID. There is no
-// #ifdef per board anywhere in ESP-OS, and adding one here would be the first
+// #ifdef per board anywhere in penguinOS, and adding one here would be the first
 // crack in the reason the registry exists at all.
 //
 // eos_board_probe() reports chip model, flash size, PSRAM size and MAC. That is

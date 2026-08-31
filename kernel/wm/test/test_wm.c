@@ -139,7 +139,7 @@ int main(void)
 
     scenario("ILI9488 4in landscape  (tft-videos)",
              (eos_rect_t){0,0,480,320}, big,   4, 72, 24);
-    scenario("ILI9341 2.4in CYD      (ESP-OS-CY24)",
+    scenario("ILI9341 2.4in CYD      (penguinOS-CY24)",
              (eos_rect_t){0,0,320,240}, small, 4, 56, 21);
     scenario("ST7789 1.47in C5       (esp32-c5)",
              (eos_rect_t){0,0,320,172}, small, 3, 56, 15);

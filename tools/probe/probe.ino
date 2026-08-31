@@ -403,7 +403,7 @@ void setup()
     Serial.begin(115200);
     delay(400);
     Serial.println();
-    Serial.println("[probe] esp-os panel prober");
+    Serial.println("[probe] penguinos panel prober");
     Serial.println("[probe] --------------------------------------------------");
     Serial.printf("[probe] %d configuration(s) for this chip. Each holds ~%lus.\n",
                   kConfigCount, (unsigned long)(kHoldMs / 1000));

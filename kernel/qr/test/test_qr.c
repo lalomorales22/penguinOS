@@ -42,6 +42,14 @@ static eos_qr_t qr2;
 
 // The string the SETUP screen actually shows. 41 bytes, which lands on version
 // 3 and leaves twelve of the fifty-three payload bytes spare.
+// THE STRINGS BELOW ARE SPEC FIXTURES, NOT THE PRODUCT NAME. Do not rename
+// them when the product is renamed. Every reference matrix in this file was
+// verified by hand against the QR spec for these exact payloads, and changing
+// a payload by one byte changes the data codewords, the ECC, the mask penalty
+// scores and therefore every module - so the references silently stop meaning
+// anything while still comparing against something. The penguinOS rename did
+// exactly this once: 1,065 checks failed and the diagnosis was "134 of 441
+// modules differ from the reference", which reads like an encoder bug.
 #define WIFI_STR "WIFI:S:esp-os-f048;T:WPA;P:k9mQ2xR7vT4b;;"
 
 // ------------------------------------------------------------- reference: v1

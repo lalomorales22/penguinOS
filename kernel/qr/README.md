@@ -8,7 +8,7 @@ raises a WPA2 SoftAP with a password nobody has ever seen, prints the password
 on the LCD, and prints this QR next to it:
 
 ```
-WIFI:S:esp-os-f048;T:WPA;P:k9mQ2xR7vT4b;;
+WIFI:S:penguinos-f048;T:WPA;P:k9mQ2xR7vT4b;;
 ```
 
 41 bytes, which is a version 3 symbol at 29x29 modules.
@@ -207,7 +207,7 @@ The last thing the test does is print the real join string as a QR, large, with
 a 4-module quiet zone, using ANSI background colours rather than glyphs — a
 terminal with a dark theme would otherwise render the symbol inverted, and many
 scanners refuse an inverted symbol. Point a phone at it. It should offer to join
-`esp-os-f048`.
+`penguinos-f048`.
 
 A QR that is subtly wrong scans on the phone of whoever wrote it and on nobody
 else's, which is why that check is in the file and not in someone's head.

@@ -1382,7 +1382,7 @@ def process(src, dst, write=True):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="gen_board_header.py",
-        description="Generate the C board header from an ESP-OS board profile.",
+        description="Generate the C board header from an penguinOS board profile.",
         epilog="Exit codes: 0 ok, 1 the file could not be read or is not a profile, "
                "2 bad usage or a profile that does not validate.")
     ap.add_argument("paths", nargs="*", metavar="PATH",

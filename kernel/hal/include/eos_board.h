@@ -24,7 +24,7 @@
 // runtime can tell you the SoC, the flash size, whether PSRAM answered, and
 // the MAC. That is the entire list. The panel controller cannot be probed —
 // the ILI9488 on the wavvy boards returns 00 7F DF for register 0xD3, which
-// matches no known part, and nothing in ESP-OS reads a controller ID because
+// matches no known part, and nothing in penguinOS reads a controller ID because
 // of it. So board identity is the registry plus one human confirmation
 // (confirm_prompt), and eos_board_check() only verifies the three things that
 // are genuinely verifiable. Anything claiming to autodetect a panel is lying.

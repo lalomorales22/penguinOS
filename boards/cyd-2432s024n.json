@@ -3,7 +3,7 @@
   "schema_version": 1,
   "id": "cyd-2432s024n",
   "name": "ESP32-2432S024N (Cheap Yellow Display, 2.4in, N variant)",
-  "summary": "The tightest board ESP-OS runs on, and the one that sets tier 0. Also sold as HW-950.",
+  "summary": "The tightest board penguinOS runs on, and the one that sets tier 0. Also sold as HW-950.",
   "chip": {
     "target": "esp32",
     "variant": "ESP32-D0WD-V3",
@@ -167,7 +167,7 @@
       "supported": false,
       "register": null,
       "reads_back": null,
-      "note": "Not attempted. The ILI9488 boards proved that a controller ID read is not something to build on, so nothing in ESP-OS reads one."
+      "note": "Not attempted. The ILI9488 boards proved that a controller ID read is not something to build on, so nothing in penguinOS reads one."
     },
     "usb_serial": null,
     "mac_allowlist": [],

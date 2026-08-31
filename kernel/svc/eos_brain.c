@@ -502,7 +502,7 @@ static int build_head(const eos_brain_req_t *req, eos_brain_method_t m,
     sb_puts(&s, " HTTP/1.1\r\nHost: ");
     sb_puts(&s, host);
     if (port && port != 80) { sb_putc(&s, ':'); sb_putu(&s, port); }
-    sb_puts(&s, "\r\nUser-Agent: esp-os/1\r\nAccept: text/plain\r\n");
+    sb_puts(&s, "\r\nUser-Agent: penguinos/1\r\nAccept: text/plain\r\n");
     // Connection: close is deliberate. The board has no use for keep-alive and
     // the close doubles as a backstop terminator if the framing goes wrong.
     sb_puts(&s, "Connection: close\r\n");
@@ -692,7 +692,7 @@ static bool build_current_request(eos_brain_t *b)
         sb_puts(&s, "GET " EOS_BRAIN_PATH_HEALTH " HTTP/1.1\r\nHost: ");
         sb_puts(&s, b->host);
         if (b->cfg.port && b->cfg.port != 80) { sb_putc(&s, ':'); sb_putu(&s, b->cfg.port); }
-        sb_puts(&s, "\r\nUser-Agent: esp-os/1\r\nConnection: close\r\n\r\n");
+        sb_puts(&s, "\r\nUser-Agent: penguinos/1\r\nConnection: close\r\n\r\n");
         if (s.ovf) return false;
         b->out_len  = (uint16_t)s.len;
         b->body_len = 0;

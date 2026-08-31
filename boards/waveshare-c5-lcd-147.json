@@ -70,7 +70,7 @@
     "bluetooth_keyboard": {
       "present": true,
       "stack": "nimble",
-      "reason": "There is no touch layer and no exposed button on this board, so a BLE keyboard is the only input. NimBLE is the stack ESP-OS carries everywhere; keeping one stack across all boards keeps one HID host implementation."
+      "reason": "There is no touch layer and no exposed button on this board, so a BLE keyboard is the only input. NimBLE is the stack penguinOS carries everywhere; keeping one stack across all boards keeps one HID host implementation."
     },
     "web_input": true,
     "touch": {
@@ -186,7 +186,7 @@
       "id": "bsp-owns-panel",
       "severity": "high",
       "field": "display.driver_source",
-      "text": "The Waveshare BSP component brings the panel up, not ESP-OS. It pulls espressif/esp_lvgl_port ^2 and lvgl >=8,<10, so the LVGL major version is not a free choice on this board: it has to stay inside that range or the component will not resolve."
+      "text": "The Waveshare BSP component brings the panel up, not penguinOS. It pulls espressif/esp_lvgl_port ^2 and lvgl >=8,<10, so the LVGL major version is not a free choice on this board: it has to stay inside that range or the component will not resolve."
     },
     {
       "id": "st7789-offsets",

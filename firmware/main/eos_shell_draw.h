@@ -1,4 +1,4 @@
-// eos_shell_draw — the scene. Everything ESP-OS puts on the glass in one
+// eos_shell_draw — the scene. Everything penguinOS puts on the glass in one
 // re-runnable function, written entirely against eos_display.h.
 //
 // This is the layer the boot glue was missing: eos_wm gives out rectangles,

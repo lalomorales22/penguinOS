@@ -13,7 +13,7 @@
 // panel and they declare their own damage — the caller does not.
 //
 // The one non-obvious constraint: the QR is drawn BLACK ON WHITE and ignores
-// the theme completely. Every other pixel in ESP-OS is a theme role; this one
+// the theme completely. Every other pixel in penguinOS is a theme role; this one
 // cannot be, because a phone camera has to decode it. An amber-on-black QR in
 // a dark theme is a decoration, not a link, and the failure is silent — it
 // simply never scans, on someone else's phone, in a room you are not in.
@@ -29,7 +29,7 @@
 // What SETUP puts on the panel. Everything is borrowed for the call.
 typedef struct {
     const eos_theme_t *theme;
-    const char *ap_ssid;      // esp-os-f048
+    const char *ap_ssid;      // penguinos-f048
     const char *ap_psk;       // the generated WPA2 password
     const char *url;          // http://192.168.4.1
     const char *qr;           // WIFI:S:...;T:WPA;P:...;; or NULL for text only

@@ -394,7 +394,7 @@ static void message_scene(const skin_t *s, const char *title, const char *line)
 
     eos_display_clear(s->bg);
     y = (int16_t)(info->h / 2 - line_h(s->big) - 6);
-    centre(y, s->big, s->accent, title ? title : "ESP-OS");
+    centre(y, s->big, s->accent, title ? title : "penguinOS");
     y = (int16_t)(y + line_h(s->big) + 8);
     if (line) (void)wrap(6, y, (int16_t)(info->w - 12), s->small, s->muted, line, 3);
 }

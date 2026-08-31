@@ -72,7 +72,7 @@
     "bluetooth_keyboard": {
       "present": true,
       "stack": "nimble",
-      "reason": "No touch layer and no user button, so a BLE keyboard is the only real input. NimBLE is the one HID host ESP-OS carries across every board."
+      "reason": "No touch layer and no user button, so a BLE keyboard is the only real input. NimBLE is the one HID host penguinOS carries across every board."
     },
     "web_input": true,
     "touch": {
@@ -213,7 +213,7 @@
       "id": "no-vendor-bsp",
       "severity": "note",
       "field": "display.driver_source",
-      "text": "Unlike the C5-LCD-1.47, no Waveshare BSP component exists for this board on the Espressif registry, so ESP-OS owns panel init here through plain esp_lcd_new_panel_st7789. That is more work but it also means LVGL's version is a free choice on this board, with no component pinning it to >=8,<10."
+      "text": "Unlike the C5-LCD-1.47, no Waveshare BSP component exists for this board on the Espressif registry, so penguinOS owns panel init here through plain esp_lcd_new_panel_st7789. That is more work but it also means LVGL's version is a free choice on this board, with no component pinning it to >=8,<10."
     },
     {
       "id": "header-pins-free",

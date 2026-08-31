@@ -2262,7 +2262,7 @@ static int h_themes(eos_httpd_t *h, eos_httpd_resp_t *r)
 static const char BUILTIN_SETUP[] =
 "<!doctype html><html lang=en><meta charset=utf-8>"
 "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-"<title>ESP-OS setup</title>"
+"<title>penguinOS setup</title>"
 "<style>"
 "body{margin:0;padding:16px;background:#262624;color:#e8e4dc;"
 "font:16px/1.5 system-ui,-apple-system,sans-serif}"
@@ -2276,7 +2276,7 @@ static const char BUILTIN_SETUP[] =
 ".n.on{border-color:#d88e56}.s{color:#9a948a;font-size:13px;white-space:nowrap}"
 "#m{margin-top:12px;font-size:14px;min-height:20px}ul{padding:0;margin:0}"
 "</style>"
-"<h1>ESP-OS setup</h1>"
+"<h1>penguinOS setup</h1>"
 "<p>Pick a network. The password is stored only after the board actually joins.</p>"
 "<ul id=l></ul>"
 "<button id=r>Rescan (this will blink the connection)</button>"
@@ -2357,7 +2357,7 @@ static int redirect_portal(eos_httpd_t *h, eos_httpd_resp_t *r)
     r->cache_control = "no-store";
     // A body, because a handful of captive-portal clients render the response
     // instead of following it, and a blank page reads as a broken board.
-    r->body          = "<html><body>ESP-OS setup: <a href=\"/\">open the setup page</a></body></html>";
+    r->body          = "<html><body>penguinOS setup: <a href=\"/\">open the setup page</a></body></html>";
     r->body_len      = (int)strlen(r->body);
     h->req_portal++;
     return r->status;

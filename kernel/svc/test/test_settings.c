@@ -918,7 +918,7 @@ static bool ep_net(void *ctx, eos_httpd_net_t *o)
     o->ssid_len = 10;
     o->rssi = -58;
     snprintf(o->ip, sizeof o->ip, "192.168.0.160");
-    snprintf(o->host, sizeof o->host, "esp-os");
+    snprintf(o->host, sizeof o->host, "penguinos");
     return true;
 }
 
@@ -1121,7 +1121,7 @@ static void t_system_endpoint(void)
     HAS(r.body, "\"point\":\"/int\"", "  and the internal filesystem");
     HAS(r.body, "\"net\":",     "net group");
     HAS(r.body, "\"ip\":\"192.168.0.160\"", "  with the address the panel shows");
-    HAS(r.body, "\"mdns\":\"esp-os.local\"", "  and the mDNS name");
+    HAS(r.body, "\"mdns\":\"penguinos.local\"", "  and the mDNS name");
     HAS(r.body, "\"uptime_ms\":128394", "uptime");
     HAS(r.body, "\"time\":",    "time group");
     HAS(r.body, "\"fw\":",      "fw group");

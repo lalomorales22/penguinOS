@@ -2,7 +2,7 @@
 //
 // One ring, one held-key table, one place a HID report is turned into events.
 // Until this file existed eos_input_poll() was declared and implemented
-// nowhere, so ESP-OS drew a window manager that nothing could drive: the BLE
+// nowhere, so penguinOS drew a window manager that nothing could drive: the BLE
 // callback had no queue to push into and the shell's dispatch drained a queue
 // that did not exist. Everything here is the join between those two.
 //
