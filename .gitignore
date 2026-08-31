@@ -5,10 +5,20 @@
 #   python3 tools/gen_board_header.py --all
 boards/generated/
 
-# ESP-IDF build output (none yet — see STATUS.md)
+# ESP-IDF build output. NOTE the glob: penguinOS builds one directory PER BOARD
+# (build-lafvin, build-s3, ...) because a build dir is target-specific, so a bare
+# "build/" matched only the first board's and quietly tracked every other board's
+# object files and static libraries.
 build/
+build-*/
+firmware/build/
+firmware/build-*/
+# Each build dir owns its own sdkconfig - see tools/flash.sh. A shared one at the
+# project root breaks the moment two silicon targets are in play.
 sdkconfig
 sdkconfig.old
+firmware/sdkconfig
+firmware/sdkconfig.old
 managed_components/
 .cache/
 
