@@ -356,12 +356,20 @@ static const regrow_t registry[] = {
       EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 0 },
     { &eos_board_cyd_2432s024n, "cyd-2432s024n",
       EOS_SOC_ESP32, 2, EOS_TIER_SOFT, 4194304u, 0u,
-      EOS_PANEL_ILI9341, EOS_BUS_SPI, 240, 320, 1, 320, 240,
+      /* rotation 0, not 1: the operator asked for PORTRAIT with the cable at
+         the bottom, and the probe confirmed row 0 lands at the top of the
+         glass with no mirror. Screen is therefore 240x320, not 320x240. */
+      EOS_PANEL_ILI9341, EOS_BUS_SPI, 240, 320, 0, 240, 320,
       16, 2, true, false, 40000000u, 0, 0,
       14, 13, 12, 2, 15, -1, 1,
       -1, -1, 0x00, false, true,
       27,
-      EOS_COMP_INDEXED8, false, 256, true, 0, 80, 40, 98304u,
+      /* heap 148188 is what penguinOS ITSELF reports at app_main - not the
+         281612 a bare probe sees, which does not carry the OS's static
+         footprint. Sizing the display strips from the probe figure asked for
+         281,280 contiguous bytes out of a 110,592-byte largest block and the
+         board booted blind. Two 40-row strips need 38,400 and fit. */
+      EOS_COMP_INDEXED8, false, 256, false, 40, 80, 40, 148188u,
       true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, false,
       EOS_LED_GPIO_RGB, 4, 16, 17, -1, 1, true,
       EOS_AUDIO_DAC, 26, 34, 1, 6,

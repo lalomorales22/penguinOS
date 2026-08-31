@@ -1,0 +1,3 @@
+dependencies:
+  # ILI9341 is not in esp_lcd itself; only st7789/ssd1306/nt35510 are built in.
+  espressif/esp_lcd_ili9341: "^1.2.0"
