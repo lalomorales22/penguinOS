@@ -136,6 +136,8 @@ run dispatch -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             kernel/shell/eos_pointer.c kernel/hal/eos_input.c \
             kernel/font/eos_font.c \
             kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c -lm
+run webpath -Wpedantic -Ifirmware/main firmware/main/test/test_web_path.c
+
 run setup   -Wpedantic -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/font/include -Ikernel/qr/include -Ifirmware/main \
             firmware/main/test/test_setup_screen.c firmware/main/eos_setup_screen.c \

@@ -12,15 +12,20 @@
 // and never touches the heap — which is why the handle pool is four fixed slots
 // and there is no allocation anywhere in this file.
 //
-// Paths are matched on the LAST component only. eos_httpd builds a full path
-// from its document root ("/int/web/app.js") and also probes "<path>.gz"
-// first; neither root exists here, so matching the basename lets the same
-// table serve both modes without pretending to be a directory tree.
+// Paths are ANCHORED to the run root and then matched on the last component.
+// This comment used to say the basename alone was matched, "so the same table
+// serves both modes" - and that was the bug. Every asset here belongs to the
+// RUN app; eos_httpd's BUILTIN_SETUP inlines its own script and needs none of
+// them. Matching a bare basename made a SETUP request for
+// "/int/setup/index.html" resolve to the RUN app's index.html, serving 20 KB
+// where 2,756 bytes were intended and making BUILTIN_SETUP unreachable.
+// See eos_web_path.h, which holds the arithmetic and is host-testable.
 
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 #include "eos_httpd.h"
+#include "eos_web_path.h"
 
 #define ASSET(sym)                                                       \
     extern const uint8_t sym##_start[] asm("_binary_" #sym "_start");    \
@@ -57,18 +62,30 @@ typedef struct {
 
 static slot_t s_slots[4];
 
+// Every asset here belongs to the RUN application: web/index.html loads
+// style.css, setup.js, voxel-editor.js and app.js. SETUP mode wants none of
+// them - eos_httpd's BUILTIN_SETUP page inlines its own script and is entirely
+// self-contained.
+//
+// So the lookup is anchored to the run root. It used to match on BASENAME
+// alone, discarding everything up to the last '/', which meant a SETUP-mode
+// request resolving to "/int/setup/index.html" matched the RUN app's
+// "index.html" and served the 20 KB application in place of the 2,756-byte
+// panel - making BUILTIN_SETUP unreachable code.
+//
+// That was not only the wrong page. It was the only response the server could
+// produce larger than CONFIG_LWIP_TCP_SND_BUF_DEFAULT (5,760 bytes), and
+// send() returns EAGAIN precisely when it cannot place one byte for the whole
+// send timeout - so it was also the only way setup mode could hang. It did, on
+// the board with the least internal DRAM in the fleet.
+static const char *s_root = "/int/web";
+
 static const asset_t *find(const char *path)
 {
-    const char *base;
+    const char *base = eos_web_asset_base(s_root, path);
     int i;
 
-    if (!path) return NULL;
-    base = strrchr(path, '/');
-    base = base ? base + 1 : path;
-
-    // "/" and "/int/web/" both mean the app itself.
-    if (!base[0]) base = "index.html";
-
+    if (!base) return NULL;
     for (i = 0; i < ASSET_COUNT; i++)
         if (strcmp(base, ASSETS[i].name) == 0) return &ASSETS[i];
     return NULL;
@@ -118,6 +135,9 @@ static void web_close(void *ctx, void *fh)
 void eos_web_embed_bind(eos_httpd_t *h)
 {
     if (!h) return;
+    // Take the run root from the config rather than repeating the string, so
+    // changing cfg.root_run cannot silently desync the asset lookup from it.
+    if (h->cfg.root_run && h->cfg.root_run[0]) s_root = h->cfg.root_run;
     h->ports.file_open  = web_open;
     h->ports.file_read  = web_read;
     h->ports.file_close = web_close;

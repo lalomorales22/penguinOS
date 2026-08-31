@@ -24,22 +24,26 @@ CONFIG_SPIRAM_USE_MALLOC=y
 # allocations internal: PSRAM is not DMA-capable for every peripheral and the
 # panel wants DMA-able buffers.
 CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
-# MEASURED, and the reason the captive portal did not work on first light.
-#
-# When PSRAM joins the heap, this many bytes of INTERNAL memory are held back so
+# Holds this many bytes of INTERNAL memory back when PSRAM joins the heap, so
 # they stay available to MALLOC_CAP_DMA/MALLOC_CAP_INTERNAL requests. The IDF
-# default is 32768, and 32KB has to cover Wi-Fi TX buffers, lwIP, AND this
-# board's LCD band buffers - 320x40x2 is 25,600 bytes for a single band. Starved
-# of internal DMA memory the radio does not fail loudly: esp_http_server's
-# send() simply never completes and times out with EAGAIN (errno 11), while
-# association and DHCP still work perfectly because they are far smaller. The
-# symptom is a captive portal that spins forever on a Wi-Fi network that
-# otherwise looks healthy.
+# default is 32768; this board has the least internal DRAM in the fleet
+# (~120 KB of heap tail against the C6's ~198 KB) and spends 51,200 bytes of it
+# on the panel's two 320x40x2 band buffers before Wi-Fi initialises at all.
 #
-# Confirmed by building the same firmware with CONFIG_SPIRAM=n: the error
-# changed from EAGAIN to a benign ECONNRESET and the portal served immediately.
-# 128KB out of roughly 350KB internal leaves the general heap ample room while
-# giving the radio and the panel a floor they cannot be squeezed below.
+# HONEST SCOPE. This was originally credited with fixing a captive portal that
+# associated, took a DHCP lease and then failed every HTTP response with EAGAIN.
+# It was not the fix. That was a routing bug - setup mode served the 20 KB run
+# application instead of the 2,756-byte built-in panel, and 20 KB is the only
+# response this server can produce that exceeds CONFIG_LWIP_TCP_SND_BUF_DEFAULT
+# and can therefore block send() for a full timeout. See eos_web_path.h.
+#
+# It is kept because it is still worth having: esp_psram_extram_reserve_dma_pool
+# registers the reserve as its own multi_heap, so a large contiguous DMA request
+# late in a fragmented run can succeed there when the main heap cannot serve it.
+# It does NOT, on IDF 5.5.5, fence the memory off from ordinary malloc() - the
+# pool advertises INTERNAL and DEFAULT, so malloc() drains it before falling
+# back to PSRAM. The total internal memory reachable before PSRAM fallback is
+# unchanged, and any comment claiming otherwise is wrong.
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
 
 # Native USB, no bridge chip - same situation as the C6. Without this the board
