@@ -1,0 +1,227 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "lafvin-c6-lcd-147",
+  "name": "LAFVIN ESP32-C6 1.47inch LCD",
+  "summary": "The second board whose pinout was recovered over JTAG rather than read from a datasheet, and the one that proved the procedure: ninety seconds against an hour, because the registers and the decode were already written down. It turned out to share the Waveshare C6-LCD-1.3's pin assignment exactly - LAFVIN evidently built on the same reference design - and to differ only in the panel, which is 172x320 and therefore needs a column offset the square panel does not.",
+  "chip": {
+    "target": "esp32c6",
+    "variant": "ESP32-C6FH4 (QFN32) rev v0.2",
+    "cores": 1,
+    "flash_size_mb": 4,
+    "psram": {
+      "present": false,
+      "type": "none",
+      "size_mb": 0
+    }
+  },
+  "render": {
+    "tier": 1,
+    "compositor": "lvgl",
+    "lvgl": true,
+    "palette_entries": 0,
+    "full_framebuffer": false,
+    "band_height": 40,
+    "min_tile_w": 80,
+    "min_tile_h": 40,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 431112,
+    "reason": "MEASURED. With radios down the board reports free=431112, largest block=401408. A full 172x320 RGB565 frame is 110,080 bytes and allocating one SUCCEEDED, leaving 321,028 free. As roomy as the C6-LCD-1.3. full_framebuffer stays false and animations off because on the lvgl compositor LVGL owns its buffers and animations are a tier 2 budget; band_height 40 is the LVGL draw-buffer height, 13,760 bytes at this width."
+  },
+  "display": {
+    "controller": "ST7789",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
+    "native_width": 172,
+    "native_height": 320,
+    "rotation": 0,
+    "color_depth": 16,
+    "bytes_per_pixel": 2,
+    "color_order": "rgb",
+    "supports_16bit_pixels": true,
+    "pixel_format_reason": "RGB565 straight down the wire, two bytes per pixel, byte-swapped for the ST7789's big-endian pixel order.",
+    "bus": "spi",
+    "spi_host": "SPI2",
+    "clock_hz": 40000000,
+    "clock_reason": "40MHz, verified: the probe drove the panel at this rate with no tearing.",
+    "pins": {
+      "sck": 7,
+      "mosi": 6,
+      "miso": -1,
+      "dc": 15,
+      "cs": 14,
+      "rst": 21,
+      "sda": -1,
+      "scl": -1
+    },
+    "i2c_address": null,
+    "backlight": {
+      "pin": 22,
+      "active_low": false,
+      "pwm": true
+    },
+    "col_offset": 34,
+    "row_offset": 0,
+    "offset_reason": "VERIFIED, and the one thing that is NOT shared with the C6-LCD-1.3. 172 columns sit centred in the ST7789's 240-column window, so (240-172)/2 = 34. The C5-LCD-1.47 profile documents the same trap for the same panel size: without the gap the picture looks entirely fine and sits 34 px sideways. Confirmed by the probe drawing a 60x60 block at the origin and it landing IN the corner rather than inboard.",
+    "invert": true,
+    "invert_reason": "VERIFIED. The probe drew a pure red block at the origin, which renders cyan if inversion is wrong - red and cyan are exact complements, so the result admits no other reading. It came back red."
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "No touch layer and no user button, so a BLE keyboard is the only real input. NimBLE is the one HID host penguinOS carries across every board."
+    },
+    "web_input": true,
+    "touch": {
+      "present": false,
+      "controller": null,
+      "bus": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": -1,
+        "sda": -1,
+        "scl": -1
+      },
+      "i2c_address": null,
+      "absent_reason": "The 1.3 inch module is the non-touch variant. The vendor listing names only the LCD, TF slot, RGB LED, antenna and the two buttons."
+    },
+    "buttons": []
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": true,
+      "kind": "ws2812",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": 8,
+      "count": 1,
+      "active_low": false
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1
+    },
+    "sdcard": {
+      "present": false,
+      "bus": null,
+      "spi_host": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1
+      },
+      "max_clock_hz": 0,
+      "shares_display_bus": false,
+      "mount_point": null,
+      "absent_reason": "The slot is physically there - the vendor listing and the board photo both show it - but its wiring is NOT established, and present:false is the honest encoding of that. The JTAG scan can only see outputs, so MISO is invisible to it by construction, and CS is no better than an inference from GPIO4 idling high. Declaring the slot present with a guessed MISO is precisely the failure this registry exists to prevent. Flip this back to present once the pins are read - see the sd-pins-unknown gotcha for how."
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": "/dev/cu.usbmodem101",
+    "usb_bridge": "usb_serial_jtag",
+    "upload_baud": 460800,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "huge_app",
+    "app_partition_kb": 3072,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-C6",
+      "flash_size_mb": 4,
+      "psram": false
+    },
+    "panel_id_register": {
+      "supported": false,
+      "register": null,
+      "reads_back": null,
+      "note": "MISO is not wired to the panel, so the controller can never be read back. Identity came from the GPIO matrix instead - see the jtag-pin-discovery gotcha."
+    },
+    "usb_serial": "58:E6:C5:11:F4:78",
+    "mac_allowlist": [
+      "58:e6:c5:11:f4:78"
+    ],
+    "distinguishing_notes": [
+      "Tall thin 1.47 inch IPS panel, 172x320 portrait, on a narrow board with a TF slot.",
+      "Native USB, so it enumerates as an Espressif usb_serial_jtag device (VID 0x303A, PID 0x1001).",
+      "esptool CANNOT tell this apart from the Waveshare ESP32-C6-LCD-1.3: same ESP32-C6FH4 (QFN32) rev v0.2, same 4MB embedded flash, same absence of PSRAM. The MAC is the only thing that separates them, and the panel is 172x320 rather than 240x240.",
+      "MAC 58:e6:c5:11:f4:78 is this specific unit."
+    ],
+    "confirm_prompt": "Is this the TALL 172x320 LAFVIN, or the SQUARE 240x240 Waveshare C6-LCD-1.3? esptool reports them identically; only the panel shape and the MAC differ."
+  },
+  "unverified": [
+    "peripherals.internal_fs.partition_label",
+    "render.min_tile_w",
+    "render.min_tile_h",
+    "inputs.buttons"
+  ],
+  "gotchas": [
+    {
+      "id": "same-pins-as-the-waveshare",
+      "severity": "note",
+      "field": "display.pins",
+      "text": "Recovered over JTAG on this board rather than assumed, and it came back identical to boards/waveshare-c6-lcd-13: FSPICLK_OUT on GPIO7, FSPID_OUT on GPIO6, LEDC_LS_SIG_OUT0 on GPIO22, RMT_SIG_OUT0 on GPIO8, and CS/DC/RST on 14/15/21 from GPIO_OUT sampling - GPIO14 toggling, 15 and 21 sitting high. GPIO_ENABLE differs (0x0060c1d0 against 0x00f3c1de) because LAFVIN drives fewer header pins, but every LCD pin matches. That two vendors' boards agree is a fact about this pair, NOT a rule: the procedure in boards/waveshare-c6-lcd-13/README.md is ninety seconds and it is what turns a guess into a measurement. Run it on the next board too.",
+      "verified": true
+    },
+    {
+      "id": "macos-accessory-approval",
+      "severity": "high",
+      "field": "flashing.usb_bridge",
+      "text": "On macOS this board can enumerate on USB - name, vendor and MAC all readable via ioreg - and still produce no /dev/cu.usbmodem node at all, which looks exactly like a dead board or a charge-only cable. The tell is the ioreg line reading '!registered, !matched' with zero interface children and UsbEnumerationState = 2, and a sessionID that never changes. That is macOS declining to configure the device, not a hardware fault. Fix: System Settings > Privacy & Security > Allow accessories to connect > Always. Boards with a CH340 or CP2102 bridge do not hit this; native-USB boards do.",
+      "verified": true
+    },
+    {
+      "id": "full-frame-fits",
+      "severity": "note",
+      "field": "render.full_framebuffer",
+      "text": "Alone among the boards here, this one can hold a whole 240x240 RGB565 frame (115200 bytes) in SRAM and still have 303KB free. That makes it the right board to bring the display backend up on: a bug during bring-up will present as a bug, not as an out-of-memory crash the way it would on the CYD's 20KB. Port down to the tight boards afterwards. Note the 415KB figure was measured with the radios down - expect to lose tens of KB once Wi-Fi 6 and BLE are running.",
+      "verified": true
+    },
+    {
+      "id": "sd-pins-unknown",
+      "severity": "high",
+      "field": "peripherals.sdcard.pins",
+      "text": "There is a TF slot but its pins are NOT established. CS is a guess from GPIO4 having been an output sitting high during the JTAG scan, which is what an idle chip select looks like - but it is only that. MISO is worse: it is an input, so it never appears in GPIO_ENABLE and the scan is blind to it. Do not mount the card from this profile as written. To settle it properly, restore backup/factory-4MB.bin, halt over JTAG again and read GPIO_FUNCn_IN_SEL_CFG at 0x60091154 instead of the OUT_SEL block."
+    },
+    {
+      "id": "no-vendor-bsp",
+      "severity": "note",
+      "field": "display.driver_source",
+      "text": "Unlike the C5-LCD-1.47, no Waveshare BSP component exists for this board on the Espressif registry, so penguinOS owns panel init here through plain esp_lcd_new_panel_st7789. That is more work but it also means LVGL's version is a free choice on this board, with no component pinning it to >=8,<10."
+    },
+    {
+      "id": "header-pins-free",
+      "severity": "note",
+      "field": "chip",
+      "text": "GPIO 1, 2, 3, 12, 13, 16, 17, 20 and 23 are broken out to the 2.54mm headers and are free for use. They showed up as output-enabled but idle in the JTAG scan, which is what confirmed they are not wired to anything onboard."
+    }
+  ]
+}
