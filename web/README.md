@@ -384,11 +384,25 @@ else is informational.
 | GET | `/api/fs/stat` | `path` | `{"size":N,"mtime":N,"is_dir":bool}` |
 | GET | `/api/fs/read` | `path` | Raw bytes, `application/octet-stream` |
 | GET | `/api/fs/usage` | `point` | `{"point":"/sd","total":N,"used":N,"free":N}` |
-| POST | `/api/fs/write` | `path`, `offset`, `final`=0\|1 | One upload chunk, raw body |
+| POST | `/api/fs/write` | `path`, `offset`, `final`=0\|1 | One upload chunk, raw body. **Atomic** — see below. |
 | POST | `/api/fs/upload/abort` | `path` | `{"aborted":bool}` |
 | POST | `/api/fs/mkdir` | `path` | `{"ok":true}` |
 | POST | `/api/fs/remove` | `path` | `{"ok":true}` |
 | POST | `/api/fs/rename` | `from`, `to` | `{"ok":true}` |
+
+### Uploads are atomic
+
+A chunked upload is written to `<path>.part` and renamed onto `<path>` only
+after the final chunk has been synced. An upload that never finishes — a
+dropped connection, a client that gives up, the idle timeout — removes the
+partial and **leaves whatever was already at the target untouched**.
+
+This was not always true. Writing straight at the target truncated it on the
+*first* chunk, so a failed save destroyed the file it was replacing. The way
+that showed up was losing a buddy: a save that did not complete left
+`/int/buddy` with no `buddy.vox` at all, the panel fell back to the compiled-in
+penguin, and this app then reported a board that "describes a buddy" it could
+not find. Replacing a file must never be able to lose it.
 
 `/api/fs/stat` is part of the contract but the web app does not call it; the
 listing already carries size and type.

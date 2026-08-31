@@ -718,22 +718,39 @@ void eos_apps_buddy_set_state(int state)
 // is exactly what the client already does after three failed retries, plus the
 // idle timeout below for the client that never comes back at all.
 
+// An upload writes to `tmp` and is renamed onto `path` only when the last
+// chunk has been synced. Writing straight at the target truncates it on the
+// FIRST chunk, so an upload that then failed - a dropped connection, a client
+// that gave up, the idle timeout - destroyed the file it was replacing. That
+// cost the owner their buddy: a save that never completed left /int/buddy with
+// no buddy.vox at all, and the panel fell back to the compiled-in penguin
+// while the web app reported a board that "describes a buddy" it could not
+// find. Replacing a file must never be able to lose it.
 static struct {
     eos_file_t *f;
-    char        path[EOS_PATH_MAX];
+    char        path[EOS_PATH_MAX];   // where it lands
+    char        tmp[EOS_PATH_MAX];    // where it is written
     uint32_t    off;
     uint32_t    last_ms;
     bool        open;
 } s_up;
 
-static void upload_close(void)
+// Closes the handle. `keep_tmp` is false everywhere an upload ends WITHOUT
+// completing, so the partial is removed and whatever was already at the target
+// is untouched; it is true only on the success path, where the rename that
+// follows consumes it.
+static void upload_close_ex(bool keep_tmp)
 {
     if (s_up.open && s_up.f) eos_storage_close(s_up.f);
+    if (!keep_tmp && s_up.tmp[0]) (void)eos_storage_remove(s_up.tmp);
     s_up.f = NULL;
     s_up.open = false;
     s_up.off = 0;
     s_up.path[0] = '\0';
+    s_up.tmp[0]  = '\0';
 }
+
+static void upload_close(void) { upload_close_ex(false); }
 
 void eos_apps_tick(uint32_t now_ms)
 {
@@ -935,13 +952,20 @@ static int h_fs_write(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp
                                   "finish it or POST /api/fs/upload/abort");
 
     if (offset == 0) {
+        char tmp[EOS_PATH_MAX];
+        int  need = snprintf(tmp, sizeof tmp, "%s.part", s_scr.path);
+        if (need < 0 || need >= (int)sizeof tmp)
+            return eos_httpd_fail_err(h, r, (int)EOS_ERR_TOOBIG,
+                                      "that path is too long to upload to safely");
+
         upload_close();                        // a restart of the same upload
-        s_up.f = eos_storage_open(s_scr.path, EOS_O_WRITE | EOS_O_CREATE | EOS_O_TRUNC);
+        s_up.f = eos_storage_open(tmp, EOS_O_WRITE | EOS_O_CREATE | EOS_O_TRUNC);
         if (!s_up.f) return eos_httpd_fail_err(h, r, (int)eos_storage_errno(),
                                                "that file could not be created");
         s_up.open = true;
         s_up.off  = 0;
         snprintf(s_up.path, sizeof s_up.path, "%s", s_scr.path);
+        snprintf(s_up.tmp,  sizeof s_up.tmp,  "%s", tmp);
     } else {
         if (!s_up.open)
             return eos_httpd_fail_err(h, r, (int)EOS_ERR_STATE,
@@ -973,9 +997,24 @@ static int h_fs_write(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp
     if (final) {
         eos_err_t se = eos_storage_sync(s_up.f);
         uint32_t size = s_up.off;
-        upload_close();
-        if (se != EOS_OK)
+        char     from[EOS_PATH_MAX], to[EOS_PATH_MAX];
+
+        if (se != EOS_OK) {
+            upload_close();            // removes the partial; the target stands
             return eos_httpd_fail_err(h, r, (int)se, "the file was written but not committed");
+        }
+
+        // Synced, so the bytes are on the media. Only now does the target move.
+        snprintf(from, sizeof from, "%s", s_up.tmp);
+        snprintf(to,   sizeof to,   "%s", s_up.path);
+        upload_close_ex(true);
+        (void)eos_storage_remove(to);   // rename onto an existing name is not portable
+        se = eos_storage_rename(from, to);
+        if (se != EOS_OK) {
+            (void)eos_storage_remove(from);
+            return eos_httpd_fail_err(h, r, (int)se,
+                                      "the upload completed but could not replace the file");
+        }
 
         eos_json_init(&j, h->resp, (int)sizeof h->resp);
         eos_json_obj_open(&j);
