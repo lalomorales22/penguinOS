@@ -38,3 +38,13 @@ boards/*/probe/build/
 boards/*/probe/sdkconfig
 boards/*/probe/managed_components/
 boards/*/probe/dependencies.lock
+
+# Factory firmware read off a board before penguinOS overwrote it. Keep these -
+# they are the only thing on a board that cannot be recreated - but never commit
+# them: they are the VENDOR'S proprietary firmware, and publishing a repo full
+# of Waveshare's and LAFVIN's code is republishing someone else's work.
+#
+# The sha256 of each is recorded in that board's profile, so a restore is still
+# verifiable without the blob being in git. Local copies also live in
+# ../factory-backups/.
+boards/*/backup/*.bin
