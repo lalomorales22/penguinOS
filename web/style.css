@@ -330,6 +330,100 @@ td.ac svg { width: 14px; height: 14px; display: block; }
 
 /* ------------------------------------------------------- voxel editor */
 
+/* --------------------------------------------------------- buddy gallery */
+
+/* A horizontal strip of cards, one per buddy on the board. It scrolls sideways
+   rather than wrapping, because on a phone a wrapping grid of eighty-pixel
+   squares pushes the editor off the bottom of the screen, and the editor is
+   still the second half of this tab. Colours are all theme roles, so the strip
+   wears whatever the OS is wearing. */
+
+.gal { display: flex; flex-direction: column; gap: 5px; }
+
+.gal-head { display: flex; align-items: center; gap: 8px; }
+.gal-head b {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.gal-head .mono { font-size: 11px; color: var(--muted); }
+.gal-sp { flex: 1; }
+
+.gal-strip {
+  display: flex; gap: 7px;
+  overflow-x: auto; overflow-y: hidden;
+  padding: 2px 2px 7px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.gal-strip.busy { opacity: .5; pointer-events: none; }
+.gal-strip:empty {
+  min-height: 34px;
+}
+.gal-strip:empty::after {
+  content: "nothing on the board"; color: var(--muted); font-size: 11px;
+  align-self: center;
+}
+
+.gal-card {
+  position: relative; flex: 0 0 auto; width: 104px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 5px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-unfocused);
+  border-radius: var(--radius);
+  cursor: pointer; scroll-snap-align: start;
+  -webkit-tap-highlight-color: transparent;
+}
+.gal-card:hover { border-color: var(--border-focused); }
+.gal-card:focus-visible { outline: 0; border-color: var(--accent); }
+.gal-card.on { border-color: var(--accent); background: var(--overlay); cursor: default; }
+.gal-card.broken { border-color: var(--err); }
+
+.gal-thumb {
+  display: block; width: 80px; height: 80px;
+  background: var(--bg);
+  border-radius: var(--radius);
+}
+.gal-card.pending .gal-thumb { animation: galpulse 1.5s ease-in-out infinite; }
+@keyframes galpulse { 0%, 100% { opacity: .3; } 50% { opacity: .65; } }
+@media (prefers-reduced-motion: reduce) {
+  .gal-card.pending .gal-thumb { animation: none; opacity: .45; }
+}
+
+.gal-name {
+  max-width: 100%; margin-top: 3px; font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gal-card.on .gal-name { color: var(--accent); }
+.gal-meta { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.gal-meta.bad { color: var(--warn); }
+/* Present on every card whether or not it has anything to say, so that one
+   card carrying a refusal does not stand a pixel taller than its neighbours. */
+.gal-why {
+  font-size: 9px; color: var(--muted); opacity: .75;
+  max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gal-why:empty::after { content: "\00a0"; }
+
+.gal-tag {
+  position: absolute; left: 5px; top: 5px;
+  padding: 1px 4px;
+  font-size: 8px; letter-spacing: .06em; text-transform: uppercase;
+  background: var(--accent); color: var(--bar-bg);
+  border-radius: var(--radius);
+}
+
+.gal-del {
+  position: absolute; right: 3px; top: 3px;
+  width: 19px; height: 19px; padding: 0;
+  font-size: 13px; line-height: 1;
+  background: var(--bar-bg); color: var(--muted);
+  border-color: transparent;
+}
+.gal-del:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
+.gal-del:disabled { opacity: .25; }
+
 .vx { display: flex; flex-direction: column; gap: var(--gap); }
 
 .vx-stage {

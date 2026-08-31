@@ -124,6 +124,14 @@
 #define EOS_APPS_BUDDY_DIR "/int/buddy"
 #endif
 
+// Room for the gallery slug of whatever model is live. It is a number here and
+// not an include of eos_gallery.h because the dependency runs the other way:
+// eos_gallery.h includes this file, this file must not include it back, and one
+// #error in eos_gallery.h pins the two together so the pair cannot drift.
+#ifndef EOS_APPS_BUDDY_SLUG_MAX
+#define EOS_APPS_BUDDY_SLUG_MAX 32
+#endif
+
 // Windows /api/apps will report. The shell has four.
 #ifndef EOS_APPS_CATALOG_MAX
 #define EOS_APPS_CATALOG_MAX 12
@@ -174,6 +182,15 @@ void eos_apps_init(const eos_apps_ports_t *ports, void *ctx);
 // The window catalog /api/apps reports. `apps` is borrowed, not copied.
 void eos_apps_set_apps(const eos_apps_app_t *apps, int n);
 
+// True when an upload currently holds the write handle for `path` - that is,
+// when `path` is the TARGET a chunked /api/fs/write is working towards, whose
+// bytes are meanwhile going into "<path>.part". /api/fs/remove and
+// /api/fs/rename already refuse to touch such a file; this exports the same
+// question so that a second delete path - the gallery's - cannot quietly
+// answer it differently. Two delete paths disagreeing about one rule is the
+// kind of thing nobody finds until it has already happened.
+bool eos_apps_upload_targets(const char *path);
+
 // The clock, and the only place a timed-out upload is closed. Call it from the
 // OS loop next to eos_httpd_pump(). It is here and not in dispatch because
 // dispatch is documented pure — no sockets, no clock — and because an upload
@@ -209,21 +226,36 @@ void eos_apps_log_install(void);
 
 // --------------------------------------------------------------- the buddy
 
-// The four yaw-drift presets web/README.md names. The editor writes the name;
-// the board owns what each one does.
+// The idle-behaviour presets web/README.md names. The editor writes the name;
+// the board owns what each one does. The first four are the original yaw-drift
+// set; roam and play were added when the buddy learned to walk, and the whole
+// list is now consumed by kernel/avatar/eos_stroll.c.
+//
+// APPEND ONLY. buddy.json files in the wild carry the name and not the number,
+// so a new value costs nothing, but reordering these would change what an
+// already-stored behaviour means. eos_stroll_preset_t is deliberately the same
+// order; the two are still joined by name rather than by cast, so that neither
+// header has to include the other.
 typedef enum {
     EOS_APPS_IDLE_STILL = 0,
     EOS_APPS_IDLE_WANDER,        // the fallback for anything unrecognised
     EOS_APPS_IDLE_CURIOUS,
     EOS_APPS_IDLE_SLEEPY,
+    EOS_APPS_IDLE_ROAM,
+    EOS_APPS_IDLE_PLAY,
+    EOS_APPS_IDLE_COUNT
 } eos_apps_idle_t;
 
 const char *eos_apps_idle_name(int b);
 
-// Re-reads EOS_APPS_BUDDY_DIR/buddy.json and buddy.vox and swaps both in.
-// Returns EOS_OK, or the first failure: EOS_ERR_NOTFOUND when there is no
-// model, EOS_ERR_TOOBIG when the file is larger than EOS_APPS_VOX_BYTES,
-// EOS_ERR_ARG when eos_vox_parse() refused it.
+// Re-reads whatever this board should be wearing and swaps model and config in.
+// What that is comes from eos_gallery in one fixed order - the entry
+// /int/buddy/active names, then the first entry the gallery holds, then the
+// legacy EOS_APPS_BUDDY_DIR/buddy.vox - so there is exactly one answer at any
+// moment and the legacy file is the END of the search rather than a second
+// source of truth. Returns EOS_OK, or the first failure: EOS_ERR_NOTFOUND when
+// there is no model anywhere, EOS_ERR_TOOBIG when the file is larger than
+// EOS_APPS_VOX_BYTES, EOS_ERR_ARG when eos_vox_parse() refused it.
 //
 // A failure does NOT leave the previous model in place, and it cannot: the
 // parse writes straight into the one voxel pool this board has and can fail
@@ -234,6 +266,32 @@ const char *eos_apps_idle_name(int b);
 // drawing half of one model over half of another, which is what a promise to
 // keep the previous one would actually have delivered.
 eos_err_t eos_apps_buddy_reload(void);
+
+// The same, from two paths named outright, recording `slug` as what is live.
+// eos_gallery_select() is the only caller: it has to be able to try a model
+// WITHOUT the pointer on the filesystem having moved yet, because moving the
+// pointer first is how a model that does not parse becomes the thing the board
+// wears across a reboot. Pass "" or NULL for `slug` when the model did not come
+// out of the gallery. `json_path` may be NULL for a model with no metadata, in
+// which case the compiled-in defaults apply.
+eos_err_t eos_apps_buddy_reload_from(const char *slug, const char *vox_path,
+                                     const char *json_path);
+
+// Which gallery entry is live, or "" when the model came from the legacy
+// /int/buddy/buddy.vox or nothing has loaded. Never NULL - it is compared with
+// strcmp() by the gallery and by the listing, and a NULL here would be a crash
+// on a board whose only fault is having no buddy yet.
+const char *eos_apps_buddy_slug(void);
+
+// The full path the live model was read from, or "" when nothing has loaded.
+// /api/buddy reports it so the web app reads the model the board is actually
+// wearing rather than assuming a filename.
+const char *eos_apps_buddy_file(void);
+
+// The `buddy` object /api/buddy and /api/buddy/reload emit, written into an
+// open document. Exported so the gallery's select answers with the identical
+// object rather than a second, drifting copy of the same fields.
+void eos_apps_buddy_write_json(eos_json_t *j);
 
 // Why the last reload failed, as the sentence eos_vox_strerror() gave, or NULL.
 const char *eos_apps_buddy_error(void);

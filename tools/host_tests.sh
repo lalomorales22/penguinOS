@@ -36,6 +36,8 @@ run wm      -Ikernel/wm/include kernel/wm/eos_wm.c kernel/wm/test/test_wm.c
 run theme   -Ikernel/theme/include kernel/theme/eos_theme.c kernel/theme/test/test_theme.c
 run avatar  -Ikernel/avatar/include kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
             kernel/avatar/test/test_vox.c -lm
+run stroll  -Ikernel/avatar/include kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
+            kernel/avatar/eos_stroll.c kernel/avatar/test/test_stroll.c -lm
 run brain   -Ikernel/svc/include kernel/svc/eos_brain.c kernel/svc/test/test_brain.c
 run shell   -Ikernel/wm/include -Ikernel/hal/include -Ikernel/shell/include \
             kernel/wm/eos_wm.c kernel/shell/eos_keys.c kernel/shell/eos_bar.c \
@@ -77,10 +79,16 @@ run settings -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include \
             kernel/svc/test/test_settings.c
 run apps    -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include \
             -Ikernel/avatar/include -Iboards/generated \
-            kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+            kernel/svc/eos_apps.c kernel/svc/eos_gallery.c kernel/svc/eos_httpd.c \
             kernel/hal/backend/storage/eos_storage_idf.c \
             kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
             kernel/svc/test/test_apps.c
+run gallery -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include \
+            -Ikernel/avatar/include -Iboards/generated \
+            kernel/svc/eos_gallery.c kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+            kernel/hal/backend/storage/eos_storage_idf.c \
+            kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
+            kernel/svc/test/test_gallery.c -lm
 run draw    -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
             -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
@@ -105,7 +113,7 @@ run appsui  -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             firmware/main/eos_led.c firmware/main/eos_shell_draw.c \
             kernel/hal/backend/esp_lcd/eos_display_st7789.c \
             kernel/hal/backend/storage/eos_storage_idf.c \
-            kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+            kernel/svc/eos_apps.c kernel/svc/eos_gallery.c kernel/svc/eos_httpd.c \
             kernel/wm/eos_wm.c kernel/theme/eos_theme.c kernel/shell/eos_bar.c \
             kernel/shell/eos_keys.c kernel/shell/eos_launcher.c \
             kernel/shell/eos_pointer.c kernel/hal/eos_input.c \
@@ -122,7 +130,7 @@ run dispatch -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             firmware/main/eos_led.c \
             kernel/hal/backend/esp_lcd/eos_display_st7789.c \
             kernel/hal/backend/storage/eos_storage_idf.c \
-            kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+            kernel/svc/eos_apps.c kernel/svc/eos_gallery.c kernel/svc/eos_httpd.c \
             kernel/wm/eos_wm.c kernel/theme/eos_theme.c kernel/shell/eos_bar.c \
             kernel/shell/eos_keys.c kernel/shell/eos_launcher.c \
             kernel/shell/eos_pointer.c kernel/hal/eos_input.c \

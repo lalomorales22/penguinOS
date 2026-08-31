@@ -29,6 +29,12 @@
 // smooth at 20fps.
 #define EOS_BUDDY_YAW_STEPS 32
 
+// sin of the camera's elevation, Q12. Exported because anything that wants to
+// move the buddy along the floor rather than across the glass has to squash
+// its vertical travel by exactly this, and a second copy of the number is a
+// second thing to keep in step with the projection.
+#define EOS_BUDDY_SIN_PHI 2048
+
 typedef enum {
     EOS_BUDDY_IDLE = 0,
     EOS_BUDDY_THINKING,
@@ -81,6 +87,16 @@ typedef struct {
     uint8_t  home_yaw;            // the step the buddy returns to, 0..31
     uint8_t  eye_ci;              // palette index of the open eyes, 0 = none
     uint8_t  eye_shut_ci;         // index drawn in its place while blinking
+
+    // How much of his own size he gives up so that the box is a stage rather
+    // than a frame, Q8. 0 is exactly what this file has always done: he is
+    // fitted as large as the target allows and there is nowhere to walk. 51
+    // (a fifth) drops an 80x80 tile's buddy to three quarters and hands the
+    // freed pixels to eos_buddy_move_to(). It sits here rather than in the
+    // walker because the scale and the stage are the same division of the
+    // target, and only one of them can be decided first.
+    uint8_t  roam_q8;
+
     uint8_t  shade[3];            // Q8 brightness for top / y-face / x-face
 
     // I8 targets cannot shade by arithmetic, so they need a 3*256 remap of
@@ -114,6 +130,13 @@ typedef struct {
     uint8_t  blink_again;
     uint16_t pop_ms;
 
+    int32_t  face_off_q8;                // extra yaw a walker asks for, Q8 steps
+
+    int32_t  walk_x_q8, walk_y_q8;       // where he stands, Q8 px from centre
+    int32_t  stage_x_q8, stage_y_q8;     // half-extents he is clamped inside
+    int16_t  gait_lean_q8;               // waddle roll, added to shear_q8
+    int16_t  gait_rise_q8;               // waddle lift, added to bob_q8
+
     uint16_t fit_w, fit_h, fit_scale_q8; // cached auto-fit
     uint32_t faces_drawn;                // last frame, for perf work
 } eos_buddy_t;
@@ -136,6 +159,58 @@ uint8_t eos_buddy_yaw_step(const eos_buddy_t *b);
 // Draws the buddy into `t`. Returns the number of faces drawn, or -1 on a
 // bad argument. Never writes outside t->pixels.
 int eos_buddy_render(eos_buddy_t *b, eos_buddy_target_t *t);
+
+// ------------------------------------------------------------------- motion
+//
+// Position is an offset from the CENTRE of the render target, in Q8 pixels,
+// and it lives inside the target on purpose. The buddy's box is already the
+// unit of damage on the panel — it is rendered once into its own buffer and
+// blitted at a fixed spot — so a step repaints exactly the rectangle a bob
+// repaints and costs the compositor nothing extra. Moving the blit instead
+// would dirty two boxes a frame and drag the whole tile behind it.
+//
+// The stage is a half-extent: the legal box is -stage_x..+stage_x by
+// -stage_y..+stage_y, computed from the target size, the model's footprint
+// and cfg.roam_q8, with an eighth of his own size held back on each axis for
+// the bob and the lean. It is zero until the first render or the first
+// eos_buddy_fit(), because until then nothing knows how big the box is.
+//
+// Vertical travel should be foreshortened by EOS_BUDDY_SIN_PHI by whatever is
+// driving this, so that up-screen reads as further away rather than airborne.
+//
+// One buddy is one stage. Every render recomputes the stage for the target it
+// was handed and clamps the position into it, so rendering the same buddy into
+// two different sized targets in the same frame lets the smaller one pull him
+// toward the middle. That is the correct answer to a stage that shrank — it is
+// only wrong if you wanted two independent views of one buddy, and this file
+// has never supported that anyway: the painter sort reorders the shared model.
+void eos_buddy_fit(eos_buddy_t *b, uint16_t w, uint16_t h);
+void eos_buddy_stage(const eos_buddy_t *b, int32_t *hx_q8, int32_t *hy_q8);
+void eos_buddy_pos(const eos_buddy_t *b, int32_t *x_q8, int32_t *y_q8);
+
+// Both return true when the clamp bit, which is how a walker learns it has
+// reached the edge of the stage and should stop rather than grind against it.
+bool eos_buddy_move_to(eos_buddy_t *b, int32_t x_q8, int32_t y_q8);
+bool eos_buddy_move_by(eos_buddy_t *b, int32_t dx_q8, int32_t dy_q8);
+
+// The waddle, in Q8 VOXEL units, added on top of whatever the mood is doing.
+// `lean` shears the top of the model sideways, which is the only roll this
+// rasteriser has; `rise` lifts him. Both are one oscillator's business — see
+// eos_stroll.c, which is the only thing that should be calling this.
+void eos_buddy_set_gait(eos_buddy_t *b, int16_t lean_q8, int16_t rise_q8);
+
+// An extra yaw offset in Q8 yaw steps, added to the target the mood picks.
+// This is how something outside the mood machine turns him without editing
+// cfg.home_yaw out from under it. It is not wrapped: a walker may wind it a
+// whole turn to spin, and eos_buddy_tick() does the modulo.
+void eos_buddy_face(eos_buddy_t *b, int32_t off_q8);
+int32_t eos_buddy_facing(const eos_buddy_t *b);
+
+// The buddy's own sine over a full uint16 turn, Q12. Exported because a gait
+// outside this file has to stay in phase with the animation inside it, and
+// two sine tables is two things to keep in step. Step k of the yaw ring is
+// eos_buddy_sin_q12((uint16_t)(k << 11)).
+int32_t eos_buddy_sin_q12(uint16_t turn);
 
 // Builds the (level, index) -> index table an I8 target needs, by finding the
 // nearest colour in the display palette to each model colour scaled by each

@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include "eos_apps.h"
+#include "eos_gallery.h"
 
 // ==========================================================================
 // State
@@ -395,6 +396,8 @@ static struct {
     eos_buddy_cfg_t cfg;
     char            name[EOS_APPS_BUDDY_NAME_MAX];
     char            persona[EOS_APPS_BUDDY_PERSONA_MAX];
+    char            slug[EOS_APPS_BUDDY_SLUG_MAX];  // "" for the legacy buddy.vox
+    char            file[EOS_PATH_MAX];             // what actually loaded
     uint32_t        accent;        // 0xFFFFFFFF when buddy.json named none
     long            schema;
     uint8_t         behaviour;     // eos_apps_idle_t
@@ -410,7 +413,9 @@ static struct {
 static uint8_t s_voxbuf[EOS_APPS_VOX_BYTES];
 static char    s_budjson[EOS_APPS_BUDDY_JSON_BYTES];
 
-static const char *const IDLE_NAMES[] = { "still", "wander", "curious", "sleepy" };
+static const char *const IDLE_NAMES[EOS_APPS_IDLE_COUNT] = {
+    "still", "wander", "curious", "sleepy", "roam", "play"
+};
 
 // web/README.md wants the state lowercased. eos_buddy_state_name() spells it in
 // capitals because that is what the panel draws, and the panel's spelling is
@@ -426,7 +431,7 @@ static const char *state_name(int s)
 
 const char *eos_apps_idle_name(int b)
 {
-    if (b < 0 || b > (int)EOS_APPS_IDLE_SLEEPY) b = EOS_APPS_IDLE_WANDER;
+    if (b < 0 || b >= (int)EOS_APPS_IDLE_COUNT) b = EOS_APPS_IDLE_WANDER;
     return IDLE_NAMES[b];
 }
 
@@ -569,7 +574,7 @@ static void buddy_defaults(void)
     s_bud.have_json  = false;
 }
 
-static void load_buddy_json(void)
+static void load_buddy_json(const char *path)
 {
     const char *sub;
     int sublen, got, n;
@@ -578,9 +583,8 @@ static void load_buddy_json(void)
 
     buddy_defaults();
 
-    if (eos_path_join(s_scr.full, EOS_PATH_MAX, EOS_APPS_BUDDY_DIR, "buddy.json") < 0)
-        return;
-    got = eos_storage_load(s_scr.full, s_budjson, (int)sizeof s_budjson);
+    if (!path || !path[0]) return;
+    got = eos_storage_load(path, s_budjson, (int)sizeof s_budjson);
     if (got < 0) return;                       // absent, or larger than we stage
     s_bud.have_json = true;
 
@@ -600,7 +604,7 @@ static void load_buddy_json(void)
         if (eos_json_get_str(sub, sublen, "behaviour", sbuf, (int)sizeof sbuf, &n) == EOS_JSON_FOUND) {
             int k;
             s_bud.behaviour = EOS_APPS_IDLE_WANDER;     // web/README.md: unknown -> wander
-            for (k = 0; k <= (int)EOS_APPS_IDLE_SLEEPY; k++)
+            for (k = 0; k < (int)EOS_APPS_IDLE_COUNT; k++)
                 if (strcmp(sbuf, IDLE_NAMES[k]) == 0) s_bud.behaviour = (uint8_t)k;
         }
         if (eos_json_get_int(sub, sublen, "sleep_ms", &v) == EOS_JSON_FOUND && v >= 0)
@@ -615,13 +619,15 @@ static void load_buddy_json(void)
             s_bud.cfg.eye_shut_ci = (uint8_t)v;
     }
 
-    // The one preset that maps onto a number this header already has. The other
-    // three are yaw drift, which nothing on this board consumes yet: the value
-    // is stored and reported, and whatever ends up ticking the avatar owns it.
+    // The one preset that maps onto a number this header already has. The rest
+    // are motion, which this file has no business knowing about: the value is
+    // stored and reported, and kernel/avatar/eos_stroll.c is what consumes it,
+    // by name, wherever the avatar is actually being ticked.
     if (s_bud.behaviour == EOS_APPS_IDLE_SLEEPY) s_bud.cfg.idle_sleep_ms /= 2u;
 }
 
-eos_err_t eos_apps_buddy_reload(void)
+eos_err_t eos_apps_buddy_reload_from(const char *slug, const char *vox_path,
+                                     const char *json_path)
 {
     eos_stat_t st;
     eos_vox_err_t ve;
@@ -629,14 +635,35 @@ eos_err_t eos_apps_buddy_reload(void)
     int got;
 
     s_bud.err = NULL;
-    load_buddy_json();
 
-    if (eos_path_join(s_scr.full, EOS_PATH_MAX, EOS_APPS_BUDDY_DIR, "buddy.vox") < 0) {
-        s_bud.err = "the buddy directory does not fit a path";
-        return EOS_ERR_TOOBIG;
+    // Which buddy this IS - the slug and the path - is published at the bottom
+    // and not here, and the four refusals below are the reason. Every one of
+    // them returns before the voxel pool has been touched, so the model that
+    // was already loaded is still the model on the panel; overwriting the slug
+    // and the path on the way past would leave the board DRAWING one buddy and
+    // REPORTING another, from a path with nothing at it.
+    //
+    // That is not only untidy. eos_gallery_remove() refuses to delete the live
+    // buddy by asking two questions - what the `active` file says, and what
+    // eos_apps_buddy_slug() says - precisely so that one answer covers the
+    // other when they come apart. A failed reload is exactly when they come
+    // apart, and clearing the slug here is what would quietly retire the second
+    // question at the moment it is needed. The web app has the same problem
+    // more visibly: it reads model.path to fetch the live buddy, and a path
+    // that 404s makes a perfectly healthy penguin look broken in the tab.
+    //
+    // The parse failure further down is the one case that DOES publish, and it
+    // should: there the pool really has been overwritten, the previous model is
+    // genuinely gone, and the attempted name beside s_bud.err is the honest
+    // report.
+    load_buddy_json(json_path);
+
+    if (!vox_path || !vox_path[0]) {
+        s_bud.err = "there is no model to load";
+        return EOS_ERR_ARG;
     }
-    if (eos_storage_stat(s_scr.full, &st) != EOS_OK || st.is_dir) {
-        s_bud.err = "there is no buddy.vox on this board yet";
+    if (eos_storage_stat(vox_path, &st) != EOS_OK || st.is_dir) {
+        s_bud.err = "there is no .vox at that path on this board";
         return EOS_ERR_NOTFOUND;
     }
     if (st.size > (uint32_t)sizeof s_voxbuf) {
@@ -644,7 +671,7 @@ eos_err_t eos_apps_buddy_reload(void)
         return EOS_ERR_TOOBIG;
     }
 
-    got = eos_storage_load(s_scr.full, s_voxbuf, (int)sizeof s_voxbuf);
+    got = eos_storage_load(vox_path, s_voxbuf, (int)sizeof s_voxbuf);
     if (got < 0) {
         s_bud.err = "the model could not be read";
         return (eos_err_t)got;
@@ -669,11 +696,18 @@ eos_err_t eos_apps_buddy_reload(void)
         // over voxels the refused file has already written, which is a face
         // made of two models. Moving it makes the renderer re-adopt, find
         // eos_apps_buddy_model() NULL, and fall back to the compiled-in buddy
-        // — a rejected upload costs the owner their model, not the panel.
+        // - a rejected upload costs the owner their model, not the panel.
+        //
+        // The gallery is what makes that survivable rather than merely honest:
+        // eos_gallery_select() calls this BEFORE it moves the pointer on the
+        // filesystem, so a refusal here is followed by a plain reload of the
+        // buddy that was already active, and the owner keeps their penguin.
         s_bud.loaded      = false;
         s_bud.model.count = 0;
         s_bud.err         = eos_vox_strerror(ve);
         s_bud.gen++;
+        snprintf(s_bud.slug, sizeof s_bud.slug, "%s", slug ? slug : "");
+        snprintf(s_bud.file, sizeof s_bud.file, "%s", vox_path);
         return EOS_ERR_ARG;
     }
 
@@ -681,13 +715,48 @@ eos_err_t eos_apps_buddy_reload(void)
     s_bud.model.pal = &s_bud.pal;
     s_bud.loaded    = true;
     s_bud.gen++;
+    snprintf(s_bud.slug, sizeof s_bud.slug, "%s", slug ? slug : "");
+    snprintf(s_bud.file, sizeof s_bud.file, "%s", vox_path);
     return EOS_OK;
+}
+
+// Loads whatever this board should be wearing, in one fixed order:
+//
+//   1. the gallery entry EOS_GALLERY_ACTIVE names
+//   2. failing that, the first entry the gallery holds
+//   3. failing that, the legacy /int/buddy/buddy.vox
+//
+// Three steps but one authority, and the order is total, so there is exactly
+// one answer at any moment. Step 3 is not a second source of truth, it is the
+// end of the search: it is what a board carrying a pre-gallery buddy.vox loads
+// on the boot before eos_seed_buddy() has migrated that file into the gallery,
+// and what an image built with no seeder at all loads forever. Once the
+// migration has run there is no buddy.vox left for it to find.
+eos_err_t eos_apps_buddy_reload(void)
+{
+    static char vox[EOS_PATH_MAX], json[EOS_PATH_MAX];
+    char slug[EOS_APPS_BUDDY_SLUG_MAX];
+
+    // Not on the stack: this runs on an HTTP worker with 5,376 bytes of it and
+    // 513 already spent on the request body, and it is the same rule the rest
+    // of this file follows. There is one dispatch in flight image-wide.
+    if (eos_gallery_resolve(vox, json, EOS_PATH_MAX, slug, (int)sizeof slug) == EOS_OK)
+        return eos_apps_buddy_reload_from(slug, vox, json);
+
+    if (eos_path_join(vox, EOS_PATH_MAX, EOS_APPS_BUDDY_DIR, "buddy.vox") < 0 ||
+        eos_path_join(json, EOS_PATH_MAX, EOS_APPS_BUDDY_DIR, "buddy.json") < 0) {
+        s_bud.err = "the buddy directory does not fit a path";
+        return EOS_ERR_TOOBIG;
+    }
+    return eos_apps_buddy_reload_from("", vox, json);
 }
 
 const char *eos_apps_buddy_error(void)        { return s_bud.err; }
 eos_vox_model_t *eos_apps_buddy_model(void)   { return s_bud.loaded ? &s_bud.model : NULL; }
 const eos_vox_pal_t *eos_apps_buddy_palette(void) { return s_bud.loaded ? &s_bud.pal : NULL; }
 const eos_buddy_cfg_t *eos_apps_buddy_cfg(void)   { return &s_bud.cfg; }
+const char *eos_apps_buddy_slug(void)         { return s_bud.slug; }
+const char *eos_apps_buddy_file(void)         { return s_bud.file; }
 const char *eos_apps_buddy_name(void)         { return s_bud.name; }
 const char *eos_apps_buddy_personality(void)  { return s_bud.persona; }
 int         eos_apps_buddy_behaviour(void)    { return (int)s_bud.behaviour; }
@@ -751,6 +820,11 @@ static void upload_close_ex(bool keep_tmp)
 }
 
 static void upload_close(void) { upload_close_ex(false); }
+
+bool eos_apps_upload_targets(const char *path)
+{
+    return path && s_up.open && strcmp(s_up.path, path) == 0;
+}
 
 void eos_apps_tick(uint32_t now_ms)
 {
@@ -1320,7 +1394,7 @@ static int h_console_exec(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_
 // Handlers — buddy and apps
 // ==========================================================================
 
-static void write_buddy_obj(eos_json_t *j)
+void eos_apps_buddy_write_json(eos_json_t *j)
 {
     char accent[8];
 
@@ -1354,7 +1428,19 @@ static void write_buddy_obj(eos_json_t *j)
     // .vox authoritative; this is the board saying which one it is holding.
     eos_json_key(j, "model");
     eos_json_obj_open(j);
-    eos_json_kv_str (j, "file", "buddy.vox");
+    // `file` is the basename and stays for the client that only ever knew one
+    // filename; `path` is where the model was actually read from and `slug` is
+    // which gallery entry that was. A web app should read `path`: with a
+    // gallery the name is no longer a constant, and guessing "buddy.vox" is
+    // how the Buddy tab ends up loading a model the board is not wearing.
+    {
+        const char *f = s_bud.file;
+        const char *base = strrchr(f, '/');
+        eos_json_kv_str(j, "file", base ? base + 1 : (f[0] ? f : "buddy.vox"));
+    }
+    eos_json_kv_str (j, "path", s_bud.file);
+    if (s_bud.slug[0]) eos_json_kv_str (j, "slug", s_bud.slug);
+    else               eos_json_kv_null(j, "slug");
     eos_json_kv_bool(j, "loaded", s_bud.loaded);
     eos_json_key(j, "dim");
     eos_json_arr_open(j);
@@ -1380,7 +1466,7 @@ static int h_buddy(eos_httpd_t *h, eos_httpd_resp_t *r)
     eos_json_init(&j, h->resp, (int)sizeof h->resp);
     eos_json_obj_open(&j);
     eos_json_key(&j, "buddy");
-    write_buddy_obj(&j);
+    eos_apps_buddy_write_json(&j);
     eos_json_kv_str(&j, "state", state_name((int)s_bud.state));
     if (s_bud.err) eos_json_kv_str(&j, "error", s_bud.err);
     else           eos_json_kv_null(&j, "error");
@@ -1417,7 +1503,7 @@ static int h_buddy_reload(eos_httpd_t *h, eos_httpd_resp_t *r)
     eos_json_kv_bool(&j, "ok", true);
     eos_json_kv_str (&j, "state", state_name((int)s_bud.state));
     eos_json_key(&j, "buddy");
-    write_buddy_obj(&j);
+    eos_apps_buddy_write_json(&j);
     eos_json_obj_close(&j);
     return eos_httpd_reply_json(h, r, 200, &j);
 }
@@ -1467,6 +1553,15 @@ int eos_apps_dispatch(eos_httpd_t *h, int route,
     case EOS_ROUTE_CONSOLE_EXEC: return h_console_exec(h, req, r);
     case EOS_ROUTE_BUDDY:        return h_buddy(h, r);
     case EOS_ROUTE_BUDDY_RELOAD: return h_buddy_reload(h, r);
+
+    // The gallery lives in its own translation unit and is reached through
+    // this one call rather than through a second eos_httpd_set_api() pointer.
+    // eos_httpd holds exactly one, and a second is a second thing an image can
+    // leave NULL while its routes are still in the table.
+    case EOS_ROUTE_BUDDY_GALLERY:
+    case EOS_ROUTE_BUDDY_GALLERY_SELECT:
+    case EOS_ROUTE_BUDDY_GALLERY_REMOVE:
+        return eos_gallery_dispatch(h, route, req, r);
     case EOS_ROUTE_APPS:         return h_apps(h, r);
     default: break;
     }

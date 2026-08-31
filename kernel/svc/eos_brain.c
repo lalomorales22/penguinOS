@@ -1,6 +1,14 @@
 #include "eos_brain.h"
 #include <string.h>
 
+// Only the temporary receive diagnostic in S_RECV needs this, and it needs it
+// up here: an #include inside a function body makes every declaration in the
+// header a local one, which is an invalid storage class for a function and
+// stops the firmware build dead. The host build never sees either.
+#ifdef ESP_PLATFORM
+#include "esp_log.h"
+#endif
+
 // The parser is the whole point of this file, so it comes first and it does not
 // know that sockets exist. Everything below it — the request builder, the
 // discovery walk, the pump — is bookkeeping around handing it bytes.
@@ -869,6 +877,24 @@ static bool step(eos_brain_t *b)
         eos_brain_parse_t r;
         int n = b->tp->recv(b->tp->ctx, rx, sizeof rx);
 
+        // TEMPORARY DIAGNOSTIC. The parser handles megabrain's exact bytes
+        // correctly on the host - fed one at a time it reaches done=1,
+        // status=200 - so the question is what actually arrives here.
+        {
+            static uint32_t lastl; static int lastn;
+            if (n != 0 || (uint32_t)(now - lastl) >= 2000u) {
+                lastl = now; lastn = n;
+#ifdef ESP_PLATFORM
+                esp_log_write(ESP_LOG_INFO, "eos_brain",
+                    "I (%u) eos_brain: rx n=%d total=%u st=%d done=%d complete=%d\n",
+                    (unsigned)now, n, (unsigned)b->rx_bytes,
+                    (int)eos_brain_parser_status(&b->parser),
+                    (int)eos_brain_parser_done(&b->parser),
+                    (int)eos_brain_parser_body_complete(&b->parser));
+#endif
+            }
+            (void)lastn;
+        }
         if (n > 0) {
             b->t_last   = now;
             b->rx_bytes += (uint32_t)n;

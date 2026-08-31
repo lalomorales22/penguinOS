@@ -3,8 +3,8 @@
 
 // The camera sits 30 degrees above the horizon and orbits on the yaw ring.
 // Everything downstream is integer: Q12 for trig, Q8 for screen pixels.
-#define SIN_PHI 2048       // sin(30) * 4096
-#define COS_PHI 3547       // cos(30) * 4096
+#define SIN_PHI EOS_BUDDY_SIN_PHI   // sin(30) * 4096
+#define COS_PHI 3547                // cos(30) * 4096
 
 // sin(step * 360/32) * 4096. cos(i) is sin(i+8), so one table does both.
 static const int16_t SIN_Q12[EOS_BUDDY_YAW_STEPS] = {
@@ -31,6 +31,8 @@ static int32_t sin16(uint16_t a)
     int32_t s0 = SIN_Q12[i], s1 = SIN_Q12[(i + 1) & (EOS_BUDDY_YAW_STEPS - 1)];
     return s0 + (int32_t)(((int64_t)(s1 - s0) * (int32_t)f) / 2048);
 }
+
+int32_t eos_buddy_sin_q12(uint16_t turn) { return sin16(turn); }
 
 static uint32_t rnd(eos_buddy_t *b)
 {
@@ -249,7 +251,7 @@ void eos_buddy_tick(eos_buddy_t *b, uint32_t dt_ms)
     b->squash_q8 = (int16_t)sq;
 
     // --- yaw: target is home plus the state's offset plus the sway -------
-    int32_t target = ((int32_t)b->cfg.home_yaw << 8) + a->yaw_off;
+    int32_t target = ((int32_t)b->cfg.home_yaw << 8) + a->yaw_off + b->face_off_q8;
     if (a->sway_ms) target += (a->sway_amp * sin16(b->sway_phase)) / 4096;
     target %= YAW_FULL;
     if (target < 0) target += YAW_FULL;
@@ -292,19 +294,148 @@ static uint32_t isqrt32(uint32_t v)
     return r;
 }
 
-static uint16_t fit_scale(const eos_vox_model_t *m, uint16_t w, uint16_t h)
+// How much screen the model needs at scale 1: `rad` across (the diagonal, so
+// it holds at every yaw) and `uh` tall once the 30 degree camera has squashed
+// the depth into the height. Both in voxels.
+static void footprint(const eos_vox_model_t *m, uint32_t *rad, uint32_t *uh)
 {
     uint32_t sx = m->sx, sy = m->sy, sz = m->sz;
-    uint32_t rad = isqrt32(sx * sx + sy * sy);        // widest footprint, any yaw
-    if (rad == 0) rad = 1;
-    uint32_t uh = (rad * SIN_PHI) / 4096 + (sz * COS_PHI) / 4096;
-    if (uh == 0) uh = 1;
-    uint32_t a = ((uint32_t)w << 8) / rad;
-    uint32_t c = ((uint32_t)h << 8) / uh;
-    uint32_t s = (a < c ? a : c) * 220 / 256;         // room for bob, lean, squash
+    uint32_t r = isqrt32(sx * sx + sy * sy);          // widest footprint, any yaw
+    uint32_t u;
+    if (r == 0) r = 1;
+    u = (r * SIN_PHI) / 4096 + (sz * COS_PHI) / 4096;
+    if (u == 0) u = 1;
+    *rad = r;
+    *uh  = u;
+}
+
+static uint16_t fit_scale(const eos_vox_model_t *m, uint16_t w, uint16_t h)
+{
+    uint32_t rad, uh, a, c, s;
+    footprint(m, &rad, &uh);
+    a = ((uint32_t)w << 8) / rad;
+    c = ((uint32_t)h << 8) / uh;
+    s = (a < c ? a : c) * 220 / 256;                  // room for bob, lean, squash
     if (s < 256)  s = 256;
     if (s > 8192) s = 8192;
     return (uint16_t)s;
+}
+
+// ------------------------------------------------------------------- motion
+
+static void clamp_pos(eos_buddy_t *b)
+{
+    if (b->walk_x_q8 >  b->stage_x_q8) b->walk_x_q8 =  b->stage_x_q8;
+    if (b->walk_x_q8 < -b->stage_x_q8) b->walk_x_q8 = -b->stage_x_q8;
+    if (b->walk_y_q8 >  b->stage_y_q8) b->walk_y_q8 =  b->stage_y_q8;
+    if (b->walk_y_q8 < -b->stage_y_q8) b->walk_y_q8 = -b->stage_y_q8;
+}
+
+// The drawn scale, and the stage that is left over once he is standing on it.
+// Both come out of the same division of the target, which is why they are
+// computed together and why cfg.roam_q8 belongs to the buddy rather than to
+// the walker: whoever decides how big he is has already decided how far he
+// can go.
+static int32_t plan_stage(eos_buddy_t *b, uint16_t w, uint16_t h)
+{
+    const eos_vox_model_t *m = b->model;
+    uint32_t rad, uh;
+    int32_t S, fx, fy, sx, sy;
+
+    if (!m || m->sx == 0 || m->sy == 0 || m->sz == 0) return 256;
+
+    if (b->cfg.scale_q8) {
+        S = b->cfg.scale_q8;
+    } else {
+        if (b->fit_scale_q8 == 0 || b->fit_w != w || b->fit_h != h) {
+            b->fit_scale_q8 = fit_scale(m, w, h);
+            b->fit_w = w;
+            b->fit_h = h;
+        }
+        S = b->fit_scale_q8;
+    }
+    if (b->cfg.roam_q8) S = mq8(S, 256 - (int32_t)b->cfg.roam_q8);
+    if (S < 1) S = 1;
+
+    footprint(m, &rad, &uh);
+    fx = (int32_t)rad * S;
+    fy = (int32_t)uh  * S;
+
+    // Everything the box has left over, minus an eighth of his own size on
+    // each axis. That eighth is the bob-and-lean margin: without it a hop at
+    // the top of the stage would put his head through the edge of the tile.
+    sx = ((int32_t)w * 256 - fx) / 2 - fx / 8;
+    sy = ((int32_t)h * 256 - fy) / 2 - fy / 8;
+    b->stage_x_q8 = sx > 0 ? sx : 0;
+    b->stage_y_q8 = sy > 0 ? sy : 0;
+    clamp_pos(b);
+    return S;
+}
+
+void eos_buddy_fit(eos_buddy_t *b, uint16_t w, uint16_t h)
+{
+    if (!b || !b->model || w == 0 || h == 0) return;
+    (void)plan_stage(b, w, h);
+}
+
+void eos_buddy_stage(const eos_buddy_t *b, int32_t *hx_q8, int32_t *hy_q8)
+{
+    if (hx_q8) *hx_q8 = b ? b->stage_x_q8 : 0;
+    if (hy_q8) *hy_q8 = b ? b->stage_y_q8 : 0;
+}
+
+void eos_buddy_pos(const eos_buddy_t *b, int32_t *x_q8, int32_t *y_q8)
+{
+    if (x_q8) *x_q8 = b ? b->walk_x_q8 : 0;
+    if (y_q8) *y_q8 = b ? b->walk_y_q8 : 0;
+}
+
+bool eos_buddy_move_to(eos_buddy_t *b, int32_t x_q8, int32_t y_q8)
+{
+    if (!b) return false;
+    b->walk_x_q8 = x_q8;
+    b->walk_y_q8 = y_q8;
+    clamp_pos(b);
+    return b->walk_x_q8 != x_q8 || b->walk_y_q8 != y_q8;
+}
+
+// The sum is formed in 64 bits and saturated back, which is not defensive
+// padding: at int32 width `walk + delta` can overflow, and signed overflow does
+// not merely wrap - it is undefined, and the wrap it happens to produce turns a
+// hard push against one edge into a landing on the OPPOSITE one. A buddy
+// pressed into the right-hand wall would appear at the left-hand wall on the
+// next frame. eos_stroll.c cannot reach it today, because it clamps dt to a
+// second and its fastest preset asks for about 3,000 Q8 units a frame, but that
+// is an argument about one caller and this is a public entry point.
+bool eos_buddy_move_by(eos_buddy_t *b, int32_t dx_q8, int32_t dy_q8)
+{
+    int64_t x, y;
+
+    if (!b) return false;
+    x = (int64_t)b->walk_x_q8 + (int64_t)dx_q8;
+    y = (int64_t)b->walk_y_q8 + (int64_t)dy_q8;
+    if (x >  INT32_MAX) x =  INT32_MAX;
+    if (x <  INT32_MIN) x =  INT32_MIN;
+    if (y >  INT32_MAX) y =  INT32_MAX;
+    if (y <  INT32_MIN) y =  INT32_MIN;
+    return eos_buddy_move_to(b, (int32_t)x, (int32_t)y);
+}
+
+void eos_buddy_set_gait(eos_buddy_t *b, int16_t lean_q8, int16_t rise_q8)
+{
+    if (!b) return;
+    b->gait_lean_q8 = lean_q8;
+    b->gait_rise_q8 = rise_q8;
+}
+
+void eos_buddy_face(eos_buddy_t *b, int32_t off_q8)
+{
+    if (b) b->face_off_q8 = off_q8;
+}
+
+int32_t eos_buddy_facing(const eos_buddy_t *b)
+{
+    return b ? b->face_off_q8 : 0;
 }
 
 // Sorts the pool far to near. The cold pass runs the whole shell-sort gap
@@ -462,21 +593,20 @@ int eos_buddy_render(eos_buddy_t *b, eos_buddy_target_t *t)
     b->faces_drawn = 0;
     if (m->count == 0 || m->sx == 0 || m->sy == 0 || m->sz == 0) return 0;
 
-    uint16_t S;
-    if (b->cfg.scale_q8) {
-        S = b->cfg.scale_q8;
-    } else {
-        if (b->fit_scale_q8 == 0 || b->fit_w != t->w || b->fit_h != t->h) {
-            b->fit_scale_q8 = fit_scale(m, t->w, t->h);
-            b->fit_w = t->w;
-            b->fit_h = t->h;
-        }
-        S = b->fit_scale_q8;
-    }
+    // Scale and stage together, and in that order: the space he does not fill
+    // is the space he gets to walk in, so the clamp cannot be decided until
+    // the fit is.
+    int32_t S = plan_stage(b, t->w, t->h);
 
     int yi = (int)(((b->yaw_q8 + 128) >> 8) & (EOS_BUDDY_YAW_STEPS - 1));
     int32_t sn = SIN_Q12[yi];
     int32_t cs = SIN_Q12[(yi + EOS_BUDDY_YAW_STEPS / 4) & (EOS_BUDDY_YAW_STEPS - 1)];
+
+    // The mood's lean and bob, plus the gait's. One oscillator drives the two
+    // gait terms and they arrive here already summed with nothing else, so
+    // adding them is the whole of how a waddle reaches the rasteriser.
+    int32_t shear = (int32_t)b->shear_q8 + (int32_t)b->gait_lean_q8;
+    int32_t lift  = (int32_t)b->bob_q8   + (int32_t)b->gait_rise_q8;
 
     int32_t kxy = 256 + b->squash_q8 / 2;   // squash widens as it flattens
     int32_t kz  = 256 - b->squash_q8;
@@ -491,7 +621,7 @@ int eos_buddy_render(eos_buddy_t *b, eos_buddy_target_t *t)
     int32_t ey_x = mq12(Sxy, sn);
     int32_t ey_y = -mq12(mq12(Sxy, cs), SIN_PHI);
     int32_t ez_y = -mq12(Sz, COS_PHI);
-    int32_t ez_x = (int32_t)(((int64_t)Sxy * b->shear_q8) / (256 * (int32_t)m->sz));
+    int32_t ez_x = (int32_t)(((int64_t)Sxy * shear) / (256 * (int32_t)m->sz));
 
     // Depth along the view axis. Larger is further from the camera.
     int32_t dpx = -mq12(sn, COS_PHI);
@@ -501,10 +631,12 @@ int eos_buddy_render(eos_buddy_t *b, eos_buddy_target_t *t)
     int32_t cx8 = ((int32_t)m->sx * 256) / 2;
     int32_t cy8 = ((int32_t)m->sy * 256) / 2;
     int32_t cz8 = ((int32_t)m->sz * 256) / 2;
-    int32_t bob = (int32_t)(((int64_t)b->bob_q8 * S) / 256);
+    int32_t bob = (int32_t)(((int64_t)lift * S) / 256);
 
-    int32_t ox = (int32_t)t->w * 128 - mq8(cx8, ex_x) - mq8(cy8, ey_x) - mq8(cz8, ez_x);
-    int32_t oy = (int32_t)t->h * 128 - mq8(cx8, ex_y) - mq8(cy8, ey_y) - mq8(cz8, ez_y) - bob;
+    int32_t ox = (int32_t)t->w * 128 - mq8(cx8, ex_x) - mq8(cy8, ey_x) - mq8(cz8, ez_x)
+                 + b->walk_x_q8;
+    int32_t oy = (int32_t)t->h * 128 - mq8(cx8, ex_y) - mq8(cy8, ey_y) - mq8(cz8, ez_y)
+                 - bob + b->walk_y_q8;
 
     int32_t cofx[8], cofy[8];
     for (int k = 0; k < 8; k++) {

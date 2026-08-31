@@ -45,8 +45,19 @@ idf_component_register(
         "${CMAKE_CURRENT_LIST_DIR}/../../web/style.css"
         "${CMAKE_CURRENT_LIST_DIR}/../../web/setup.js"
         "${CMAKE_CURRENT_LIST_DIR}/../../web/voxel-editor.js"
+        # The gallery. Each pair is one row in SHIPPED[] in eos_seed_buddy.c,
+        # and the two lists have to stay in step: a file embedded with no row
+        # is 5 KB of rodata nothing writes, and a row with no file does not
+        # link. penguin.vox/buddy.json are Pip and are named for what they
+        # were before the gallery existed.
         "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/penguin.vox"
         "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/buddy.json"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/cat.vox"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/cat.json"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/owl.vox"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/owl.json"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/robot.vox"
+        "${CMAKE_CURRENT_LIST_DIR}/../../assets/buddy/robot.json"
         "${EOS_KERNEL_DIR}/theme/themes/carbon.json"
         "${EOS_KERNEL_DIR}/theme/themes/catppuccin-mocha.json"
         "${EOS_KERNEL_DIR}/theme/themes/ember.json"

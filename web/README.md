@@ -8,16 +8,22 @@ no build step, no webfont. Nothing outside this directory is ever fetched.
 
 | File | Lines | Raw | Gzip | What |
 |---|---|---|---|---|
-| `index.html` | 448 | 19,252 | 5,102 | Structure and the inline SVG icon symbols |
-| `style.css` | 735 | 25,454 | 6,050 | Palette as custom properties, mobile-first layout |
-| `app.js` | 1,802 | 59,835 | 18,530 | API client, all four tabs |
+| `index.html` | 469 | 20,244 | 5,397 | Structure and the inline SVG icon symbols |
+| `style.css` | 852 | 29,503 | 6,989 | Palette as custom properties, mobile-first layout |
+| `app.js` | 2,754 | 97,933 | 30,227 | API client, all four tabs, the buddy gallery |
 | `setup.js` | 1,252 | 44,354 | 13,808 | The setup screen: WiFi, BLE pairing, radio etiquette |
 | `voxel-editor.js` | 1,151 | 42,438 | 13,822 | The buddy editor and the `.vox` codec |
-| **total served** | **5,388** | **191,333** | **57,312** | 30% of raw |
+| **total served** | **6,478** | **234,472** | **70,243** | 30% of raw |
 
 Setup added 62,332 raw and 18,183 gzipped across four files. Most of that is
 `setup.js`, and most of `setup.js` is English: nine ways a join can fail, six
 ways a bond can, and what to do about each. That prose is the feature.
+
+The gallery added 36,852 raw and 11,122 gzipped across `app.js`, `index.html`
+and `style.css`. It is a strip of cards above the editor, and the cards are the
+cost: each one is drawn from the real `.vox` by the editor's own rasteriser, so
+the gallery ships no second parser and no second renderer — a detached
+`EOSVox.Editor` with its canvases in no document does both.
 
 `README.md` is documentation and is not served.
 
@@ -554,16 +560,28 @@ says so in its first four words: there is no speaker on that board.
 |---|---|---|---|
 | GET | `/api/buddy` | — | `{"buddy":{...},"state":"idle","error":null,"limits":{...},"dir":"/int/buddy"}` |
 | POST | `/api/buddy/reload` | — | `{"ok":true,"state":"idle","buddy":{...}}` |
+| GET | `/api/buddy/gallery` | `offset`=0, `count`=`list_max` | The models on the board, one of them active |
+| POST | `/api/buddy/gallery/select` | body `{"slug":"..."}` | Make one live, now, no reboot |
+| POST | `/api/buddy/gallery/remove` | body `{"slug":"..."}` | Delete one. Refuses the live one and the last one |
 
 There is deliberately **no upload endpoint for the model**. The editor writes
-`buddy.vox` and `buddy.json` into the reported `dir` through the ordinary
-chunked `/api/fs/write`, then calls `/api/buddy/reload` to make the running OS
-pick them up. One upload mechanism, one set of failure modes.
+`<slug>.vox` and `<slug>.json` into the gallery through the ordinary chunked
+`/api/fs/write`, then calls `/api/buddy/gallery/select` to make one live. One
+upload mechanism, one set of failure modes.
 
 `dir` is `EOS_APPS_BUDDY_DIR`, which is `/int/buddy` on every image built
-today. The editor does not hardcode it: it writes where the board says, and
-falls back to `/int/buddy` then `/sd/buddy` only when the board answered 404
-and therefore told it nothing.
+today, and the gallery is `dir + "/gallery"` — reported outright as `dir` by
+`GET /api/buddy/gallery`, so nothing has to build that string. The editor does
+not hardcode either: it writes where the board says, and falls back to
+`/int/buddy` then `/sd/buddy` only when the board answered 404 and therefore
+told it nothing.
+
+`buddy.model.path` is the full path of the model the board is **actually**
+wearing and `buddy.model.slug` is which gallery entry that is (`null` for a
+pre-gallery `buddy.vox`). Read `path`. `buddy.model.file` is still there and is
+still the basename, but with a gallery the filename is no longer a constant,
+and a client that assumes `buddy.vox` will read a model the board is not
+wearing — or 404, on a board where the migration has already moved it.
 
 `limits` is what this board can hold, not what the format allows —
 `{"voxels":1536,"bytes":7264,"dim":32}` on esp32c6 against a format ceiling of
@@ -582,6 +600,116 @@ because one number on its own reads like half the upload went missing.
 
 `GET /api/buddy` returning `not_found` (404) is normal on a board with no
 buddy at all, and the editor handles it: it says so and lets you build one.
+
+### The gallery
+
+Several buddies live on the board and one of them is active:
+
+```
+/int/buddy/gallery/<slug>.vox     the model
+/int/buddy/gallery/<slug>.json    its name, personality and accent
+/int/buddy/active                 one line naming the slug that is live
+```
+
+This exists because there used to be exactly one buddy and importing a new one
+wrote over it. That is not a rough edge, it is how the owner lost Pip: the
+import succeeded, the penguin was gone, and getting him back took a
+remove-and-reboot over `curl`. **An import now lands beside what is on the
+board rather than on top of it**, and every shipped buddy is re-seeded on every
+boot if it is missing, so Pip is a click away rather than a reflash away.
+
+`/int/buddy/active` is its own file and not a key in a `buddy.json`, because
+there is no longer a board-wide `buddy.json` to put the key in — every model
+has its own. It is also rewritten on every select, and re-emitting a 500-byte
+document to change one key would put the sentence the owner wrote about their
+penguin through a flash write every time they clicked a different one.
+
+**`GET /api/buddy/gallery`** returns
+
+```json
+{"dir":"/int/buddy/gallery","active":"pip",
+ "entries":[{"slug":"pip","name":"Pip","voxels":1280,"dim":[15,13,22],
+             "bytes":6216,"active":true,"ok":true}],
+ "offset":0,"total":4,"more":false}
+```
+
+Paged exactly as `/api/fs/list` is: `offset`, `count`, `total`, `more`, and a
+short page when the document would not otherwise close.
+
+- `name` comes from the entry's own `<slug>.json` and **falls back to the slug**
+  for a document that is missing, truncated, oversized or not JSON. One
+  half-written metadata file costs that one row its name and nothing else. A
+  listing that fails because a single `.json` was cut off mid-upload would break
+  at precisely the moment the owner opened it to recover from that upload.
+- `voxels` and `dim` are read from the first 256 bytes of the `.vox` — the
+  `SIZE` and `XYZI` headers — so listing a gallery does not parse every model.
+  `voxels` is therefore the file's `XYZI` count, the number **before**
+  `eos_vox_finish()` culls; `/api/buddy`'s `model.voxels` is the number after,
+  for the live model only. Pip is 1,280 and 572.
+- `ok` is false when the board could not read that header. It does **not** mean
+  the model is broken and the entry is still listed and still selectable —
+  `eos_vox_parse()` gets the whole file at select time and is the authority.
+  A row with `ok:false` is also the only way the owner can see a damaged import
+  in order to delete it.
+- A gallery directory that does not exist yet lists as empty, not `not_found`.
+  That is a new board, not a broken endpoint.
+- `<slug>.json`, an abandoned `<slug>.vox.part` and anything else in the
+  directory are not entries. Only `<slug>.vox` with a legal slug is.
+
+**Slugs.** A slug becomes a filename and arrives off the network, so the rule is
+a whitelist and nothing else is negotiable:
+
+| Rule | Value |
+|---|---|
+| Characters | `a`–`z`, `0`–`9` and `-`. Nothing else, ever |
+| Length | 1 to 24 bytes, `EOS_GALLERY_SLUG_MAX` |
+| Checked | over the decoded length, so an embedded or `\u0000` NUL is refused |
+
+Everything else is `bad_argument` (400): `.`, `..`, a slash, a backslash, a
+percent escape, upper case, a trailing space, a name that is only non-ASCII
+after `\uXXXX` decoding. The rule is a whitelist rather than a list of
+forbidden shapes on purpose — a rule that has to enumerate the attacks is a rule
+that will miss the next one. 24 is not taste: an upload writes
+`<slug>.vox.part` and `EOS_NAME_MAX` is 40.
+
+**`POST /api/buddy/gallery/select`** takes `{"slug":"pip"}` and answers
+`{"ok":true,"active":"pip","buddy":{...}}` with the same `buddy` object
+`/api/buddy` emits. It is live immediately — the generation moves and the panel
+re-adopts on its next frame — and there is no reboot anywhere in it.
+
+The ordering inside it is a promise and not an implementation detail. **The
+model is parsed first and `/int/buddy/active` is written only after the parse
+has succeeded.** A model the board cannot read is `bad_argument` (400) with
+`eos_vox_strerror()`'s sentence as the detail, the buddy that was live is
+reloaded, and *nothing was written at all*. Selecting a broken import cannot
+cost you the buddy you had, and cannot leave the board pointing at a model it
+will refuse again on the next boot. `not_found` (404) is no such entry;
+`too_big` (413) is a model past `limits`.
+
+**`POST /api/buddy/gallery/remove`** takes `{"slug":"..."}` and deletes both
+files. `<slug>.json` being absent is not an error — the `.vox` is already gone.
+Two refusals, and they are different codes so the UI can say different things:
+
+| Case | `error` | Status |
+|---|---|---|
+| It is the buddy the board is wearing | `busy` | 409 |
+| It is the only buddy left | `state` | 409 |
+
+Select something else first. A gallery that can be emptied is a gallery that can
+lose you your last penguin, which is where this whole section started.
+
+**Which model is live** is resolved in one fixed order, so there is exactly one
+answer at any moment:
+
+1. the gallery entry `/int/buddy/active` names,
+2. failing that, the first entry the gallery holds,
+3. failing that, the legacy `/int/buddy/buddy.vox`.
+
+Step 2 writes nothing, so a full or read-only filesystem still boots wearing a
+buddy. Step 3 is the end of the search and not a second source of truth: it is
+what a board carrying a pre-gallery `buddy.vox` loads on the one boot before
+the firmware migrates that file into the gallery, and after that there is no
+`buddy.vox` left to find.
 
 ### buddy.json
 
@@ -617,10 +745,18 @@ numbers:
 
 | Value | Intent |
 |---|---|
-| `still` | holds `home_yaw`, blinks only |
-| `wander` | slow continuous yaw drift around home |
-| `curious` | occasional quick turns to a new yaw, then settles |
-| `sleepy` | drifts, sleeps at half `sleep_ms`, wakes slowly |
+| `still` | holds `home_yaw`, blinks only. Never leaves the spot |
+| `wander` | long rests, the odd short walk, plays rarely |
+| `curious` | quick turns to a new yaw, looks about, covers the whole box |
+| `sleepy` | slow and short, very long rests, never plays, sleeps at half `sleep_ms` |
+| `roam` | walks most of the time, over the whole box |
+| `play` | roams, and hops, spins, flaps or stretches every few seconds |
+
+`roam` and `play` were added when the buddy learned to walk; the first four are
+the original set and still mean what they meant, with motion under them. The
+board owns the numbers — see `kernel/avatar/README.md`, *Motion*. Anything that
+walks is drawn slightly smaller so that there is floor to walk on; `still` is
+drawn at exactly the size it always was.
 
 Unknown values fall back to `wander`. Reading a `schema_version` the firmware
 does not know should fall back to the compiled-in buddy rather than refuse to
@@ -713,6 +849,83 @@ strict far-to-near order, so picking is that same walk with a
 point-in-parallelogram test that keeps the *last* hit. Last is nearest, exactly,
 with no epsilon and no DDA, and it yields the face normal for free — which is
 what "build" needs to know where the new voxel goes.
+
+### The gallery strip
+
+Above the editor, one card per buddy on the board: a picture, the name, the
+voxel count and the size. Clicking one is `gallery/select` and the panel changes
+while you are looking at it. It is deliberately the first thing in the tab —
+choosing which penguin the board wears is now what this tab is mostly for, and
+editing one is the second thing.
+
+**The picture is drawn from the real `.vox`.** Not a stored thumbnail, not an
+icon: the card fetches the model and runs it through `readVox()` and
+`renderPreview()`, the same parser and the same painter walk the big canvas and
+the panel use, at yaw step 4 of 32. So a card cannot flatter a model the board
+cannot draw, and there is no second copy of the format to keep in step. One
+detached `EOSVox.Editor` — its canvases created but never inserted into the
+document, so nothing can interact with it — draws every card in turn.
+
+Drawing is not the cost. Measured in Chrome at `devicePixelRatio` 2, into an
+80-pixel card:
+
+| | ms per thumbnail |
+|---|---|
+| Pip, 1,280 voxels, 6.2 KB | 0.43 |
+| the largest model the format allows, 4,000 voxels in a 32-cube, 3,026 faces | 2.24 |
+| twelve cards, one synchronous burst | 5.4–6.9 **total** |
+
+The cost is the **fetch**: every card is a `/api/fs/read` of about 6 KB from a
+board with four HTTP workers. So the strip does three things about that and
+nothing about the drawing, which does not need it:
+
+- a card asks for its model only once it has been **scrolled into view**, via an
+  `IntersectionObserver` rooted on the strip with 160px of margin, so a gallery
+  of a hundred does not open with a hundred requests;
+- requests go one at a time through the same two-slot queue as everything else,
+  one card per animation frame;
+- the finished bitmap is **cached**, 24 of them, oldest evicted — 2.4 MB at
+  `devicePixelRatio` 2 — so scrolling back over a card costs a `drawImage` and
+  no request at all. **Refresh** clears the cache as well as the listing,
+  because a cache key can only be as good as the sizes the listing reports.
+
+A model whose header the board could not read (`ok:false`) is still listed,
+still selectable and still deletable — that is the only way to see a damaged
+import in order to get rid of it. If the browser cannot parse it either, the
+card says *will not draw* rather than showing an empty square.
+
+**The two refusals are on the card, not in the error afterwards.** A bin that
+cannot be used is disabled and the card says why in as many words — *no delete:
+on the panel*, *no delete: the only one*. The line is present on every card,
+empty when there is nothing to say, so one refusal does not leave a card
+standing taller than its neighbours. The firmware is still the authority, and
+because it answers the two cases with different codes, a delete that loses a
+race with another browser says either *it is the buddy the board is wearing* or
+*it is the only buddy left* rather than *conflict*.
+
+**Import adds; it never replaces.** This is the whole point. Both import
+buttons run the same path: parse against the board's caps, derive a slug from
+the filename inside `EOS_GALLERY_SLUG_MAX`, suffix it if it is taken, write
+`<slug>.vox` and `<slug>.json`, and leave the panel exactly where it was. The
+model is re-encoded through `toVox()` rather than uploaded as it arrived,
+because a MagicaVoxel file can carry chunks `eos_vox_parse()` skips and those
+bytes still count against the staging buffer.
+
+**Editing follows the slot, not the panel.** `B.slot` is the slug the editor is
+working on and it is not always the live one — an import leaves the editor on
+the buddy it just added. Re-listing the gallery does not drag the editor back
+onto the active slot, and **Save writes the slot the editor is on**. Saving the
+live slot re-selects it so the board re-reads it; saving any other slot writes
+the files, changes nothing on the panel, and says so. Getting this wrong is not
+cosmetic: it is the original bug wearing a different hat, and it would write the
+model on screen over the buddy the board is wearing.
+
+On a board whose firmware has no gallery routes, the strip shows a single card
+built from `GET /api/buddy` — `model.path` and `model.slug` when they are there,
+`buddy.vox` when they are not — with its bin disabled and a line saying this
+firmware keeps one slot. Import on such a board does what it always did: loads
+into the editor, writes nothing, and warns that Save would replace the one model
+the board has.
 
 ### Controls
 
@@ -839,7 +1052,7 @@ desktop.
 
 Every endpoint above is implemented. `test_httpd.c`'s `test_every_endpoint()`
 holds this document's complete list against the firmware's one route table and
-then drives all thirty-one through the real dispatch; `firmware/README.md`'s
+then drives all thirty-four through the real dispatch; `firmware/README.md`'s
 *The API* section says which file owns which. What follows is only the places
 where the board's real behaviour is narrower than what this document allows.
 
@@ -869,10 +1082,13 @@ still open. Items 5 to 9 are the setup screen's.
    `firmware/main/main.c` adopts the result. A `schema_version` the firmware
    does not know falls back to the compiled-in buddy rather than refusing to
    boot, as this document asked.
-2. **The four `idle.behaviour` presets are named, not specified.** The editor
-   writes the name; the board owns what each one does. Partly landed: the preset
-   is stored and reported, and `sleepy` halves `idle_sleep_ms`, but nothing
-   consumes yaw drift yet.
+2. ~~**The four `idle.behaviour` presets are named, not specified.**~~
+   **Settled, and the vocabulary grew.** The editor still writes only the name
+   and the board still owns what each one does, but something consumes them
+   now: `kernel/avatar/eos_stroll.c` maps the string to a walking, waddling,
+   occasionally hopping preset. Two values were added — `roam` and `play` — so
+   the list is six. Unknown still falls back to `wander`, and `sleepy` still
+   halves `idle_sleep_ms`.
 3. ~~**Settings key names.**~~ **Settled.** `kernel/svc/eos_settings.h` uses
    these twelve names exactly. All of them fit 15 bytes.
 4. ~~**`/api/console/exec` is fire-and-forget with a shared log.**~~ **Settled.**

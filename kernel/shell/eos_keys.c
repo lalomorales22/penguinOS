@@ -509,6 +509,31 @@ static bool move_focused(eos_wm_t *wm, eos_dir_t dir, eos_rect_t screen)
     return true;
 }
 
+// Next visible window on this workspace, wrapping. Built from the layout the
+// window manager already computes rather than from its tree, so the order the
+// user tabs through is the order they see on the glass.
+static bool focus_next_window(eos_wm_t *wm, eos_rect_t screen)
+{
+    eos_tile_t t[EOS_MAX_WINDOWS * 2];
+    int n, i, cur = -1, first = -1, next = -1;
+
+    if (!wm) return false;
+    n = eos_wm_layout(wm, screen, t, (int)(sizeof t / sizeof t[0]));
+
+    for (i = 0; i < n; i++) {
+        if (!t[i].visible) continue;
+        if (first < 0) first = i;
+        if (cur >= 0 && next < 0) next = i;
+        if (t[i].win == wm->focus) cur = i;
+    }
+    if (first < 0) return false;                    // nothing on this workspace
+    if (next < 0 || cur < 0) next = first;          // wrapped, or nothing focused
+    if (t[next].win == wm->focus) return false;     // only one window
+
+    eos_wm_focus_win(wm, t[next].win);
+    return true;
+}
+
 eos_key_result_t eos_keys_apply(eos_wm_t *wm, eos_shell_state_t *st,
                                 eos_rect_t screen, eos_action_t action, int16_t arg)
 {
@@ -560,7 +585,17 @@ eos_key_result_t eos_keys_apply(eos_wm_t *wm, eos_shell_state_t *st,
             r.changed = eos_wm_move_to_workspace(wm, wm->focus, arg);
         break;
 
-    case EOS_ACT_TAB_NEXT: r.changed = eos_wm_focus_tab_next(wm, screen); break;
+    case EOS_ACT_TAB_NEXT:
+        // Inside a collapsed group, cycle the group - the specific and more
+        // useful meaning. Everywhere else cycle the workspace's windows,
+        // because eos_wm_focus_tab_next() answers false when the focused
+        // window is not in a group, and super+tab then did nothing at all.
+        // Two windows on a narrow panel collapse into a group and it worked;
+        // a third changed the layout and it stopped, which reads as broken
+        // rather than as a rule.
+        r.changed = eos_wm_focus_tab_next(wm, screen);
+        if (!r.changed) r.changed = focus_next_window(wm, screen);
+        break;
     case EOS_ACT_RESIZE:   r.changed = eos_wm_resize(wm, arg);            break;
 
     case EOS_ACT_LAUNCHER:   st->launcher_open = !st->launcher_open; r.changed = true; break;
