@@ -1,15 +1,24 @@
 # penguinos — status
 
-Last integration pass: 2026-08-30.
+Last integration pass: 2026-08-31.
 
-**One sentence: penguinOS boots on a Waveshare ESP32-C6-LCD-1.3, tiles ten
-windows the owner can open from a super+space app list, close with super+q or
-with the x in a tile's header, and drive with a keyboard and a trackpad through
-one event queue and one dispatcher.** It joins the house WiFi, shows its own
-address on the panel, wears a voxel penguin called Pip, answers megabrain
-questions on the glass, and serves a companion app whose entire API the
-firmware answers. A new board is set up by pointing a phone camera at a QR code
-on the glass.
+**One sentence: penguinOS boots on two ESP32-C6 panels from one kernel and a
+JSON profile, tiles ten windows the owner can open from a super+space app list,
+close with super+q or with the x in a tile's header, and drive with a keyboard
+and a trackpad through one event queue and one dispatcher.** It joins the house
+WiFi, shows its own address on the panel, keeps a gallery of voxel buddies and
+wears whichever one is chosen, lets that buddy waddle around his tile between
+questions, answers megabrain questions on the glass, and serves a companion app
+whose entire API the firmware answers. A new board is set up by pointing a phone
+camera at a QR code on the glass.
+
+**This pass added the buddy gallery.** There used to be exactly one buddy, at
+`/int/buddy/buddy.vox`, and importing a new one wrote over it — which is how Pip
+was lost for an evening. There is now a gallery under `/int/buddy/gallery/`, a
+one-line `/int/buddy/active` naming which model is live, four shipped buddies
+instead of one, and a stroll that walks the live buddy around his own render
+target while he is idle. An import lands beside what is already there, and every
+shipped model is put back on every boot rather than only the first.
 
 Everything through the first flash is verified on hardware. **Everything in
 this pass is verified on the host only** — the BLE handle-latch fix that makes
@@ -27,27 +36,28 @@ the tab labels all read that one table.
 |---|---|---|---|---|---|
 | `kernel/wm` | 2 + test | yes | **268 checks** | yes | Finished and frozen. Not modified since it was written. |
 | `kernel/theme` | 2 + 7 themes + test | yes | **213 checks** | yes | Parser is genuinely hardened: survives 200k random buffers, 7,030 single-byte mutations, exhaustive short inputs, all under ASan. |
-| `kernel/avatar` | 4 + test | yes | **109 checks** | **not yet flashed** | Renderer proven per-pixel by a painter-order audit, and drawn into the `buddy` window by `firmware/main/eos_shell_draw.c`. |
+| `kernel/avatar` | 5 + tests | yes | **109 + 93 checks** | **not yet flashed** | Renderer proven per-pixel by a painter-order audit, and drawn into the `buddy` window by `firmware/main/eos_shell_draw.c`. `eos_stroll.c` is new: the gait, the wander and the play, as an offset inside the render target so a step costs the compositor no new damage. |
 | `kernel/shell` | 6 + tests | yes | **2,201 + 204 + 604 checks** | partly | Model only — emits segments, actions, rows and rectangles, and draws nothing. `eos_launcher.c` (the app list) and `eos_pointer.c` (the cursor, the hit test and the close box) are new. |
-| `kernel/svc` | 7 + test | yes | **215 + 2,118 + 334 + 368 + 570 checks** | partly | `eos_brain`, `eos_httpd`, `eos_net`, `eos_ble`, `eos_radio`, `eos_settings`, `eos_apps`. `eos_ble.c` now subscribes to every notifying input report and latches the handle that delivers keyboard-shaped ones and the handle that delivers 3-byte mouse ones. |
+| `kernel/svc` | 8 + test | yes | **215 + 2,118 + 334 + 375 + 397 + 570 checks** | partly | `eos_brain`, `eos_httpd`, `eos_net`, `eos_ble`, `eos_radio`, `eos_settings`, `eos_apps`, `eos_gallery`. `eos_gallery.c` is new: the slug whitelist, the active pointer, and a select that parses the model **before** it moves the pointer, so a model this board refuses cannot cost the owner the buddy they had. |
 | `kernel/font` | 2 + data + test | yes | **418 checks** | yes | All four faces: tiny 4x6, small 6x8, med 8x13, big 12x20. 6,597 B of flash. |
 | `kernel/test` | 1 | yes | **635 checks** | n/a | Cross-component contracts, plus every generated board header held against the registry. |
 | `kernel/hal` | 4 headers + ST7789 backend + storage backend + tests | yes | **109 + 276 checks** | display yes, storage no | The event ring now carries pointer events beside keys. `EOS_FS_FAT` is still not implemented, because no board has verified card pins. |
 | `boards/` | schema + 6 profiles | yes | validator + generator | n/a | All 6 validate, generate headers that compile and link, and regeneration is byte-reproducible. |
-| `tools/` | flasher, detector, prober, generator, `host_tests.sh` | yes | `--list` / `--identify` exercised | partially | `tools/host_tests.sh` runs all **21** suites in one command. |
-| `firmware/main` | 17 + 4 tests | yes | **24 + 55 + 396 + 67 checks** | partly | The boot glue, the scene, the dispatcher, the app table and seven app bodies. `test_shell_draw.c` renders the whole desktop on the host and writes it as a PPM; `test_dispatch.c` drives the input ladder end to end. |
-| `web/` | 5 served files | yes | `node --check`, mock firmware | **the app itself, yes** | The contract is implemented end to end. All 31 endpoints resolve; the Buddy tab now loads and saves Pip against the board's own `/api/buddy` limits. |
+| `tools/` | flasher, detector, prober, generator, `host_tests.sh` | yes | `--list` / `--identify` exercised | partially | `tools/host_tests.sh` runs all **23** suites in one command. |
+| `firmware/main` | 17 + 4 tests | yes | **24 + 59 + 438 + 67 checks** | partly | The boot glue, the scene, the dispatcher, the app table and seven app bodies. `test_shell_draw.c` renders the whole desktop on the host and writes it as a PPM; `test_dispatch.c` drives the input ladder end to end. **`eos_seed_buddy.c` has no host suite** — see the defects table. |
+| `web/` | 5 served files | yes | `node --check`, mock firmware | **the app itself, yes** | The contract is implemented end to end. All 34 endpoints resolve; the Buddy tab is now a gallery strip whose cards are drawn by a detached editor instance, so there is no second parser and no second renderer. |
+| `assets/buddy/` | 4 models + 4 generators + checker | n/a | `check_vox.c` renders each through the real kernel code | via the seeder | Pip, Hoot the owl, Mochi the cat and Bolt the robot. Every model parses inside this board's caps and renders with 0 enclosed gaps and 0 painter violations at eight yaws. |
 | `apps/` | — | **empty** | — | — | Superseded by `firmware/main/eos_app_registry.c`. There is no separate process model and nothing plans one. |
 
-**33,546 checks across twenty-one host suites, all passing**, clean under
+**34,103 checks across twenty-three host suites, all passing**, clean under
 `-Wall -Wextra` and `-fsanitize=address,undefined`, and the whole kernel
 compiles clean for xtensa and riscv32 at `-Wall -Wextra -Werror -Os`.
 
 ```
-wm 268    theme 213   avatar 109   brain 215   shell 2201  launcher 204
-pointer 604  font 418  integ 635   display 109 qr 23080    net 1282
-ble 570   httpd 2118  storage 276  settings 334  apps 368  draw 55
-appsui 396   dispatch 67   setup 24
+wm 268    theme 213   avatar 109   stroll 93   brain 215   shell 2201
+launcher 204  pointer 618  font 418  integ 635  display 109  qr 23080
+net 1282  ble 570   httpd 2118  storage 276  settings 334  apps 375
+gallery 397  draw 59  appsui 438  dispatch 67  setup 24
 ```
 
 ```bash
@@ -126,11 +136,17 @@ seams. This pass joined them into one system and checked the joins.
 | 13 | **A locked board could be typed into and clicked through.** `eos_keys_feed()` enforced the lock, but the two paths that never reach it — printable text and every pointer event — went straight to the focused window and the window manager. So `super+escape` locked the desktop and a trackpad still focused tiles, and after this pass would have closed windows. | The lock is enforced once, in the pump, for all three paths. Rung 2. |
 | 14 | **A global chord that fired and found nothing to do leaked to the focused app.** The pump tested `r.changed` to decide whether the keymap had consumed a key. `super+left` at the left edge moves no focus, so it came back `handled` and `!changed` — and was handed on to the chat window as a bare left arrow. | Test `r.handled` for consumption and `r.changed` for redraw; they answer different questions and the header now says which. Pinned by binding `super+pgup` to focus-up at the top of the layout, `pgup` being a key chat always consumes and no default bind claims. |
 | 15 | **The close box's first version shrank to fit.** A tile too narrow for a full-width box got a smaller one — and `draw_close_x()` refuses to paint anything under five pixels, so the result was a rectangle that closed a window with nothing on the glass to say so. | The box is `close_w` wide or it does not exist. `EOS_POINTER_CLOSE_MIN` is shared by the painter and the geometry, and the pointer suite checks the exact tile width where it switches off. |
+| 16 | **The firmware did not build at all.** `kernel/svc/eos_brain.c` had `#include "esp_log.h"` *inside* the body of the receive step, in a block marked `TEMPORARY DIAGNOSTIC`. That makes every declaration in the header a local one, which is an invalid storage class for a function, and it stopped both boards' images dead. The host suites never saw it — they do not define `ESP_PLATFORM`, so the include was preprocessed away — which is exactly why 34,000 passing checks sat on top of a tree that could not be flashed. | The include hoisted to the top of the file under the same `#ifdef ESP_PLATFORM`, and the diagnostic itself left byte-for-byte alone: it is somebody's in-flight debugging and the fix is where the include lives, not whether it exists. Both boards link again. |
+| 17 | **An update would have quietly changed which buddy the owner was wearing.** `eos_seed_buddy.c` correctly migrated a pre-gallery `/int/buddy/buddy.vox` into the gallery, but `ensure_active()` then preferred the shipped `pip` over it — so a board carrying an imported model (the owner has one wearing a pig) would come up wearing a penguin instead. The model was never lost, it was one click away in the strip, but silently swapping the buddy on the panel is this feature's own bug with the roles reversed: the gallery exists so that nothing takes your buddy away without you asking. | `migrate_legacy()` now reports the slug it filed the legacy model under, and `ensure_active()` prefers it over the shipped default. A pre-gallery `buddy.vox` is by definition what the board was *wearing*, which is the strongest evidence of the owner's choice there is. A legacy file that is Pip's own bytes migrates as `pip` and lands on the same answer either way, and the boot log now names the winner and says it came from the migration. |
+| 18 | **Pip was the one buddy in the gallery who could not blink.** `assets/buddy/buddy.json` still carried the pre-`schema_version` shape — `"eyes": {"open": 4, "shut": 5}` with `home_yaw` and `idle_sleep_ms` at the top level — and `load_buddy_json()` reads only the nested `eyes.open_index` / `idle.*`. So Pip loaded with `cfg.eye_ci = 0`, which `eos_buddy.h` defines as *no eyes*: the blink was a no-op on the mascot the OS is named for, while Mochi, Hoot and Bolt all blinked correctly. Pre-existing — `buddy.json` is untouched since `d7e3c97` and the old seeder wrote it too — but invisible until the gallery put the four side by side, and `assets/buddy/README.md` already *claimed* all four were in the `schema_version: 1` shape with slots 4 and 5 as the blink pair. The ASCII renders never caught it because `check_vox` takes the eye and lid indices on the command line. | `buddy.json` converted to the documented shape the other three already use, keeping Pip's name, persona, accent and his own `4`/`5` blink pair. Confirmed by running the board's real `load_buddy_json()` over the shipped bytes: `eye_ci=4 eye_shut_ci=5`, matching his siblings. Two deliberate value changes: `home_yaw` becomes `4` — the file said `0`, but `0` is not what the board has been rendering (the default `YAW_STEPS/8` was winning) and `0` flattens him to a two-tone slab; and `sleep_ms` becomes the `120000` the old file always asked for and never got. |
 
 ## Defects found and NOT fixed
 
 | Defect | Why not | Who should |
 |---|---|---|
+| **`firmware/main/eos_seed_buddy.c` has no host suite, and it is the file that carries the migration.** It decides whether a board updated from before the gallery keeps the buddy it was wearing — the one path on this feature that touches an owner's existing model and cannot be undone by clicking something else. Defect 17 above was found by reading it, not by a failing check. | It resists host testing by construction: it includes `esp_log.h` unconditionally, and its inputs are `_binary_*` linker symbols whose name mangling differs between Mach-O and ELF, so a suite that passed on this Mac could fail on a Linux runner. Making it testable means restructuring it, which is not a thing to do to a file three other agents had open this pass. | Whoever next touches the seeder. Splitting the decisions (which slug, which active) from the embedded-blob plumbing would make them ordinary host-testable functions. |
+| **Defect 18's fix does not reach a board that was already wearing stock Pip.** On such a board the migration recognises the legacy `buddy.vox` as Pip's own bytes, files it as `pip`, and moves the legacy `buddy.json` along with it to `gallery/pip.json` — so `seed_shipped()` finds a `pip.json` already there and, correctly, does not overwrite it. That board keeps the old flat metadata and Pip still does not blink on it. A board wearing anything else (the owner's pig board) migrates as `buddy` and gets the corrected `pip.json` seeded fresh. | The obvious fix — don't carry the legacy `.json` over when the model was recognised as the shipped Pip — is wrong. An owner may have kept the stock model and rewritten only the personality, and discarding the sentence they wrote about their penguin is exactly the harm this whole feature exists to prevent. A blink is not worth that trade. | The owner, in one click, if they notice: delete `pip` from the gallery (after selecting another buddy) and reboot, and the seeder writes the corrected one. Or whoever next touches the seeder, if a metadata *merge* is ever worth the code. |
+| **The gallery's flash behaviour on select is unmeasured on silicon.** Select is one ~20-byte whole-file write, deliberately a pointer and never a copy of the model, precisely so the instruction-cache stall is a single page. Nobody has watched it happen while the panel is drawing at 10 Hz and a keyboard is connected. | Needs hardware. The design is chosen to make this a non-event; that is an argument, not a measurement. | First flash — it is item 3 on the hardware list below. |
 | **`render.heap_budget_bytes` is still a guess on five of the six boards.** Only `waveshare-c6-lcd-13` is measured (425,648, radios down). The wavvy figure (64 KB) contradicts the owner's own measurement — `../tft-videos/CLAUDE.md` records free heap at 48–55 KB on that exact firmware. `eos_display_init()` sizes off this number, so a wrong value is an OOM at boot, not a degradation. | Needs a real heap dump on real silicon. Cannot be derived. | First bring-up. |
 | **The C5's `render.band_height` (40) disagrees with its own BSP.** `../esp32-c5/bsp/Kconfig` defaults the draw buffer to 20 rows at 172 wide, not 40 at 320. The profile's `reason` text describes the post-rotation logical frame, not the buffer the BSP allocates. | It is a Kconfig knob penguinOS may legitimately set, so the value is not necessarily wrong — but the prose and the BSP have to be reconciled by whoever writes the build. | Build wiring. |
 | **`eos_board_fb_bytes()` lies on LVGL boards.** It returns `w*h`, assuming one palette index per pixel, so on the C5 it returns 55,040 — a number with no meaning, since LVGL owns the buffers and the profile correctly derives `EOS_FB_BYTES = 0`. | It is a one-line guard on `render.compositor == EOS_COMP_LVGL`, but changing a HAL function's return contract while no backend exists yet is guessing at which caller is right. | Whoever writes the first LVGL backend. |
