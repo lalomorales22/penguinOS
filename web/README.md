@@ -31,18 +31,34 @@ kernel by `design/build_preview.py`, so it cannot go stale either. See
 Ship only the five files in the table above; anything that globs `web/*` into a
 flash image is wrong.
 
+**This document is the contract and the firmware now implements all of it.** It
+was written first and against nothing; for one release the board served the five
+files and answered eight of the thirty-one endpoints, so the Files tab was
+empty, Settings saved nothing and Megabrain did nothing. That gap is closed —
+see *What the board answers* below for the handful of places where the board's
+real behaviour is narrower than what this document allows, and
+`firmware/README.md`'s *The API* for which file owns which route.
+
 ## Serving it
 
-The five files live on the card, gzipped, and are served with
+The five files live on the filesystem, gzipped, and are served with
 `Content-Encoding: gzip`. Nothing on the board ever compresses at runtime.
 
 ```
-/sd/web/index.html.gz
+/sd/web/index.html.gz          # or /int/web/... on a board with no card
 /sd/web/style.css.gz
 /sd/web/app.js.gz
 /sd/web/setup.js.gz
 /sd/web/voxel-editor.js.gz
 ```
+
+**What the C6 actually does today.** It has no card, `/int` is a mounted but
+empty 960 KB LittleFS, and nothing deploys the five files onto it yet — so all
+five are linked into the image with `EMBED_FILES` and served from flash. The
+rule above is still the rule: `eos_apps_bind_files()` wraps the embedded ports
+and prefers a real file the moment one exists, and the fallback means the board
+is never left with nothing to serve. See *Serving the web app* in
+`firmware/README.md`.
 
 ```bash
 # deploy: gzip onto the card, keeping the original names plus .gz
@@ -106,8 +122,11 @@ firmware's memory profile, so they are recorded here rather than rediscovered.
   `/api/fs/read` (raw bytes) and `/api/brain/ask` (streamed text).
 - Paths are `eos_storage` paths — `/sd/...` or `/int/...` — passed as a
   **query parameter**, percent-encoded. `EOS_PATH_MAX` is 96, so a path over 95
-  bytes is `too_big` (400), never truncated: a truncated path names a different
-  file.
+  bytes is `too_big` (413), never truncated: a truncated path names a different
+  file. The status is 413 and not 400 — this sentence used to say 400 and the
+  table below said 413, which is the sort of disagreement that is only ever
+  found by implementing both. `eos_httpd_err_status()` is the one authority and
+  it says 413.
 - Booleans are JSON booleans. Sizes and offsets are numbers, in bytes.
   Durations are milliseconds. Times are unix seconds.
 - `POST` is used for every mutation, including ones that would be idiomatic as
@@ -771,24 +790,51 @@ refresh reports `cannot read /sd - Failed to fetch` inline. Restarting the board
 and pressing retry recovers with no reload. Verified at 375x812 as well as
 desktop.
 
+## What the board answers
+
+Every endpoint above is implemented. `test_httpd.c`'s `test_every_endpoint()`
+holds this document's complete list against the firmware's one route table and
+then drives all thirty-one through the real dispatch; `firmware/README.md`'s
+*The API* section says which file owns which. What follows is only the places
+where the board's real behaviour is narrower than what this document allows.
+
+| Where | What the board does |
+|---|---|
+| `limits.chunk_max` | **512**, not 4,096. It is `EOS_HTTPD_BODY_MAX`, the body lands in a worker's stack frame before the dispatch lock is taken, and four workers times any increase comes straight out of the heap. `/api/system` reports it by calling `eos_apps_chunk_max()` rather than restating it. The web app gzipped is about 100 chunks; the biggest `.vox` this board stages is 12 |
+| `limits.list_max` | 32 |
+| `fs` | `/int` is a 960 KB LittleFS and is mounted. `/sd` is declared and reports `mounted: false` — the slot exists on the C6 board but its pins are not known, so `EOS_FS_FAT` is not implemented and `/sd` answers `no_such_device` without touching a bus |
+| `GET /api/buddy` | 404s on a board that has a buddy on its panel. It reports `/int/buddy/buddy.json`, and the avatar the panel is drawing is compiled into the image. This document already calls a 404 normal on a fresh card, and that is exactly what this is |
+| `POST /api/system/reboot` | answers, then reboots on the OS loop's next tick. Restarting inside the handler would drop the socket mid-response and the page would report a network failure for a reboot that worked |
+| `POST /api/settings` | the whole patch is capped at 512 bytes with the body. A maximum-length Megabrain group save is about 400 B and fits; a hand-written client sending a long `brain.system` in the same document gets a 413 from the transport before a handler sees it |
+| `wifi.ssid` + `wifi.psk` | a network change needs both. A new SSID with a blank password is refused rather than retried with the old network's passphrase, which would fail and be reported as "wrong password" |
+| settings durability | an edit is lost if the board dies within 2 s of it. That is the debounce window: a LittleFS sync is a 4 KB sector erase with the instruction cache off, and a 60-step brightness drag has to cost one erase and not sixty |
+| `time.synced` | always false. There is no SNTP client, so `epoch` is whatever `time()` says and the first file written on a fresh board carries a 1970 mtime for ever |
+| `sys.autostart` | stored, reported, and applied at boot as **which window has the focus**. Every window is open from boot and there is no process to launch; `apps/` is empty |
+| `fw.built` | `__DATE__ " " __TIME__`, not ISO 8601, and `fw.version` is the string `0.1.0`. There is no build-system field for either yet |
+
 ## Assumptions to confirm
 
-Nine things here are invention rather than something the repo already fixed.
-They are all cheap to change now and expensive later. Items 5 to 9 are the
-setup screen's, and 5, 6 and 7 are the ones another agent has to agree to.
+Nine things here were invention rather than something the repo already fixed.
+Four of them have since been implemented against and are settled; the rest are
+still open. Items 5 to 9 are the setup screen's.
 
-1. **`buddy.json` is a format I defined.** Nothing in `kernel/avatar/` reads it
-   yet — `eos_buddy.h` has the fields but no JSON loader. The schema above maps
-   onto `eos_buddy_cfg_t` field for field, but whoever writes the loader should
-   confirm the names before both sides are built.
+1. ~~**`buddy.json` is a format I defined.**~~ **Settled.**
+   `kernel/svc/eos_apps.c` reads it, field for field as documented, and
+   `firmware/main/main.c` adopts the result. A `schema_version` the firmware
+   does not know falls back to the compiled-in buddy rather than refusing to
+   boot, as this document asked.
 2. **The four `idle.behaviour` presets are named, not specified.** The editor
-   writes the name; the board owns what each one does.
-3. **Settings key names.** Chosen to fit 15 bytes for NVS. If the settings
-   component already has a key scheme, that one wins.
-4. **`/api/console/exec` is fire-and-forget with a shared log.** This assumes
-   the OS has a single console log that both boot messages and command output
-   flow into. If commands need their own output channel, `exec` should return a
-   handle instead.
+   writes the name; the board owns what each one does. Partly landed: the preset
+   is stored and reported, and `sleepy` halves `idle_sleep_ms`, but nothing
+   consumes yaw drift yet.
+3. ~~**Settings key names.**~~ **Settled.** `kernel/svc/eos_settings.h` uses
+   these twelve names exactly. All of them fit 15 bytes.
+4. ~~**`/api/console/exec` is fire-and-forget with a shared log.**~~ **Settled.**
+   `eos_apps_log_install()` puts the ESP-IDF log hook in before anything logs, so
+   boot messages and command output share one ring. The command table is closed
+   at seven words with no arguments — `help status heap reboot theme wifi brain`
+   — because the endpoint is unauthenticated and reachable from any phone on the
+   same WiFi as a board holding that WiFi's password in NVS.
 5. **`/api/net/status` carries `mode`, `ap` and `join`.**
    `docs/provisioning.md` describes it as "Mode, IP, RSSI, mDNS name" and does
    not name the fields. The page reads `mode` (which page to be), `ap.ssid`

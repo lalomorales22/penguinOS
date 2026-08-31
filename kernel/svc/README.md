@@ -3,13 +3,16 @@
 Kernel services that are not the window manager: `eos_brain`, the MEGABRAIN
 client; `eos_net`, the credential state machine and the SoftAP; `eos_ble`, the
 BLE HID host a keyboard arrives through; `eos_radio`, the one lock the two
-radios share; and `eos_httpd`, the provisioning API.
+radios share; `eos_httpd`, the provisioning API; and `eos_settings`, the twelve
+keys the Settings page edits and the one file on `/int` that carries them; and
+`eos_apps`, the other half of the HTTP API — files, console, buddy and the app
+list.
 
 | File | What |
 |---|---|
 | `include/eos_brain.h` | MEGABRAIN client: streaming parser, request API, transport interface |
 | `eos_brain.c` | Implementation, plus the ESP-IDF socket/mDNS/NVS bindings |
-| `test/test_brain.c` | Host test, 168 checks, no networking |
+| `test/test_brain.c` | Host test, 182 checks, no networking |
 | `include/eos_net.h` | WiFi: the try/commit credential machine, SoftAP, captive DNS, the QR payload |
 | `eos_net.c` | Implementation, plus the ESP-IDF WiFi/NVS/mDNS bindings |
 | `test/test_net.c` | Host test, 1276 checks, no radio |
@@ -20,7 +23,13 @@ radios share; and `eos_httpd`, the provisioning API.
 | `test/test_ble.c` | Host test, 570 checks, no radio |
 | `include/eos_httpd.h` | The HTTP server: the provisioning API, the web app, the captive portal |
 | `eos_httpd.c` | Implementation, plus the esp_http_server / eos_net / eos_ble bindings |
-| `test/test_httpd.c` | Host test, 2009 checks, no sockets |
+| `test/test_httpd.c` | Host test, 2111 checks, no sockets |
+| `include/eos_settings.h` | The settings store: twelve dotted keys, the file, the debounce |
+| `eos_settings.c` | Implementation. No IDF at all — it is eos_storage and the JSON reader |
+| `test/test_settings.c` | Host test, 334 checks, on a real filesystem in /tmp |
+| `include/eos_apps.h` | Files, console, buddy and apps: fourteen routes, two ports, the caps |
+| `eos_apps.c` | Implementation. IDF only for the log hook and one mutex |
+| `test/test_apps.c` | Host test, 368 checks, on a real filesystem in /tmp |
 
 ```bash
 cc -std=c99 -Wall -Wextra -O1 -Ikernel/svc/include \
@@ -38,6 +47,20 @@ cc -std=c99 -Wall -Wextra -O1 \
 
 cc -std=c99 -Wall -Wextra -O1 -Ikernel/svc/include \
    kernel/svc/eos_httpd.c kernel/svc/test/test_httpd.c -o /tmp/test_httpd && /tmp/test_httpd
+
+cc -std=c99 -Wall -Wextra -O1 \
+   -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include \
+   -Ikernel/avatar/include -Iboards/generated \
+   kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+   kernel/hal/backend/storage/eos_storage_idf.c \
+   kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
+   kernel/svc/test/test_apps.c -o /tmp/test_apps && /tmp/test_apps
+
+cc -std=c99 -Wall -Wextra -O1 \
+   -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include -Iboards/generated \
+   kernel/svc/eos_settings.c kernel/svc/eos_httpd.c \
+   kernel/hal/backend/storage/eos_storage_idf.c \
+   kernel/svc/test/test_settings.c -o /tmp/test_settings && /tmp/test_settings
 ```
 
 The BLE suite links `eos_wm` and `eos_keys` because its last section is not a
@@ -45,6 +68,44 @@ unit test: it pushes a synthesised `super+return` report through the input HAL
 into the real keybind table against a real `eos_wm_t` and checks that a window
 opened. That is the whole chain from the wire to the window manager, running on
 a laptop with no radio in the room.
+
+The settings suite links the real storage backend and the real HTTP handlers for
+the same kind of reason. "The settings file is truncated" means a truncated file
+in a sandbox under `/tmp`, not a string handed to a parser, and the four
+endpoints are driven through `eos_httpd_dispatch()` against the real store
+rather than a mock of it. Also clean under `-fsanitize=address,undefined`.
+
+## eos_settings
+
+Twelve dotted keys, flat, none longer than fifteen bytes, because
+`web/README.md` fixed that shape so a settings key can also be an NVS key.
+
+| Group | Keys | Live? |
+|---|---|---|
+| Network | `wifi.ssid`, `wifi.psk`, `wifi.psk_set`, `net.host` | reboot |
+| Megabrain | `brain.host`, `brain.port`, `brain.model`, `brain.max`, `brain.system` | live |
+| Appearance | `ui.theme`, `ui.bright` | live |
+| System | `sys.tz`, `sys.autostart` | tz live, autostart reboot |
+
+Four rules the implementation rests on:
+
+- **A bad file must never stop a boot.** Truncated, empty, garbled, absent, full
+  of random bytes, every key at the wrong type — each one leaves the store
+  holding defaults and returns a reason code for the log. This is
+  `kernel/theme`'s rule and it is here for the same reason.
+- **Numbers clamp, the document does not fail.** A brightness of 4000 is a typo
+  in one field; rejecting the file over it would cost the owner every other
+  setting in it.
+- **WiFi credentials are not in this file.** `wifi.ssid` and `wifi.psk` route to
+  `eos_net`, which is the only thing in the image that enforces
+  try-then-commit. A second copy here would be a second chance to get
+  save-then-try the wrong way round.
+- **No HTTP worker writes flash.** A LittleFS sync is one or more 4 KB sector
+  erases with the instruction cache off, on a chip with one core that is also
+  driving the panel and the radio. `eos_settings_set()` mutates RAM;
+  `eos_settings_pump()` writes it from the OS loop once the edits have been
+  quiet for two seconds. Sixty slider positions cost one erase, which is the
+  debounce `kernel/hal/backend/storage/README.md` asks the layer above it for.
 
 ## MEGABRAIN, the server
 
@@ -575,11 +636,68 @@ not the web app. It lists networks, joins one, and reports the outcome, and it
 exists so that an empty filesystem is still a board you can get onto a network.
 It fetches nothing off-board.
 
+## Megabrain, over HTTP
+
+Three endpoints, `web/README.md`'s "Megabrain" section, over four ports that
+have the same shape as the radios' and exist for a sharper version of the same
+reason.
+
+| Method | Path | Answers |
+|---|---|---|
+| GET | `/api/brain/status` | host, port, model, models, reachable, busy, last_error |
+| POST | `/api/brain/ask` | **streamed** `text/plain; charset=utf-8`, chunked |
+| POST | `/api/brain/cancel` | `{"cancelled":bool}`, always 200 |
+
+`eos_brain` is a single-request state machine with no lock in it, and its pump
+blocks — three seconds on a connect to a mini that is switched off, two more on
+an mDNS query nothing answers. So exactly one task may call it, and that task is
+not an HTTP worker. `brain_ask` starts a request and returns; the worker drains
+decoded text through `brain_read` from a ring the owning task fills. On the
+board that task is `firmware/main/eos_brain_bridge.c`.
+
+### Why the reply is a chunked response and not SSE or a poll
+
+A reply takes seconds and arrives token by token, and this server has four
+workers, one core and a frame loop it must not starve.
+
+| | Verdict |
+|---|---|
+| chunked `text/plain` | **chosen.** One socket, no framing the client does not want; `app.js` already reads `r.body.getReader()` |
+| SSE | same socket for the same duration, plus an event framing at both ends that buys nothing |
+| polling a buffer | still needs the ring, because tokens arrive between polls whatever the client does — and then spends a worker AND the dispatch lock several times a second, and delivers the text in lumps. Strictly more machinery for a worse result |
+
+The cost is one worker held for the length of one reply. `eos_brain` allows one
+request in flight and a second ask is refused 409 before it can take a second
+worker, so three of the four are always free — more than the two concurrent
+requests the web app holds itself to.
+
+The dispatch lock is **released before the drain begins**, and that is the one
+change a stream makes to the responder. A stream reads none of the shared
+buffers the lock protects — the test asserts this by sentinel, not by reading
+the code — so holding it across a chat request would park the other three
+workers for nothing.
+
+### A worker is never lost
+
+Four exits, all bounded:
+
+| | What happens |
+|---|---|
+| the reply ends | `brain_read` says END; terminating chunk; worker returns |
+| the client vanishes | the next `send_chunk` fails; the request is **cancelled** rather than left talking into a ring nobody drains |
+| nothing arrives for 30 s | cancel, then a `! ` line, then close |
+| 120 s in total | the same |
+| the reader itself disappears | the binding takes the channel back 5 s after the reply settled, or the next ask would be 409 for the life of the boot |
+
+An error raised after the stream has started cannot use a status code — the 200
+is already on the wire. `web/README.md` spells the alternative and this
+implements it: a line beginning `! `, then close.
+
 ## Test
 
-2009 checks, no sockets, no radio, no IDF. The radios reach the handlers through
-a port table and the suite fills it with a scripted fake, so the nine handlers
-under test are the production ones.
+2111 checks, no sockets, no radio, no IDF. The radios and megabrain reach the
+handlers through a port table and the suite fills it with a scripted fake, so
+the twelve handlers under test are the production ones.
 
 Two properties are asserted on every string the writer produces, by validators
 written in the test rather than borrowed from the code under test: the output is
@@ -618,6 +736,404 @@ with the buffer tunables overridden in six combinations.
 | `Range` on static files | the app never sends one, and it wants the whole file |
 | `Content-Length` on files | responses are chunked, which is what streaming from flash costs |
 | TLS | no certificate a phone would accept, and no clock to check one with |
-| `/api/system`, `/api/fs/*`, `/api/settings` | the rest of `web/README.md`, and not this run's scope |
+| `Range` on `/api/fs/read` | same reason: the response is chunked, and the web app sends none |
+| an SD card | `sdcard.present` is false on every board profile; `/sd` routes and answers `no_such_device` |
+| model discovery | megabrain publishes no list; the three names are compiled into the binding |
+| a second concurrent ask | `eos_brain` holds one request, so the second is 409 before it can take a worker |
 | a per-request auth token | the SoftAP is WPA2 and its password is on the panel; that is the boundary |
 | concurrent API requests | one server, one set of buffers, one mutex — four reloads cost no heap |
+
+
+---
+
+# eos_apps — files, console, buddy, apps
+
+The other twenty endpoints `web/README.md` specifies, minus settings, system,
+themes and megabrain. Fourteen routes, one translation unit, no allocation.
+
+| Route | Method | Answers |
+|---|---|---|
+| `/api/fs/list` | GET | `path`, `offset`, `count` — a paged listing with `total` and `more` |
+| `/api/fs/stat` | GET | `path` — size, mtime, is_dir |
+| `/api/fs/read` | GET | `path` — the raw bytes, streamed, `application/octet-stream` |
+| `/api/fs/usage` | GET | `point` — total, used, free for one mount |
+| `/api/fs/write` | POST | `path`, `offset`, `final` — one upload chunk, raw body |
+| `/api/fs/upload/abort` | POST | `path`, or nothing — drops the open handle |
+| `/api/fs/mkdir` | POST | `path` — one level, parents are not created |
+| `/api/fs/remove` | POST | `path` — files and empty directories |
+| `/api/fs/rename` | POST | `from`, `to` — same mount only |
+| `/api/console/log` | GET | `since`, `max` — a ring slice with `next` and `dropped` |
+| `/api/console/exec` | POST | `{"cmd":"..."}` — seven words, 202, output through the log |
+| `/api/buddy` | GET | the avatar's config, state, model and this board's caps |
+| `/api/buddy/reload` | POST | re-reads `buddy.json` and `buddy.vox` with no reboot |
+| `/api/apps` | GET | the windows the shell can open, for the autostart picker |
+
+Errors are `web/README.md`'s table, produced by `eos_httpd_fail_err()` from an
+`eos_err_t`, so there is one copy of the code/status mapping in the image.
+
+## How it reaches the server
+
+`eos_httpd.c` gained three things and no handlers: fourteen rows in `ROUTES[]`,
+fourteen `case` labels that all call one function, and five one-line exports of
+its own error helpers. The handlers are here.
+
+The call is through a pointer `eos_apps_init()` registers, not a direct call:
+
+| | Why |
+|---|---|
+| `test_httpd.c` stays a two-file link | it links no `eos_apps.c`, no `eos_storage`, no `eos_vox` |
+| an image can leave this file out | the pointer is NULL and those routes answer 501 |
+| three agents were adding routes at once | the diff in the shared file is 20 lines, all appends |
+
+The fourteen `case` labels are spelled out rather than range-checked on the
+enum. A range is what silently swallows the next route somebody inserts.
+
+## The upload
+
+`web/README.md`'s state machine, verbatim, plus the two rules that make a stuck
+handle recoverable.
+
+| `offset` | `final` | Board |
+|---|---|---|
+| `0` | `0` | create/truncate, keep the handle |
+| `0` | `1` | create/truncate, write, sync, close |
+| `== position` | `0` | append, keep |
+| `== position` | `1` | append, sync, close |
+| anything else | — | `state` (409), handle untouched |
+
+A write to a **different** path while a handle is open is `busy` (409) at any
+offset, zero included — that is the case that would otherwise silently switch
+files. The escape is `/api/fs/upload/abort`, which is what the client already
+calls after three failed retries, plus a **30 s idle timeout** drained by
+`eos_apps_tick()` from the OS loop for the phone that never comes back. Both
+leave the partial file where it is; the client knows what it was uploading.
+
+`sync` happens once, on the final chunk. A sync is one or more 4 KB sector
+erases with the instruction cache off on the one core also driving the panel,
+the radio and this server — per chunk it would be a 100-chunk upload holding the
+machine a hundred times.
+
+### chunk_max is 512, and it is not a policy
+
+`EOS_APPS_CHUNK_MAX` is `EOS_HTTPD_BODY_MAX`, by definition and not by
+coincidence. The body arrives in `on_request()`'s **stack** buffer before the
+dispatch lock is taken; a chunk larger than that buffer is not a slow upload, it
+is a request the transport refused before any handler existed to see it. That is
+why a 5 MB photo cannot cost the heap anything at any chunk size: the bound is a
+stack buffer.
+
+It also means the number moves for free. Raising `EOS_HTTPD_BODY_MAX` — and
+`cfg.stack_size` in `eos_httpd_start()` with it, which its header already says —
+raises the upload chunk with no change here.
+
+512 is not fast: the largest thing this board can hold is the 960 KB partition,
+and the app itself is 50 KB gzipped, or 100 chunks. What it is, is free. The
+web app's own concurrency cap is two requests, so 100 chunks is under a second
+on the house WiFi.
+
+| Payload | Chunks |
+|---|---|
+| `buddy.json` | 1–2 |
+| a 24-voxel `buddy.vox` | 3 |
+| the biggest model this board stages, 6,144 B | 12 |
+| the web app, gzipped, all five files | ~100 |
+
+## Path checking, twice
+
+Every path arrives as a query parameter, percent-decoded exactly once by
+`eos_httpd_query_get()`, which already refuses a decoded NUL. `path_check()`
+then refuses, before anything is opened:
+
+| Rule | Refused as |
+|---|---|
+| does not start with `/` | `bad_argument` |
+| a `..` **component**, anywhere | `bad_argument` |
+| a backslash | `bad_argument` |
+| a byte below 0x20, or 0x7F | `bad_argument` |
+| 96 bytes or longer | `too_big`, never truncated |
+| a component 40 bytes or longer | `too_big` |
+
+`eos_storage`'s `path_split()` refuses all six again. That is the point, and it
+is also the problem with testing it: **deleting every rule here changes no
+endpoint's answer**, because the layer below still says no. So the suite drives
+`path_check()` directly through a host-only hook, and the three mutants that
+matter (`..`, backslash, control bytes) fail 10, 2 and 2 checks. Through the
+endpoints alone all three survive.
+
+The `..` check is per component and never `strstr`. `...bb...` contains `..` and
+is a legal filename; a filter that gets that backwards blocks real names *and*
+still lets the real escape through.
+
+## The console
+
+`/api/console/log` is a ring of two pools — `EOS_APPS_LOG_LINES` line records
+and `EOS_APPS_LOG_BYTES` of text — because a boot log is forty short lines and a
+stack trace is four long ones, and they run out at different rates. A line never
+wraps the byte pool: a write that would not fit before the end restarts at zero
+and evicts whatever it lands on, so every line is one contiguous run the JSON
+writer takes in one call. Reassembling a wrapped line would need a copy buffer
+this file does not have room for.
+
+`eos_apps_log_install()` hooks `esp_log_set_vprintf`, so the Console tab shows
+the whole boot and not only what was typed into it. The hook strips the ANSI
+colour, the level letter and the timestamp, keeps `tag: message`, and forwards
+the original line to the UART unchanged. The formatted line lives on the calling
+task's stack, not in a shared buffer: it is called from every task in the image.
+
+### The command table is closed, and that is the feature
+
+`/api/console/exec` runs **seven words and takes no arguments**:
+`help status heap reboot theme wifi brain`. Six are read-only; `reboot` does no
+more than pulling the USB cable does, and it is armed for the OS loop rather
+than performed in the handler, so the 202 gets out first.
+
+The endpoint is reachable, unauthenticated, from any page open on any phone on
+the same WiFi as a board holding that WiFi's password in NVS. There is no login
+and there cannot usefully be one on a device provisioned by pointing a camera at
+a QR code. So:
+
+| Absent | Because |
+|---|---|
+| any form of eval | it is a shell, and a shell here is a credential dump one guest away |
+| any read or write of an address | the same, with fewer steps |
+| file operations | `/api/fs/*` is that, and it is where the path rules are written |
+| anything that changes a setting | `POST /api/settings` validates once, in the component that owns the keys |
+
+Matching is `strcmp` with no trimming and no argument splitting — `help ` is
+refused. A table that forgives whitespace has started parsing, and the next
+forgiving step is the one that lets something through. An unknown command is a
+400 naming the whole table **and** a console line, so the person watching the
+pane sees why.
+
+## The buddy
+
+`buddy.json` and `buddy.vox` on `/int/buddy`, written by the editor through the
+ordinary chunked `/api/fs/write`. There is no upload endpoint for the model and
+there should not be: one upload mechanism, one set of failure modes.
+
+`/api/buddy/reload` hands the file to `eos_vox_parse()` and reports what it
+said. Nothing is pre-validated here — that parser was fuzzed over eight thousand
+mutated files and checks every offset against what remains in the buffer, so a
+second opinion in the endpoint could only be wrong.
+
+**A failed parse leaves the board with no model.** The parse fills the one voxel
+pool this board has, so the previous model does not survive it; the endpoint
+reports that honestly rather than describing a model that is now half of two. A
+second pool to make a bad upload survivable is 5,120 bytes for a case the editor
+already prevents.
+
+`buddy.json` is re-emitted from what the board parsed, not echoed. Splicing
+unvalidated file bytes into a response is how the phone gets a document it
+cannot parse, and `model.*` is advisory in the spec anyway — what `/api/buddy`
+returns is the model the board is actually holding.
+
+Reading it needed one thing `eos_httpd`'s JSON reader does not do: `idle` and
+`eyes` are nested, and that reader steps over nested objects by design. So
+`obj_span()` finds a named object's extent and points the same hardened reader
+at it. It is not a second JSON parser, which would be the one with the bug.
+
+| `buddy.json` | maps to |
+|---|---|
+| `name` | reported, and available to whatever writes the status bar |
+| `personality` | truncated to `EOS_APPS_BUDDY_PERSONA_MAX` on a UTF-8 boundary |
+| `accent` | `#rrggbb` → `0x00rrggbb`; anything else is absent, not an error |
+| `idle.home_yaw` | `cfg.home_yaw`, modulo `EOS_BUDDY_YAW_STEPS` |
+| `idle.sleep_ms` | `cfg.idle_sleep_ms` |
+| `idle.behaviour` | stored and reported; `sleepy` also halves `idle_sleep_ms` |
+| `eyes.open_index` | `cfg.eye_ci` |
+| `eyes.shut_index` | `cfg.eye_shut_ci` |
+
+An unrecognised `idle.behaviour` falls back to `wander`, and a `buddy.json` that
+is not JSON at all still leaves the `.vox` loaded with compiled-in defaults —
+`web/README.md`'s rule for a schema the firmware does not know.
+
+### The caps are this board's, not the format's
+
+`EOS_VOX_MAX_VOXELS` is 4096. This board stages **1024**, because a 4096-voxel
+pool is 20,480 bytes of `.bss` and the buffer for the file that fills it is
+another 21 KB, on a board with 173 KB of heap. `/api/buddy` reports the cap in
+`limits`, so the editor can warn before somebody spends an evening on a model
+the board will refuse.
+
+### Reaching the running system
+
+A reload arrives on an HTTP worker; the state machine is ticked on the OS loop.
+`eos_apps_buddy_generation()` increments on every success, and `main.c` compares
+it and calls `eos_buddy_init()` from **its own** task. That is the whole
+synchronisation and it is enough: one writer, and the pointer never moves.
+
+## Static files: prefer the file, never serve nothing
+
+`eos_apps_bind_files()` wraps whatever was bound before it. A real file on
+storage wins; the copy linked into the image answers when there is not one. That
+is `web/README.md`'s rule and it is what turns deploying the app onto `/int`
+into a copy rather than a rebuild — `/int/web/app.js.gz` is served with
+`Content-Encoding: gzip` the moment it exists, and the board is never left with
+nothing in between.
+
+`/api/fs/read` uses the same three ports with the **fallback switched off**. A
+GET for a file that is not there must be a 404 and not the contents of a
+same-named asset in the image.
+
+The bind is idempotent, and it has to be: called twice, the naive version
+captures its own ports as the fallback and the first miss recurses until the
+5,376-byte worker stack is gone.
+
+## Memory
+
+Measured by building the tree twice with the same sdkconfig and toolchain, once
+with this file and its wiring and once without, and diffing `esp-os.bin` and
+`idf.py size`.
+
+| | Flash | Static RAM |
+|---|---|---|
+| `eos_apps.c` | 8,714 B | 17,824 B `.bss` |
+| the boot glue's ports, catalog and loop block | — | 72 B |
+| `.rodata` and the newlib/`esp_log` paths the linker now keeps | 7,558 B | — |
+| **total image delta** | **+16,272 B** | **+17,896 B** |
+
+1,633,360 bytes of a 3 MB partition, up from 1,617,088 — 48% of the slot still
+free. The static RAM is the number that matters: free DIRAM at link falls from
+236,748 to 218,852.
+
+| `.bss` | Bytes | What |
+|---|---|---|
+| `s_voxbuf` | 6,144 | the `.vox` staged whole; `eos_vox_parse()` does not seek |
+| `s_bud` | 6,096 | the 1024-voxel pool, the 768-byte palette, the config and the strings |
+| `s_lbuf` | 3,072 | the console ring's text |
+| `s_lline` | 1,152 | 96 line records |
+| `s_budjson` | 768 | `buddy.json` staged whole |
+| `s_scr` | 288 | the request path, rename's second one, and a listing entry joined onto its directory — see below |
+| `s_below`, `s_up`, `s_fslot`, the log mutex, the rest | 304 | |
+
+**The scratch is static and not stack, deliberately.** The HTTP worker has
+5,376 bytes of which 513 are already the request body, and three 96-byte paths
+per frame is how four workers overflow one. It is safe because `eos_httpd` serialises dispatch behind one
+mutex: there is exactly one request in flight, image-wide, at any instant. That
+same fact is why one upload handle, one log ring and one buddy is the right
+number of each.
+
+**12,240 of the 17,896 is the buddy**, for a model nothing draws yet. If the
+owner wants it back before there is a buddy window, it is one line:
+`-DEOS_APPS_VOX_VOXELS=256 -DEOS_APPS_VOX_BYTES=2176` reclaims 7,808 bytes and
+still holds a 256-voxel model. Nothing else here is over 3 KB. The `#error` in
+the header refuses a pairing that could not hold a full `XYZI` plus `RGBA`, so
+the two numbers cannot drift apart into a buffer overrun.
+
+Runtime heap: **nothing in this file allocates.** What a request costs is
+`eos_storage`'s, already accounted for in its own README — 648 B per open file
+and 324 B per open directory scan, bounded by the pools at 4 and 2. The dispatch
+mutex means one scan at a time, so a listing costs 324 B for its duration and an
+upload holds 648 B between chunks.
+
+## Host build
+
+```sh
+cc -std=c99 -Wall -Wextra -Werror -O1 \
+   -Ikernel/hal/include -Ikernel/svc/include -Ikernel/wm/include \
+   -Ikernel/avatar/include -Iboards/generated \
+   kernel/svc/eos_apps.c kernel/svc/eos_httpd.c \
+   kernel/hal/backend/storage/eos_storage_idf.c \
+   kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
+   kernel/svc/test/test_apps.c -o /tmp/tapps && /tmp/tapps
+```
+
+368 checks, 0 failed. Also clean under
+`-fsanitize=address,undefined -Wshadow -Wconversion`, which is how it is meant
+to be run, in 0.35 s, and at `-O0` through `-O3` and `-Os`. The suite builds a
+sandbox under
+`/tmp/eos-apps-test-<pid>`, points `EOS_STORAGE_HOST_ROOT` at it and removes it
+on the way out.
+
+It is not a unit test. It drives `eos_httpd_dispatch()` with real request lines
+against the real storage backend and reads the JSON that comes back, because the
+question worth answering is never "does `path_check()` reject dot dot" but "does
+every one of the nine routes call it first", and only the second can be seen
+from outside.
+
+| Section | Covers |
+|---|---|
+| `t_routing` | the fourteen rows, the method table, and the 501 an image without this file answers |
+| `t_traversal` | 22 hostile paths × 9 routes = 198 requests, none accepted, none staged as a file |
+| `t_path_check_direct` | the same corpus at `path_check()` itself, plus the legal names it must not block |
+| `t_bounds` | every network-supplied number: offset, count, since, max, final, and the 95/96-byte path boundary |
+| `t_list` | 31 entries, seven pages at `count=5`, mtime, the root, and the three ways to get an error |
+| `t_upload` | the whole state machine, both out-of-order directions, restart-at-zero, a zero-byte file |
+| `t_abort` | abort by path, abort with no path, abort of nothing, and the partial file left behind |
+| `t_upload_timeout` | an upload that is never finished, one millisecond either side of the 30 s |
+| `t_mutations` | mkdir/remove/rename, and that none of them can pull a file out from under an open upload |
+| `t_console_log` | the cursor, `dropped`, the byte budget, a flood that wraps both pools |
+| `t_console_exec` | all seven, 19 refusals, four malformed bodies, and a `cmd` nested one level down |
+| `t_buddy` | a real `.vox` built byte for byte, the nested config, four bad models, the editor's round trip |
+| `t_static_fallback` | the file wins, the image answers when it does not, `fs/read` never falls back |
+| `t_fuzz` | 60,000 assembled query strings across ten routes |
+
+It also passes with the tunables overridden, which is what makes the "reclaim
+the RAM" line above a supported change rather than a suggestion:
+`EOS_APPS_VOX_VOXELS`/`_VOX_BYTES` at 256/2176, the whole log ring at 8 lines
+and 512 bytes, `EOS_APPS_LIST_MAX` at 4, `EOS_APPS_CATALOG_MAX` at 2,
+`EOS_APPS_UPLOAD_IDLE_MS` at 1 s, and `EOS_HTTPD_BODY_MAX`/`_RESP_MAX` at
+2048/8192. It is **not** written against a `EOS_HTTPD_BODY_MAX` below 512: the
+upload section writes 100-byte and 200-byte chunks by name, and below that the
+transport refuses them, which is correct behaviour and a failing assertion.
+
+### The fuzz
+
+Same shape as `eos_storage`'s, and biased on purpose: three paths in four start
+at a real mount, or nearly every one dies at "no such mount" and the half that
+could escape is never reached. The bias is asserted, not assumed:
+
+```
+[fuzz] accepted=8203 mounts=45201 deep=35995 climbs=22172 files=96
+```
+
+Those five are checks. A change that made every request fail early would report
+zero escapes and be worthless. The invariant is checked on the **input** — a
+request carrying a `..` component never comes back 2xx — because checking only
+the output would miss the wrong fix, folding `a/../b` into `b`, whose output
+looks perfectly clean.
+
+### Mutants
+
+Every one run against the suite. The four that survive are listed too, because
+which mutants live is more informative than which die.
+
+| Mutant | Checks failed |
+|---|---|
+| fold `..` away instead of refusing it | 10 |
+| refuse `..` only at the front of a path | 10 |
+| `strstr("..")` instead of a per-component check | 5 |
+| sync on every chunk instead of the last | 22 |
+| drop the 30 s upload timeout | 8 |
+| silently switch files instead of `busy` | 6 |
+| let a wrong offset write anyway | 4 |
+| prefix-match the command table | 3 |
+| drop the backslash rule | 2 |
+| drop the control-byte rule | 2 |
+| drop the `body_truncated` check | 2 |
+| `remove` allowed on a file an upload has open | 2 |
+| log ring: evict on a full table but not on a byte overlap | 1 |
+| truncate a personality mid-UTF-8-character | 1 |
+| log ring: never reset the write position at the end of the pool | ASan: a hard overflow |
+| `eos_apps_bind_files()` not idempotent | stack exhausted, no output |
+| **`obj_span` accepts a non-object value** | **0 — equivalent** |
+| **`/api/fs/read` falls back to the embedded copy** | **0 — equivalent** |
+
+The last two are genuinely unreachable, not gaps. `obj_span`'s object check is
+redundant because the leaf reader independently refuses anything that is not an
+object; it is kept so the function means what its name says. And `fs/read`
+`stat`s the path before it opens it, so a missing file is a 404 two independent
+ways — the `false` is the second reason, and it is the one that would still hold
+if the `stat` were ever dropped for the size.
+
+## What is not here
+
+| Missing | Why |
+|---|---|
+| `Range` and `Content-Length` on `/api/fs/read` | the response is chunked from flash, which is what streaming costs; the web app sends no `Range` |
+| a recursive `remove` | `web/README.md` says a non-empty directory is `exists`, and the page never asks the board to walk a tree |
+| cross-mount `rename` | `eos_storage_rename()` is same-mount; `/sd` answers `no_such_device` first anyway |
+| a buddy window | `/api/apps` reports the four windows that exist and does not invent a fifth |
+| `EOS_APPS_IDLE_*` drift behaviour | the preset is stored and reported; nothing on this board consumes yaw drift yet |
+| sizes past 2^31 in `/api/fs/usage` | `long` is 32 bits here and the JSON writer takes a `long`; clamped, and `/int` is 960 KB |
+| any authentication | same boundary as the rest of the API: the network is the boundary |

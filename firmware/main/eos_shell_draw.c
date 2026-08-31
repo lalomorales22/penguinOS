@@ -9,11 +9,11 @@
 #include "eos_font.h"
 #include "eos_input.h"
 
-// The four windows the boot glue opens. Short on purpose: a tab label has
+// The five windows the boot glue opens. Short on purpose: a tab label has
 // 117/6 = 19 cells to live in on this panel, and a truncated name reads as a
 // rendering bug rather than as a long name.
 static const char *const APP_NAMES[EOS_APP_COUNT] = {
-    "clock", "board", "heap", "keys"
+    "clock", "board", "heap", "keys", "buddy"
 };
 
 const char *const *eos_shell_app_names(void) { return APP_NAMES; }
@@ -206,6 +206,174 @@ static void body_keys(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
     }
 }
 
+
+// The rect a tile's body gets, once the border, the header and the rule under
+// it are taken off. Shared with buddy_prepare(), which has to know where the
+// avatar will land a whole frame before draw_tile() gets there; two copies of
+// this arithmetic is how the picture ends up one pixel off the box it was
+// measured for.
+static eos_rect_t tile_body(const skin_t *s, const eos_tile_t *t)
+{
+    eos_rect_t inner = eos_rect_inset(t->rect, (int16_t)(s->border + 1));
+    int16_t hdr_h = s->ui ? (int16_t)s->ui->h : 0;
+
+    if (eos_rect_empty(inner)) return eos_rect(0, 0, 0, 0);
+    return eos_rect(inner.x, (int16_t)(inner.y + hdr_h + 3),
+                    inner.w, (int16_t)(inner.h - hdr_h - 3));
+}
+
+// ------------------------------------------------------------------ buddy
+//
+// The avatar is the one thing in this file that cannot be drawn by replaying
+// the scene: eos_buddy_render() writes whole pixels into a buffer of its own
+// and reorders the model while it does it, and the scene runs once per band.
+// So it is rendered ONCE per frame, into the box below, before the frame is
+// even opened — and the per-band job is one clipped blit of an image that is
+// already finished.
+//
+// The box is a fixed compile-time size and the render is fitted inside it,
+// rather than the box being sized to the tile. A 240x240 panel with five
+// windows gives the buddy a 110x76 body; a theme with no bar and no tab strip
+// could give it 230x220, and 50 KB of BSS for a tile that might never be on
+// screen is not a trade this board can make. The buddy is centred in whatever
+// it gets.
+
+static uint8_t   buddy_px[EOS_SHELL_BUDDY_PX * EOS_SHELL_BUDDY_PX];
+static uint8_t   buddy_lut[768];
+static eos_bitmap_t buddy_bm;
+static int16_t   buddy_at_x, buddy_at_y;
+static bool      buddy_ready;
+
+void eos_shell_buddy_shade(const eos_vox_pal_t *pal, eos_buddy_cfg_t *cfg)
+{
+    int lvl, ci;
+
+    if (!cfg) return;
+    if (!pal) { cfg->shade_lut = NULL; return; }
+
+    for (lvl = 0; lvl < 3; lvl++) {
+        unsigned k = cfg->shade[lvl] ? cfg->shade[lvl] : 255u;
+        for (ci = 0; ci < 256; ci++) {
+            unsigned r = ((unsigned)pal->rgb[ci][0] * k) / 255u;
+            unsigned g = ((unsigned)pal->rgb[ci][1] * k) / 255u;
+            unsigned b = ((unsigned)pal->rgb[ci][2] * k) / 255u;
+            buddy_lut[lvl * 256 + ci] =
+                eos_display_match(eos_rgb((uint8_t)r, (uint8_t)g, (uint8_t)b));
+        }
+    }
+    cfg->shade_lut = buddy_lut;
+}
+
+// What the window costs in BSS, so the boot log can name it. Reported rather
+// than computed at run time because BSS is claimed before app_main runs: it
+// never shows up as a heap step, and a board whose free heap moved would
+// otherwise have no line saying which window took it.
+uint32_t eos_shell_buddy_bytes(void)
+{
+    return (uint32_t)(sizeof buddy_px + sizeof buddy_lut + sizeof buddy_bm);
+}
+
+// How much of the body the mood line takes off the bottom. The word is what
+// makes the state machine visible: the bar's mood glyph is one character and
+// reads as decoration, and "thinking" does not.
+static int16_t mood_h(const skin_t *s)
+{
+    return (int16_t)((s->ui ? (int16_t)s->ui->h : 0) + 2);
+}
+
+// Renders the avatar for this frame. Called from eos_shell_draw_frame() before
+// the frame is opened, which is the only place in this file where drawing into
+// something other than the display is legal.
+static void buddy_prepare(const eos_shell_view_t *v, const skin_t *s)
+{
+    eos_tile_t tiles[EOS_MAX_WINDOWS * 2];
+    const eos_display_info_t *info;
+    eos_buddy_target_t t;
+    eos_rect_t body;
+    int n, i;
+    int16_t w, h;
+
+    buddy_ready = false;
+    if (!v->buddy || !v->buddy->model || v->buddy->model->count == 0) return;
+
+    info = eos_display_info();
+    n = eos_wm_layout(v->wm, eos_rect(0, 0, info->w, info->h),
+                      tiles, EOS_MAX_WINDOWS * 2);
+    for (i = 0; i < n; i++) {
+        if (tiles[i].visible && tiles[i].app_id == EOS_APP_BUDDY) break;
+    }
+    if (i == n) return;                 // behind a tab, or on another workspace
+
+    body = tile_body(s, &tiles[i]);
+    body.h = (int16_t)(body.h - mood_h(s));
+    if (eos_rect_empty(body)) return;
+
+    w = body.w < EOS_SHELL_BUDDY_PX ? body.w : (int16_t)EOS_SHELL_BUDDY_PX;
+    h = body.h < EOS_SHELL_BUDDY_PX ? body.h : (int16_t)EOS_SHELL_BUDDY_PX;
+    if (w < 8 || h < 8) return;         // too small to read as anything
+
+    // clear to the surface colour rather than to a keyed sentinel: the tile
+    // under it is already that colour, so an opaque blit and a keyed one put
+    // the same pixels on the glass and the opaque one cannot pick a key that
+    // some shade of the model also resolves to.
+    memset(&t, 0, sizeof t);
+    t.pixels = buddy_px;
+    t.w      = (uint16_t)w;
+    t.h      = (uint16_t)h;
+    t.fmt    = EOS_BUDDY_PIX_I8;
+    t.clear  = true;
+    t.bg_i8  = s->surface;
+    if (eos_buddy_render(v->buddy, &t) < 0) return;
+
+    memset(&buddy_bm, 0, sizeof buddy_bm);
+    buddy_bm.pixels = buddy_px;
+    buddy_bm.w      = w;
+    buddy_bm.h      = h;
+    buddy_bm.stride = w;
+    buddy_bm.fmt    = EOS_PIXFMT_I8;
+    buddy_bm.key    = EOS_COLOR_NONE;   // no keying: the box is opaque
+    buddy_at_x = (int16_t)(body.x + (body.w - w) / 2);
+    buddy_at_y = (int16_t)(body.y + (body.h - h) / 2);
+    buddy_ready = true;
+}
+
+static void body_buddy(const eos_shell_view_t *v, const skin_t *s, eos_rect_t r)
+{
+    char mood[12];
+    const char *name;
+    int16_t y;
+    int i;
+
+    if (buddy_ready) {
+        eos_display_blit(buddy_at_x, buddy_at_y, &buddy_bm);
+    } else if (!v->buddy || !v->buddy->model || v->buddy->model->count == 0) {
+        // The two ways there is nothing to draw, told apart because they need
+        // different things from the owner: no avatar at all is a boot that went
+        // wrong, and an empty model is a .vox that parsed to nothing.
+        eos_display_text_center(r, (int16_t)(r.y + (r.h - (int16_t)s->ui->h) / 2),
+                                s->ui, s->muted,
+                                v->buddy ? "no model" : "no buddy");
+    }
+    // The third way — a tile too small for even an 8x8 avatar — says nothing
+    // and leaves the mood line, because there is a buddy and it is fine. A
+    // "no model" there would send someone looking for a file that is present.
+
+    // The mood, under it, in the accent colour: this is the megabrain request
+    // lifecycle showing through, and it is the whole reason the state machine
+    // is ticked on every pass of the loop and not only when this tile is up.
+    //
+    // Lowercased, the way /api/buddy reports it and the way every other label
+    // in this file is spelled. eos_buddy_state_name() shouts because it is a
+    // debug name; "THINKING" next to "uptime" and "free" reads as an error.
+    name = v->buddy ? eos_buddy_state_name(eos_buddy_state(v->buddy)) : "-";
+    for (i = 0; i < (int)sizeof mood - 1 && name[i]; i++)
+        mood[i] = (name[i] >= 'A' && name[i] <= 'Z') ? (char)(name[i] + 32) : name[i];
+    mood[i] = '\0';
+
+    y = (int16_t)(r.y + r.h - (int16_t)s->ui->h);
+    if (y >= r.y) eos_display_text_center(r, y, s->ui, s->accent, mood);
+}
+
 // ---------------------------------------------------------------- one tile
 
 static void draw_tab_cell(const skin_t *s, const eos_tile_t *t, const char *label)
@@ -263,14 +431,14 @@ static void draw_tile(const eos_shell_view_t *v, const skin_t *s, const eos_tile
     eos_display_hline(inner.x, (int16_t)(inner.y + hdr_h + 1), inner.w,
                       t->focused ? s->accent : s->bunf);
 
-    body = eos_rect(inner.x, (int16_t)(inner.y + hdr_h + 3),
-                    inner.w, (int16_t)(inner.h - hdr_h - 3));
+    body = tile_body(s, t);
     if (!eos_rect_empty(body) && eos_display_clip_push(body)) {
         switch ((eos_app_id_t)t->app_id) {
         case EOS_APP_CLOCK: body_clock(v, s, body); break;
         case EOS_APP_BOARD: body_board(v, s, body); break;
         case EOS_APP_HEAP:  body_heap (v, s, body); break;
         case EOS_APP_KEYS:  body_keys (v, s, body); break;
+        case EOS_APP_BUDDY: body_buddy(v, s, body); break;
         case EOS_APP_COUNT: break;
         }
         eos_display_clip_pop();
@@ -312,6 +480,10 @@ void eos_shell_draw_frame(const eos_shell_view_t *v)
     if (!v || !v->theme || !v->wm) return;
     skin_build(&s, v->theme);
 
+    // Once, before the frame opens. See the buddy section: this is the whole
+    // reason the avatar has an offscreen box at all.
+    buddy_prepare(v, &s);
+
     eos_display_frame_begin();
     while (eos_display_frame_band(&band)) scene(v, &s);
     eos_display_frame_end();
@@ -327,7 +499,7 @@ void eos_shell_damage_bar(const eos_shell_view_t *v)
     eos_display_damage(bar_rect(v));
 }
 
-bool eos_shell_damage_app(const eos_shell_view_t *v, uint16_t app_id)
+static bool app_tiles(const eos_shell_view_t *v, uint16_t app_id, bool damage)
 {
     eos_tile_t tiles[EOS_MAX_WINDOWS * 2];
     const eos_display_info_t *info;
@@ -340,8 +512,18 @@ bool eos_shell_damage_app(const eos_shell_view_t *v, uint16_t app_id)
                       tiles, EOS_MAX_WINDOWS * 2);
     for (i = 0; i < n; i++) {
         if (!tiles[i].visible || tiles[i].app_id != app_id) continue;
-        eos_display_damage(tiles[i].rect);
+        if (damage) eos_display_damage(tiles[i].rect);
         hit = true;
     }
     return hit;
+}
+
+bool eos_shell_damage_app(const eos_shell_view_t *v, uint16_t app_id)
+{
+    return app_tiles(v, app_id, true);
+}
+
+bool eos_shell_app_visible(const eos_shell_view_t *v, uint16_t app_id)
+{
+    return app_tiles(v, app_id, false);
 }

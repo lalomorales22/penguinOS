@@ -179,8 +179,23 @@ still stops and asks.
 
 ### Host tests
 
-Every kernel component is plain C that builds with a single `cc` line and prints
-`N checks, M failed`.
+Every component is plain C that builds with a single `cc` line and prints
+`N checks, M failed`. All seventeen of them run in one command:
+
+```bash
+./tools/host_tests.sh
+```
+
+```
+wm 268   theme 213   avatar 109   brain 182   shell 2201   font 418
+integ 635   display 109   qr 23080   net 1276   ble 570   httpd 2118
+storage 276   settings 334   apps 368   draw 42   setup 24
+32,223 checks, 0 failed
+```
+
+The build lines it runs are copied from each component's README and have to stay
+in step with them: a suite that stops being listed in that script is a suite that
+stops being run. A few of them by hand:
 
 ```bash
 cc -std=c99 -Wall -Wextra -O1 -Ikernel/wm/include \
@@ -201,7 +216,10 @@ cc -std=c99 -Wall -Wextra -O1 -Ikernel/svc/include \
    kernel/svc/eos_brain.c kernel/svc/test/test_brain.c -o t && ./t
 ```
 
-2,973 checks total, all passing, all clean under `-fsanitize=address,undefined`.
+`firmware/main/test/test_shell_draw.c` is the one worth knowing about beyond its
+count: it renders the whole desktop through the real compositor on the host, and
+with a path argument writes the frame out as a PPM. That is how the buddy window
+was designed without flashing anything.
 
 ## Theming
 

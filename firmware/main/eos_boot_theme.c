@@ -78,6 +78,56 @@ static bool try_parse(eos_theme_t *out, const char *buf, int len, const char *wh
     return false;
 }
 
+// What the settings store asked for, or "" for the plain theme.json search.
+// One name for the image; eos_boot_theme_prefer() is called once at boot and
+// again by a live theme switch, both from the OS loop.
+static char pref[EOS_THEME_NAME_MAX];
+
+// Parked next to the scratch buffer for the same reason: eos_boot_theme_read()
+// must be able to fail without touching the caller's theme, and eos_theme_parse
+// writes the default into its output on every failure. About 700 bytes.
+static eos_theme_t scratch;
+
+void eos_boot_theme_prefer(const char *name)
+{
+    if (!name) { pref[0] = '\0'; return; }
+    snprintf(pref, sizeof pref, "%s", name);
+}
+
+eos_theme_err_t eos_boot_theme_read(const char *path, eos_theme_t *out)
+{
+    FILE *f;
+    size_t n;
+    eos_theme_err_t e;
+
+    if (!path || !out) return EOS_THEME_ERR_ARGS;
+
+    f = fopen(path, "rb");
+    if (!f) return EOS_THEME_ERR_EMPTY;
+    n = fread(theme_buf, 1, sizeof theme_buf, f);
+    fclose(f);
+    if (n == 0 || n >= sizeof theme_buf) return EOS_THEME_ERR_EMPTY;
+
+    e = eos_theme_parse(&scratch, theme_buf, (int)n);
+    if (e != EOS_THEME_OK) return e;
+
+    *out = scratch;
+    return EOS_THEME_OK;
+}
+
+// "<mount>/themes/<pref>.json", when the settings store named one. The stem of
+// the filename IS the theme name everywhere the picker is concerned — see the
+// note in eos_settings_bind.c on why the name inside the file is not used for
+// this — so the path is built rather than searched for.
+static int slurp_named(const char *mount)
+{
+    char leaf[EOS_THEME_NAME_MAX + 16];
+
+    if (!pref[0]) return -1;
+    snprintf(leaf, sizeof leaf, "themes/%s.json", pref);
+    return slurp(mount, leaf);
+}
+
 eos_theme_src_t eos_boot_theme_load(const eos_board_t *b, eos_theme_t *out)
 {
     int n;
@@ -89,13 +139,21 @@ eos_theme_src_t eos_boot_theme_load(const eos_board_t *b, eos_theme_t *out)
     // it outranks everything below it. This board declares no slot, so the
     // mount point is NULL and slurp() refuses immediately.
     if (b->storage.sd && b->storage.sd_point) {
+        n = slurp_named(b->storage.sd_point);
+        if (try_parse(out, theme_buf, n, b->storage.sd_point)) return EOS_THEME_SRC_SD;
+    }
+    n = slurp_named(b->storage.int_point);
+    if (try_parse(out, theme_buf, n, b->storage.int_point)) return EOS_THEME_SRC_INT;
+
+    if (b->storage.sd && b->storage.sd_point) {
         n = slurp(b->storage.sd_point, "theme.json");
         if (try_parse(out, theme_buf, n, b->storage.sd_point)) return EOS_THEME_SRC_SD;
     }
 
-    // Then the internal filesystem. The partition table declares `int` and
-    // nothing mounts it in this image, so this open fails on ENOENT today and
-    // starts working the day the LittleFS mount lands, with no change here.
+    // Then the internal filesystem, under the older convention. /int is a
+    // mounted LittleFS from app_main step 2 onward, so this is a real open on
+    // a real partition; on a board nobody has written a theme to it simply
+    // finds nothing, and the embedded copy below answers.
     n = slurp(b->storage.int_point, "theme.json");
     if (try_parse(out, theme_buf, n, b->storage.int_point)) return EOS_THEME_SRC_INT;
 

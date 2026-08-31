@@ -661,6 +661,137 @@ static void t_mount_lifetime(void)
     }
 }
 
+// ----------------------------------------------------------------- fuzz
+//
+// The cases above are the escapes somebody thought of. This is the one that
+// catches the escape nobody thought of: 200,000 paths assembled at random out
+// of the tokens path_split() has a rule about, with three invariants checked
+// on every one that came back EOS_OK.
+//
+// The tokens matter more than the byte count. A fuzzer over random BYTES
+// almost never types "int", so almost every path it builds dies at "no such
+// mount" and the remainder-building half — the half that can actually
+// escape — is never reached. Building from "int", "sd", "..", ".", "/", "\\"
+// and a few names instead puts most of the run past the mount lookup and into
+// the code under test, which is why "mounts" is asserted below rather than
+// just counted: a change that made every path fail early would still show
+// zero escapes, and would be worthless.
+//
+// The invariants are the whole contract of the function. A remainder that
+// contains "..", a backslash, a leading or trailing separator or a doubled one
+// is a remainder that names something other than what sys_join() will build
+// out of it, and that difference is the hole. There is no oracle here and none
+// is wanted: the point is not that the answer is right, it is that the answer
+// cannot be an escape.
+//
+// It is bounded at 200,000 because this suite runs under
+// -fsanitize=address,undefined on every change and has to stay quick. Under
+// ASan that is a fraction of a second, and that is the run that matters — a
+// read past the end of a hostile path is exactly the bug this looks for.
+static void t_split_fuzz(void)
+{
+    // The prefix decides how far the path gets. Three quarters of the run
+    // starts on a real mount so that most of it reaches the remainder builder;
+    // the rest exercises the early refusals, which have their own named cases
+    // above and only need to be kept honest here.
+    static const char *const pre[] = { "/int", "/int", "/sd", "", "/", "/nope", "int" };
+    // Benign names outnumber the poison three to one, on purpose. A path that
+    // dies on its first token proves nothing, and a token list where every
+    // draw is an attack is a list where almost every path dies on its first
+    // token.
+    static const char *const tok[] = {
+        "/", "/", "/", "/", "//", "a", "bb", "dir", "x.json", "caf\xc3\xa9",
+        "...", "..a", "a..", "%2e", "%2e%2e", ".", "/./",
+        "..", "\\", "\x01", "\xff\xfe",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"   /* over EOS_NAME_MAX */
+    };
+    const int npre = (int)(sizeof pre / sizeof pre[0]);
+    const int ntok = (int)(sizeof tok / sizeof tok[0]);
+    unsigned long s = 88172645463325252UL;
+    char p[EOS_PATH_MAX * 3], rel[EOS_PATH_MAX];
+    long i, accepted = 0, escapes = 0, mounts = 0, deep = 0;
+    long climbs = 0, folds = 0;
+
+    for (i = 0; i < 200000; i++) {
+        int mi, parts, j, n = 0, bad, rc, climbed = 0;
+        const char *c;
+        size_t len;
+
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        c = pre[(s >> 16) % (unsigned)npre];
+        n = (int)strlen(c);
+        memcpy(p, c, (size_t)n);
+
+        s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+        parts = (int)((s >> 16) % 10) + 1;
+        for (j = 0; j < parts; j++) {
+            const char *t;
+            int tl;
+            s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+            t  = tok[(s >> 16) % (unsigned)ntok];
+            tl = (int)strlen(t);
+            if (n + tl >= (int)sizeof p) break;
+            memcpy(p + n, t, (size_t)tl);
+            n += tl;
+        }
+        p[n] = '\0';
+
+        rc = split(p, &mi, rel, (int)sizeof rel);
+
+        // The input-side half of the contract: a path with a ".." COMPONENT is
+        // refused, never resolved. Checking only the output would miss the
+        // wrong fix — folding "a/../b" into "b" leaves a remainder that looks
+        // perfectly clean and is one off-by-one from an escape.
+        for (c = p; *c; ) {
+            const char *e = strchr(c, '/');
+            size_t cl = e ? (size_t)(e - c) : strlen(c);
+            if (cl == 2 && c[0] == '.' && c[1] == '.') { climbed = 1; break; }
+            c = e ? e + 1 : c + cl;
+        }
+        if (climbed) {
+            climbs++;
+            if (rc == EOS_OK && folds++ == 0)
+                printf("  FOLDED in=[%s] rel=[%s]\n", p, rel);
+            climbed = 0;
+        }
+
+        if (rc != EOS_OK) continue;
+        accepted++;
+        if (mi >= 0) mounts++;
+        if (mi >= 0 && strchr(rel, '/')) deep++;
+
+        // Component by component, not strstr. "...bb..." contains ".." and is
+        // a perfectly legal filename; only a component that IS ".." climbs.
+        // Getting that wrong the other way is how a filter blocks real names
+        // and still lets the real escape through.
+        len = strlen(rel);
+        bad = (strchr(rel, '\\') != NULL) ||
+              (rel[0] == '/') || (len && rel[len - 1] == '/') ||
+              (strstr(rel, "//") != NULL) ||
+              (mi < -1) || (mi >= EOS_MOUNT_MAX);
+        for (c = rel; !bad && *c; ) {
+            const char *e = strchr(c, '/');
+            size_t cl = e ? (size_t)(e - c) : strlen(c);
+            if (cl == 2 && c[0] == '.' && c[1] == '.') bad = 1;
+            if (cl == 0) bad = 1;
+            c = e ? e + 1 : c + cl;
+        }
+        if (bad && escapes++ == 0)
+            printf("  ESCAPE in=[%s] rel=[%s] mi=%d\n", p, rel, mi);
+    }
+
+    // A run that reached nothing would show zero escapes and prove nothing, so
+    // what the run REACHED is asserted before what it found.
+    printf("  [fuzz] accepted=%ld mounts=%ld deep=%ld climbs=%ld\n",
+           accepted, mounts, deep, climbs);
+    ok(accepted > 10000, "the fuzz reaches EOS_OK often enough to mean something");
+    ok(mounts > 5000, "  and lands on a real mount, not just \"/\"");
+    ok(deep > 1000, "  with a multi-component remainder, which is the part that can escape");
+    ok(climbs > 5000, "  and offers plenty of paths carrying a \"..\" component");
+    eq(folds, 0, "  every one of which was refused, never folded away");
+    eq(escapes, 0, "200,000 hostile paths, no remainder that escapes its mount");
+}
+
 static void t_uninitialised(void)
 {
     eos_stat_t st;
@@ -690,6 +821,7 @@ int main(void)
     t_file_pool();
     t_dir_pool();
     t_listing();
+    t_split_fuzz();
     t_mount_lifetime();
     t_uninitialised();
 

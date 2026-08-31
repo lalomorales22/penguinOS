@@ -30,6 +30,8 @@ set(_eos_kernel_srcs
     "${EOS_KERNEL_DIR}/svc/eos_net.c"
     "${EOS_KERNEL_DIR}/svc/eos_ble.c"
     "${EOS_KERNEL_DIR}/svc/eos_httpd.c"
+    "${EOS_KERNEL_DIR}/svc/eos_apps.c"
+    "${EOS_KERNEL_DIR}/svc/eos_settings.c"
     "${EOS_KERNEL_DIR}/font/eos_font.c"
     "${EOS_KERNEL_DIR}/qr/eos_qr.c"
     "${EOS_KERNEL_DIR}/hal/eos_input.c"

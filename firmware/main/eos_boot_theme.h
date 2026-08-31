@@ -26,9 +26,29 @@ typedef enum {
     EOS_THEME_SRC_DEFAULT      // eos_theme_default()
 } eos_theme_src_t;
 
+// Names the theme the settings store asked for, before eos_boot_theme_load()
+// runs. With one set, the search starts at <mount>/themes/<name>.json on both
+// mounts and only then falls back to the <mount>/theme.json convention, the
+// embedded copy and the default. Passing NULL or "" clears it.
+//
+// It is a separate call rather than an argument because the settings store is
+// loaded between storage and theme in app_main and only one line of the boot
+// path should have to know that.
+void eos_boot_theme_prefer(const char *name);
+
 // Fills `out` with the best theme it can find and returns where it came from.
 // Never fails: EOS_THEME_SRC_DEFAULT is always reachable.
 eos_theme_src_t eos_boot_theme_load(const eos_board_t *b, eos_theme_t *out);
+
+// Reads and parses ONE theme file. `out` is written only on success; on any
+// failure — no such file, too large, bad JSON, a missing role — it is left
+// exactly as it was, which is what lets a live theme switch fail without
+// taking the theme the panel is already wearing with it.
+//
+// It uses this file's own 4 KB scratch and a parked eos_theme_t, so there is
+// one of each in the image rather than one per caller. Not reentrant: call it
+// from the HTTP dispatch, which eos_httpd serialises, or from the OS loop.
+eos_theme_err_t eos_boot_theme_read(const char *path, eos_theme_t *out);
 
 const char *eos_boot_theme_src_name(eos_theme_src_t s);
 

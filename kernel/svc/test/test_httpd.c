@@ -1137,9 +1137,83 @@ static int f_read(void *c, void *fh, void *buf, int n)
 }
 static void f_close(void *c, void *fh) { (void)c; (void)fh; FK.closes++; if (fh_used) fh_used--; }
 
+// ==========================================================================
+// The fake megabrain
+// ==========================================================================
+//
+// A scripted stand-in for eos_brain_bridge. It records exactly what the ask
+// handler passed down — which is the only way to prove the defaults, the
+// clamps and the fallbacks reach the client the way web/README.md says they do
+// — and it plays back a scripted reply so the drain contract can be walked
+// without a socket, a task or a model.
+
+typedef struct {
+    eos_httpd_brain_t st;
+    int  asks, cancels;
+    char q[512], model[64], system[512];
+    int  max;
+    int  ask_rc;
+
+    // The scripted reply: WAIT for `wait_first` reads, then `reply` a few bytes
+    // at a time, then `end_with` (END or FAIL).
+    const char *reply;
+    int  reply_pos, per_read, wait_first, end_with;
+    bool cancel_had;
+} fbrain_t;
+
+static fbrain_t FB;
+
+static bool f_brain_status(void *c, eos_httpd_brain_t *o) { (void)c; *o = FB.st; return true; }
+
+static int f_brain_ask(void *c, const eos_httpd_ask_t *a)
+{
+    (void)c;
+    FB.asks++;
+    snprintf(FB.q,      sizeof FB.q,      "%s", a->q      ? a->q      : "<null>");
+    snprintf(FB.model,  sizeof FB.model,  "%s", a->model  ? a->model  : "<null>");
+    snprintf(FB.system, sizeof FB.system, "%s", a->system ? a->system : "<null>");
+    FB.max = a->max_tokens;
+    return FB.ask_rc;
+}
+
+static int f_brain_read(void *c, char *buf, int cap)
+{
+    int left, n;
+    (void)c;
+    if (FB.wait_first > 0) { FB.wait_first--; return EOS_HTTPD_STREAM_WAIT; }
+    if (!FB.reply) return FB.end_with;
+    left = (int)strlen(FB.reply) - FB.reply_pos;
+    if (left <= 0) return FB.end_with;
+    n = FB.per_read < cap ? FB.per_read : cap;
+    if (n > left) n = left;
+    memcpy(buf, FB.reply + FB.reply_pos, (size_t)n);
+    FB.reply_pos += n;
+    return n;
+}
+
+static bool f_brain_cancel(void *c) { (void)c; FB.cancels++; return FB.cancel_had; }
+
+static void fbrain_reset(void)
+{
+    memset(&FB, 0, sizeof FB);
+    snprintf(FB.st.host,  sizeof FB.st.host,  "192.168.0.139");
+    snprintf(FB.st.model, sizeof FB.st.model, "qwen3.5:2b");
+    FB.st.port      = 80;
+    FB.st.reachable = true;
+    FB.per_read     = 8;
+    FB.end_with     = EOS_HTTPD_STREAM_END;
+}
+
+// The three the mini is holding, as the bridge compiles them in.
+static const char *const FB_MODELS[] = { "qwen3.5:2b", "gemma4:12b-it-qat", "ornith:9b" };
+
 static void fake_ports(eos_httpd_ports_t *p)
 {
     memset(p, 0, sizeof *p);
+    p->brain_status    = f_brain_status;
+    p->brain_ask       = f_brain_ask;
+    p->brain_read      = f_brain_read;
+    p->brain_cancel    = f_brain_cancel;
     p->wifi_scan_state = f_wifi_state;
     p->wifi_scan_count = f_wifi_count;
     p->wifi_scan_get   = f_wifi_get;
@@ -1164,6 +1238,7 @@ static void fake_ports(eos_httpd_ports_t *p)
 static void fake_reset(void)
 {
     memset(&FK, 0, sizeof FK);
+    fbrain_reset();
     fh_used = 0;
     FK.wifi_state = EOS_HTTPD_SCAN_DONE;
     FK.ble_state  = EOS_HTTPD_SCAN_DONE;
@@ -2122,6 +2197,353 @@ static void test_web_contract(void)
 // The whole flow, once, in the order a person actually does it. This is the
 // test that would have caught a contract change between the web app and the
 // board, which is the failure mode that costs an evening.
+// ==========================================================================
+// Megabrain
+// ==========================================================================
+//
+// The three endpoints, the shapes web/README.md's "Megabrain" section spells,
+// and the two things about the streaming answer that are invariants rather than
+// output: that dispatch stages it without touching the response buffer, and
+// that a staged stream leaves the server able to answer the next request. Both
+// are what makes it safe for the ESP-IDF responder to drop the dispatch lock
+// before it starts draining, which is the whole reason one chat request does
+// not park the other three workers.
+
+static void brain_off(void)
+{
+    SRV.h.ports.brain_status = NULL;
+    SRV.h.ports.brain_ask    = NULL;
+    SRV.h.ports.brain_read   = NULL;
+    SRV.h.ports.brain_cancel = NULL;
+}
+
+static void test_brain_status(void)
+{
+    eos_httpd_resp_t r;
+
+    printf("  handlers: GET /api/brain/status\n");
+
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.st.models      = FB_MODELS;
+    FB.st.model_count = 3;
+
+    CKI(callj("GET", "/api/brain/status", NULL, &r), 200, "status is 200");
+    CKS(r.content_type, "application/json; charset=utf-8", "status is JSON");
+    CKS(r.cache_control, "no-store", "status is never cached");
+    CK(has_kv(r.body, "host", "\"192.168.0.139\""), "status reports the host");
+    CK(has_kv(r.body, "port", "80"), "status reports the port");
+    CK(has_kv(r.body, "model", "\"qwen3.5:2b\""), "status reports the default model");
+    CK(has_kv(r.body, "reachable", "true"), "a probed link reads as reachable");
+    CK(has_kv(r.body, "busy", "false"), "an idle client is not busy");
+    CK(has_kv(r.body, "last_error", "null"),
+       "no failure yet is null, not an empty string - the web app branches on it");
+    CK(strstr(r.body, "\"models\":[\"qwen3.5:2b\",\"gemma4:12b-it-qat\",\"ornith:9b\"]") != NULL,
+       "the model list is an array in order");
+
+    // A board that cannot reach the mini still answers, and says so. The bar
+    // reads the same fact and prints "no brain".
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.st.reachable  = false;
+    FB.st.last_error = "megabrain: EOS_BRAIN_ERR_CONNECT";
+    CKI(callj("GET", "/api/brain/status", NULL, &r), 200, "unreachable is still 200");
+    CK(has_kv(r.body, "reachable", "false"), "unreachable says so");
+    CK(strstr(r.body, "EOS_BRAIN_ERR_CONNECT") != NULL, "and carries the last error");
+
+    // No model list is legal: the board cannot discover one, and a binding that
+    // was given none must still answer something the picker can render.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(callj("GET", "/api/brain/status", NULL, &r), 200, "no model list is still 200");
+    CK(strstr(r.body, "\"models\":[]") != NULL, "and an empty array, never a null");
+
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.st.busy = true;
+    CKI(callj("GET", "/api/brain/status", NULL, &r), 200, "busy is 200");
+    CK(has_kv(r.body, "busy", "true"), "a request in flight reads as busy");
+
+    // A board with no megabrain client at all. 501, not 500 and not an empty
+    // object: web/README.md's `unsupported` is "valid call, not on this tier".
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    brain_off();
+    CKI(callj("GET", "/api/brain/status", NULL, &r), 501, "no client is 501");
+    CK(has_kv(r.body, "error", "\"unsupported\""), "and names it unsupported");
+    CKI(callj("POST", "/api/brain/cancel", NULL, &r), 501, "cancel with no client is 501");
+    CKI(callj("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 501, "ask with no client is 501");
+}
+
+static void test_brain_ask(void)
+{
+    eos_httpd_resp_t r;
+    char body[1200], q[512];
+    int i;
+
+    printf("  handlers: POST /api/brain/ask\n");
+
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+
+    // The whole documented body, and every field arriving intact.
+    CKI(call("POST", "/api/brain/ask",
+             "{\"q\":\"what is a tiling wm\",\"model\":\"ornith:9b\","
+             "\"max\":128,\"system\":\"be terse\"}", &r), 200, "a full ask is 200");
+    CKI(r.kind, EOS_HTTPD_BODY_STREAM, "and is staged as a stream");
+    CKS(r.content_type, "text/plain; charset=utf-8", "the reply is plain text");
+    CKS(r.cache_control, "no-store", "and is never cached");
+    CK(r.body == NULL && r.body_len == 0,
+       "a stream stages no body - there is nothing to send yet");
+    CKI(FB.asks, 1, "the ask reached the client exactly once");
+    CKS(FB.q, "what is a tiling wm", "the question arrived verbatim");
+    CKS(FB.model, "ornith:9b", "the model arrived");
+    CKS(FB.system, "be terse", "the system prompt arrived");
+    CKI(FB.max, 128, "max arrived");
+
+    // Absent optional fields are empty and zero, NEVER invented here: the
+    // defaults live with the settings, and a handler that guessed one would be
+    // a second place brain.model is decided.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 200, "q alone is enough");
+    CKS(FB.model, "", "an absent model is empty, not guessed");
+    CKS(FB.system, "", "an absent system prompt is empty, not guessed");
+    CKI(FB.max, 0, "an absent max is zero, not 256");
+
+    // max is clamped rather than refused. It is a number input on a settings
+    // page, and a 400 on a typo in the field that is not the question is a
+    // worse answer than the nearest legal one.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\",\"max\":1}", &r), 200, "a tiny max still runs");
+    CKI(FB.max, 16, "and is clamped up to the floor");
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\",\"max\":999999}", &r), 200, "a huge max still runs");
+    CKI(FB.max, 2048, "and is clamped down to the ceiling");
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\",\"max\":-9}", &r), 200, "a negative max still runs");
+    CKI(FB.max, 16, "and clamps up, never through zero");
+
+    // The refusals.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(callj("POST", "/api/brain/ask", NULL, &r), 400, "no body is 400");
+    CK(has_kv(r.body, "error", "\"bad_argument\""), "and says bad_argument");
+    CKI(callj("POST", "/api/brain/ask", "{}", &r), 400, "an empty object is 400");
+    CKI(callj("POST", "/api/brain/ask", "{\"q\":\"\"}", &r), 400, "an empty question is 400");
+    CKI(callj("POST", "/api/brain/ask", "{\"q\":42}", &r), 400, "a question that is not a string is 400");
+    CKI(callj("POST", "/api/brain/ask", "not json", &r), 400, "a body that is not JSON is 400");
+    CKI(callj("POST", "/api/brain/ask", "[\"q\"]", &r), 400, "an array body is 400");
+    CKI(FB.asks, 0, "not one of those reached the client");
+
+    // The prompt ceiling is EOS_BRAIN_PROMPT_MAX with the NUL, so 383 bytes fit
+    // and 384 do not. A truncated prompt is a different question.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    for (i = 0; i < EOS_HTTPD_ASK_MAX - 1; i++) q[i] = 'a';
+    q[EOS_HTTPD_ASK_MAX - 1] = 0;
+    snprintf(body, sizeof body, "{\"q\":\"%s\"}", q);
+    CKI(call("POST", "/api/brain/ask", body, &r), 200, "a 383-byte question fits");
+    CKI((int)strlen(FB.q), EOS_HTTPD_ASK_MAX - 1, "and arrives whole");
+
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    q[EOS_HTTPD_ASK_MAX - 1] = 'a';
+    q[EOS_HTTPD_ASK_MAX] = 0;
+    snprintf(body, sizeof body, "{\"q\":\"%s\"}", q);
+    CKI(callj("POST", "/api/brain/ask", body, &r), 413, "one byte more is 413");
+    CK(has_kv(r.body, "error", "\"too_big\""), "and says too_big, never truncates");
+    CKI(FB.asks, 0, "and never reaches the client");
+
+    // The same rule for the two optional strings.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    for (i = 0; i < EOS_HTTPD_MODEL_MAX; i++) q[i] = 'm';
+    q[EOS_HTTPD_MODEL_MAX] = 0;
+    snprintf(body, sizeof body, "{\"q\":\"hi\",\"model\":\"%s\"}", q);
+    CKI(callj("POST", "/api/brain/ask", body, &r), 413, "an oversize model name is 413");
+
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    for (i = 0; i < EOS_HTTPD_SYSTEM_MAX; i++) q[i] = 's';
+    q[EOS_HTTPD_SYSTEM_MAX] = 0;
+    snprintf(body, sizeof body, "{\"q\":\"hi\",\"system\":\"%s\"}", q);
+    CKI(callj("POST", "/api/brain/ask", body, &r), 413, "an oversize system prompt is 413");
+
+    // A body the transport refused before reading it. This is the path a
+    // prompt over EOS_HTTPD_BODY_MAX takes, and it must not be read as "no q".
+    {
+        eos_httpd_req_t rq;
+        fake_reset();
+        srv_init(EOS_HTTPD_MODE_RUN);
+        memset(&rq, 0, sizeof rq);
+        rq.method = "POST";
+        rq.uri = "/api/brain/ask";
+        rq.body_truncated = true;
+        CKI(eos_httpd_dispatch(&SRV.h, &rq, &r), 413, "a refused body is 413, not 400");
+        CK(has_kv(r.body, "error", "\"too_big\""), "and says too_big");
+    }
+
+    // eos_brain holds one request. web/README.md: a second ask is 409 busy.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.ask_rc = -8;
+    CKI(callj("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 409, "a second ask is 409");
+    CK(has_kv(r.body, "error", "\"busy\""), "and says busy");
+    CKI(r.kind, EOS_HTTPD_BODY_BUF, "a refused ask is a document, not a stream");
+
+    // Anything else the client refuses with maps through the same table.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.ask_rc = -1;
+    CKI(callj("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 400, "a refused argument is 400");
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.ask_rc = -9;
+    CKI(callj("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 413, "a refused length is 413");
+
+    // Non-ASCII survives the round trip: the whole parser exists because the
+    // reply is UTF-8, and the question is too.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(call("POST", "/api/brain/ask",
+             "{\"q\":\"\\u00e9t\\u00e9 \\u4f60\\u597d\"}", &r), 200, "an escaped question is 200");
+    CKS(FB.q, "\xc3\xa9t\xc3\xa9 \xe4\xbd\xa0\xe5\xa5\xbd", "and is decoded to UTF-8");
+    CK(utf8_valid(FB.q, (int)strlen(FB.q)), "which is well formed");
+}
+
+static void test_brain_stream_and_cancel(void)
+{
+    eos_httpd_resp_t r;
+    char drained[128];
+    int n, total = 0, waits = 0, ended = 0;
+
+    printf("  handlers: the stream contract and POST /api/brain/cancel\n");
+
+    // The invariant the lock release rests on: staging a stream does not write
+    // the response buffer, so the buffer is not shared with the worker that
+    // drains it. Checked by sentinel rather than by reading the code.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    memset(SRV.h.resp, '#', sizeof SRV.h.resp);
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 200, "the ask is staged");
+    {
+        size_t k, untouched = 1;
+        for (k = 0; k < sizeof SRV.h.resp; k++) if (SRV.h.resp[k] != '#') { untouched = 0; break; }
+        CK(untouched, "a staged stream never writes the shared response buffer");
+    }
+
+    // And the server answers the next request immediately, which is what a
+    // worker holding a stream must not prevent.
+    CKI(callj("GET", "/api/net/status", NULL, &r), 200, "another request still works mid-stream");
+
+    // The drain a worker performs: WAIT while the model thinks, then bytes,
+    // then END. Nothing here can block.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.reply      = "hello from the mini";
+    FB.wait_first = 3;
+    FB.per_read   = 5;
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 200, "the ask is staged");
+    for (n = 0; n < 64; n++) {
+        int got = SRV.h.ports.brain_read(SRV.h.ctx, drained + total,
+                                         (int)sizeof drained - total);
+        if (got == EOS_HTTPD_STREAM_WAIT) { waits++; continue; }
+        if (got == EOS_HTTPD_STREAM_END)  { ended = 1; break; }
+        if (got < 0) break;
+        total += got;
+    }
+    CKI(waits, 3, "the worker sees WAIT while the model is thinking");
+    CK(ended, "and END when the reply finishes");
+    CKI(total, (int)strlen("hello from the mini"), "every byte of the reply came through");
+    CK(memcmp(drained, "hello from the mini", (size_t)total) == 0, "in order and unaltered");
+
+    // The failure path. A stream that has already sent a 200 has no status code
+    // left, so the sentence the "! " line carries comes from brain_status.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.reply      = "half an ans";
+    FB.per_read   = 64;
+    FB.end_with   = EOS_HTTPD_STREAM_FAIL;
+    FB.st.last_error = "megabrain: EOS_BRAIN_ERR_TRUNCATED";
+    CKI(call("POST", "/api/brain/ask", "{\"q\":\"hi\"}", &r), 200, "the ask is staged");
+    n = SRV.h.ports.brain_read(SRV.h.ctx, drained, (int)sizeof drained);
+    CKI(n, 11, "the text that did arrive is delivered first");
+    CKI(SRV.h.ports.brain_read(SRV.h.ctx, drained, (int)sizeof drained),
+        EOS_HTTPD_STREAM_FAIL, "and only then does it fail");
+    {
+        eos_httpd_brain_t st;
+        memset(&st, 0, sizeof st);
+        CK(SRV.h.ports.brain_status(SRV.h.ctx, &st), "status answers after a failure");
+        CK(st.last_error && strstr(st.last_error, "TRUNCATED") != NULL,
+           "and carries the sentence the \"! \" line needs");
+    }
+
+    // Cancel. Never an error: a stop pressed a moment after the reply landed is
+    // the normal case, and a 409 there would show a failure for something that
+    // worked.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(callj("POST", "/api/brain/cancel", NULL, &r), 200, "cancelling nothing is 200");
+    CK(has_kv(r.body, "cancelled", "false"), "and says it cancelled nothing");
+    CKI(FB.cancels, 1, "the client was still asked");
+
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    FB.cancel_had = true;
+    CKI(callj("POST", "/api/brain/cancel", NULL, &r), 200, "cancelling a live request is 200");
+    CK(has_kv(r.body, "cancelled", "true"), "and says so");
+    CKS(r.content_type, "application/json; charset=utf-8", "cancel is JSON");
+
+    // A body on cancel is ignored rather than refused - the web app sends none,
+    // and a fetch that adds one must not be a failure the user sees.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_RUN);
+    CKI(callj("POST", "/api/brain/cancel", "{\"anything\":1}", &r), 200, "a body on cancel is ignored");
+
+    CK(srv_intact(), "the brain handlers stayed inside the server struct");
+}
+
+static void test_brain_routes(void)
+{
+    eos_httpd_resp_t r;
+
+    printf("  routes: /api/brain/*\n");
+
+    CKI(eos_httpd_route("GET",  "/api/brain/status"), EOS_ROUTE_BRAIN_STATUS, "GET status");
+    CKI(eos_httpd_route("POST", "/api/brain/ask"),    EOS_ROUTE_BRAIN_ASK,    "POST ask");
+    CKI(eos_httpd_route("POST", "/api/brain/cancel"), EOS_ROUTE_BRAIN_CANCEL, "POST cancel");
+
+    // The verb table is exactly the three above. web/README.md: the board
+    // answers GET and POST and nothing else, and each path takes only one.
+    CKI(eos_httpd_route("POST", "/api/brain/status"), EOS_ROUTE_METHOD, "POST status is 405");
+    CKI(eos_httpd_route("GET",  "/api/brain/ask"),    EOS_ROUTE_METHOD, "GET ask is 405");
+    CKI(eos_httpd_route("GET",  "/api/brain/cancel"), EOS_ROUTE_METHOD, "GET cancel is 405");
+    CKI(eos_httpd_route("DELETE", "/api/brain/cancel"), EOS_ROUTE_METHOD, "DELETE is 405");
+
+    // A typo under /api/brain/ is a 404 and never a file: falling through to
+    // the document root would turn a mistyped endpoint into a path surface.
+    CKI(eos_httpd_route("GET", "/api/brain"),         EOS_ROUTE_NONE, "the bare prefix is 404");
+    CKI(eos_httpd_route("GET", "/api/brain/asks"),    EOS_ROUTE_NONE, "a typo is 404");
+    CKI(eos_httpd_route("POST", "/api/brain/ask/x"),  EOS_ROUTE_NONE, "and never STATIC");
+
+    // The query string is not part of the path.
+    CKI(eos_httpd_route("GET", "/api/brain/status?x=1"), EOS_ROUTE_BRAIN_STATUS,
+        "a query string does not change the route");
+
+    // SETUP has no megabrain, but the endpoints must still answer as endpoints:
+    // a portal redirect on /api/ would be JSON the setup page cannot parse.
+    fake_reset();
+    srv_init(EOS_HTTPD_MODE_SETUP);
+    CKI(callj("GET", "/api/brain/status", NULL, &r), 200, "status answers in SETUP too");
+    CKI(r.kind, EOS_HTTPD_BODY_BUF, "and is a document, not a 302 to the portal");
+    CKI(callj("GET", "/api/brain/asks", NULL, &r), 404, "a typo in SETUP is still 404");
+    CK(has_kv(r.body, "error", "\"not_found\""), "and JSON, not the portal");
+}
+
 static void test_the_walkthrough(void)
 {
     eos_httpd_resp_t r;
@@ -2208,6 +2630,122 @@ static void test_the_walkthrough(void)
     CK(srv_intact(), "the walkthrough never wrote outside the server struct");
 }
 
+
+// ==========================================================================
+// Every endpoint in web/README.md, in one table
+// ==========================================================================
+//
+// Three agents added routes to this file's ROUTES[] in parallel and each
+// guessed at the others'. This is the reconciliation, written down: the
+// complete list the web app calls, checked against the real route scan and
+// then driven through the real dispatch on a server with NOTHING bound.
+//
+// Two properties, and the second is the one that matters. Every path must
+// RESOLVE — a 404 here means the page gets "not found" for an endpoint the
+// firmware believes it implements, which is the failure the whole run was
+// about. And an unwired endpoint must answer 501 UNSUPPORTED, not 404 and not
+// 500: web/README.md's error table says unsupported means "valid call, not
+// available on this tier", and that is the honest thing for a board whose
+// ports were never assigned to say.
+
+static const struct { const char *method, *uri; } CONTRACT[] = {
+    // Setup mode, and the one endpoint it shares with the rest of the app.
+    { "GET",  "/api/net/status" },
+    { "GET",  "/api/wifi/scan" },
+    { "POST", "/api/wifi/connect" },
+    { "POST", "/api/wifi/forget" },
+    { "GET",  "/api/ble/scan" },
+    { "POST", "/api/ble/pair" },
+    { "GET",  "/api/ble/status" },
+    { "POST", "/api/ble/forget" },
+    // System
+    { "GET",  "/api/system" },
+    { "GET",  "/api/system/health" },
+    { "POST", "/api/system/reboot" },
+    // Files
+    { "GET",  "/api/fs/list?path=%2Fint" },
+    { "GET",  "/api/fs/stat?path=%2Fint%2Fa" },
+    { "GET",  "/api/fs/read?path=%2Fint%2Fa" },
+    { "GET",  "/api/fs/usage?point=%2Fint" },
+    { "POST", "/api/fs/write?path=%2Fint%2Fa&offset=0&final=1" },
+    { "POST", "/api/fs/upload/abort?path=%2Fint%2Fa" },
+    { "POST", "/api/fs/mkdir?path=%2Fint%2Fd" },
+    { "POST", "/api/fs/remove?path=%2Fint%2Fa" },
+    { "POST", "/api/fs/rename?from=%2Fint%2Fa&to=%2Fint%2Fb" },
+    // Settings, themes, apps
+    { "GET",  "/api/settings" },
+    { "POST", "/api/settings" },
+    { "GET",  "/api/themes" },
+    { "GET",  "/api/apps" },
+    // Buddy
+    { "GET",  "/api/buddy" },
+    { "POST", "/api/buddy/reload" },
+    // Console
+    { "GET",  "/api/console/log" },
+    { "POST", "/api/console/exec" },
+    // Megabrain
+    { "GET",  "/api/brain/status" },
+    { "POST", "/api/brain/ask" },
+    { "POST", "/api/brain/cancel" },
+};
+
+static void test_every_endpoint(void)
+{
+    eos_httpd_cfg_t cfg;
+    eos_httpd_resp_t r;
+    char path[96];
+    int i, n = (int)(sizeof CONTRACT / sizeof CONTRACT[0]);
+    int resolved = 0, unsupported = 0;
+
+    printf("  the contract: all %d endpoints resolve and answer honestly\n", n);
+
+    // 1. The route scan. The path is taken without its query string, the way
+    //    eos_httpd_route() is called for real.
+    for (i = 0; i < n; i++) {
+        const char *q = strchr(CONTRACT[i].uri, '?');
+        size_t len = q ? (size_t)(q - CONTRACT[i].uri) : strlen(CONTRACT[i].uri);
+        eos_route_t rt;
+        if (len >= sizeof path) len = sizeof path - 1;
+        memcpy(path, CONTRACT[i].uri, len);
+        path[len] = 0;
+        rt = eos_httpd_route(CONTRACT[i].method, path);
+        if (rt != EOS_ROUTE_NONE && rt != EOS_ROUTE_METHOD) resolved++;
+        else printf("    %s %s does not resolve\n", CONTRACT[i].method, path);
+    }
+    CKI(resolved, n, "every endpoint in web/README.md is in the route table");
+
+    // 2. Dispatch, with no ports bound at all.
+    memset(&SRV.h, 0, sizeof SRV.h);
+    memset(SRV.pre, 0x5A, GUARD);
+    memset(SRV.post, 0xA5, GUARD);
+    eos_httpd_cfg_default(&cfg);
+    cfg.mode = EOS_HTTPD_MODE_RUN;
+    eos_httpd_init(&SRV.h, NULL, NULL, &cfg);
+    eos_httpd_set_api(NULL);
+
+    for (i = 0; i < n; i++) {
+        const char *body = CONTRACT[i].method[0] == 'P' ? "{}" : NULL;
+        callj(CONTRACT[i].method, CONTRACT[i].uri, body, &r);
+        if (r.status == 501) unsupported++;
+        else printf("    %s %s answered %d, not 501\n",
+                    CONTRACT[i].method, CONTRACT[i].uri, r.status);
+    }
+    CKI(unsupported, n, "an unwired board answers 501 to all of them, never 404");
+    CK(srv_intact(), "and never wrote outside the server struct doing it");
+
+    // The two ends of the table that are NOT in the contract and must stay
+    // where they are: an unknown /api path is a 404, and the wrong method on a
+    // path that exists is a 405. /api/settings is the only path in the whole
+    // contract with two methods, which is why the scan keeps looking after a
+    // path match instead of settling for the first row.
+    CKI(eos_httpd_route("GET", "/api/nope"), EOS_ROUTE_NONE, "an unknown api path is no route");
+    CKI(eos_httpd_route("DELETE", "/api/settings"), EOS_ROUTE_METHOD, "a wrong method is 405");
+    CK(eos_httpd_route("GET", "/api/settings") == EOS_ROUTE_SETTINGS_GET,
+       "and /api/settings still finds its GET");
+    CK(eos_httpd_route("POST", "/api/settings") == EOS_ROUTE_SETTINGS_SET,
+       "and its POST, which is the row a first-match scan would have lost");
+}
+
 int main(void)
 {
     printf("\n=== eos_httpd ===\n");
@@ -2227,7 +2765,12 @@ int main(void)
     test_static();
     test_errors_and_counters();
     test_web_contract();
+    test_brain_routes();
+    test_brain_status();
+    test_brain_ask();
+    test_brain_stream_and_cancel();
     test_the_walkthrough();
+    test_every_endpoint();
 
     printf("\n=== %d checks, %d failed ===\n", checks, fails);
     return fails ? 1 : 0;
