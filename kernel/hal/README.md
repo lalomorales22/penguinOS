@@ -248,6 +248,21 @@ arcade build:
   arms `cfg.web_hold_ms` (600ms) and decays on its own. Keyboard holds do not
   expire; a disconnect clears the whole held set instead.
 
+- **Motion events coalesce, button events never do.** A trackpad report is
+  three bytes on its own handle and a swipe is hundreds of them; the ring is
+  32 events. `eos_input_inject_pointer()` therefore merges an
+  `EOS_EV_POINTER_MOVE` into the motion already at the tail rather than
+  queueing a second one, so a swipe cannot fill the ring and evict the click
+  at the end of it. Nothing is lost by that: the cursor's real position lives
+  in `eos_pointer_t` and the events carry only a copy of it. Presses,
+  releases and `EOS_EV_CLICK` are each pushed exactly once.
+
+The four pointer events (`EOS_EV_POINTER_MOVE` / `_DOWN` / `_UP` and
+`EOS_EV_CLICK`) carry the cursor's **absolute** screen position in `x`/`y` and
+an `EOS_BTN_*` bitmap in `key`. The HAL never sees a relative count: it does
+not know how big the screen is, so acceleration and clamping happen in
+`kernel/shell/eos_pointer.c` and only the answer comes back through this door.
+
 Caps lock is deliberately unhandled: the lock state lives in the HID LED output
 report, which this HAL does not send, so treating capslock as shift would be
 wrong half the time.

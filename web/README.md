@@ -8,12 +8,12 @@ no build step, no webfont. Nothing outside this directory is ever fetched.
 
 | File | Lines | Raw | Gzip | What |
 |---|---|---|---|---|
-| `index.html` | 438 | 18,822 | 4,958 | Structure and the inline SVG icon symbols |
-| `style.css` | 722 | 24,864 | 5,873 | Palette as custom properties, mobile-first layout |
-| `app.js` | 1,608 | 50,533 | 15,284 | API client, all four tabs |
+| `index.html` | 448 | 19,252 | 5,102 | Structure and the inline SVG icon symbols |
+| `style.css` | 735 | 25,454 | 6,050 | Palette as custom properties, mobile-first layout |
+| `app.js` | 1,802 | 59,835 | 18,530 | API client, all four tabs |
 | `setup.js` | 1,252 | 44,354 | 13,808 | The setup screen: WiFi, BLE pairing, radio etiquette |
-| `voxel-editor.js` | 958 | 33,010 | 10,426 | The buddy editor and the `.vox` codec |
-| **total served** | **4,978** | **171,583** | **50,349** | 29% of raw |
+| `voxel-editor.js` | 1,151 | 42,438 | 13,822 | The buddy editor and the `.vox` codec |
+| **total served** | **5,388** | **191,333** | **57,312** | 30% of raw |
 
 Setup added 62,332 raw and 18,183 gzipped across four files. Most of that is
 `setup.js`, and most of `setup.js` is English: nine ways a join can fail, six
@@ -515,28 +515,59 @@ re-fetches `/api/themes` afterwards and restyles without a reload.
 
 | Method | Path | Params | Response |
 |---|---|---|---|
-| GET | `/api/apps` | — | `{"apps":[{"id":"term","name":"Terminal","tier_min":0}]}` |
+| GET | `/api/apps` | — | `{"apps":[{"id":"chat","name":"chat","summary":"ask megabrain, and watch the reply arrive","tier_min":0}]}` |
 
 Feeds the autostart picker. `tier_min` is the lowest `render.tier` the app runs
 on; the picker shows everything and lets the board refuse.
+
+**`id` is the identifier and `name` is the label.** They are two columns of one
+table and a board is free to spell them differently, so a client must send `id`
+back in `sys.autostart` and must never send `name`. `web/app.js` does this
+already (`{ v: a.id, l: a.name || a.id }`), and as of this pass the firmware
+resolves the stored value through the same column rather than through the tab
+label it was matching before.
+
+There is one table behind this on the board —
+`firmware/main/eos_app_registry.c` — and `/api/apps`, the panel's `super+space`
+app launcher, the tab labels and `sys.autostart` all read it. On the
+C6-LCD-1.3 that is ten rows: `clock`, `board`, `heap`, `keys`, `buddy`, `chat`,
+`settings`, `files`, `media`, `party`. `media` is the RGB LED and its `summary`
+says so in its first four words: there is no speaker on that board.
 
 ## Buddy
 
 | Method | Path | Params | Response |
 |---|---|---|---|
-| GET | `/api/buddy` | — | `{"buddy":{...buddy.json...},"state":"idle"}` |
-| POST | `/api/buddy/reload` | — | `{"ok":true,"state":"idle"}` |
+| GET | `/api/buddy` | — | `{"buddy":{...},"state":"idle","error":null,"limits":{...},"dir":"/int/buddy"}` |
+| POST | `/api/buddy/reload` | — | `{"ok":true,"state":"idle","buddy":{...}}` |
 
 There is deliberately **no upload endpoint for the model**. The editor writes
-`/sd/buddy/buddy.vox` and `/sd/buddy/buddy.json` through the ordinary chunked
-`/api/fs/write`, then calls `/api/buddy/reload` to make the running OS pick them
-up. One upload mechanism, one set of failure modes.
+`buddy.vox` and `buddy.json` into the reported `dir` through the ordinary
+chunked `/api/fs/write`, then calls `/api/buddy/reload` to make the running OS
+pick them up. One upload mechanism, one set of failure modes.
+
+`dir` is `EOS_APPS_BUDDY_DIR`, which is `/int/buddy` on every image built
+today. The editor does not hardcode it: it writes where the board says, and
+falls back to `/int/buddy` then `/sd/buddy` only when the board answered 404
+and therefore told it nothing.
+
+`limits` is what this board can hold, not what the format allows —
+`{"voxels":1536,"bytes":7264,"dim":32}` on esp32c6 against a format ceiling of
+4096 and 17480. The editor installs them before it parses anything, so a model
+the board would refuse is refused in the browser with those numbers in the
+message. A board that 404s reports no limits, and the editor says so rather
+than guessing; it re-asks after the first successful save.
+
+`model.voxels` in the response is the count **after** `eos_vox_finish()` has
+dropped the fully buried voxels, and the file's `XYZI` count is the number
+before. Pip is 1,280 in the file and 572 on the panel. The editor shows both,
+because one number on its own reads like half the upload went missing.
 
 `state` is the `eos_buddy_state_t` name lowercased — `idle`, `thinking`,
 `talking`, `listening`, `sleeping`, `happy`, `confused`.
 
-`GET /api/buddy` returning `not_found` (404) is normal on a fresh card and the
-editor handles it: it says "no buddy.vox on the card yet" and lets you build one.
+`GET /api/buddy` returning `not_found` (404) is normal on a board with no
+buddy at all, and the editor handles it: it says so and lets you build one.
 
 ### buddy.json
 
@@ -809,7 +840,8 @@ where the board's real behaviour is narrower than what this document allows.
 | `wifi.ssid` + `wifi.psk` | a network change needs both. A new SSID with a blank password is refused rather than retried with the old network's passphrase, which would fail and be reported as "wrong password" |
 | settings durability | an edit is lost if the board dies within 2 s of it. That is the debounce window: a LittleFS sync is a 4 KB sector erase with the instruction cache off, and a 60-step brightness drag has to cost one erase and not sixty |
 | `time.synced` | always false. There is no SNTP client, so `epoch` is whatever `time()` says and the first file written on a fresh board carries a 1970 mtime for ever |
-| `sys.autostart` | stored, reported, and applied at boot as **which window has the focus**. Every window is open from boot and there is no process to launch; `apps/` is empty |
+| `sys.autostart` | stored, reported, and applied at boot as **which window has the focus**. Six of the ten windows are open from boot and the other four are opened from the panel's own `super+space` launcher; there is no process to launch. The value is matched against the `id` column of `/api/apps`, so a value the picker offered always resolves |
+| `/api/apps` | the ten windows the panel itself can show. There is no separate app process model and none is planned; the board's `apps/` directory is empty and superseded by the table in `firmware/main/eos_app_registry.c` |
 | `fw.built` | `__DATE__ " " __TIME__`, not ISO 8601, and `fw.version` is the string `0.1.0`. There is no build-system field for either yet |
 
 ## Assumptions to confirm

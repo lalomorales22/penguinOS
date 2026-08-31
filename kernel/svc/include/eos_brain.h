@@ -152,11 +152,30 @@ typedef struct {
 void              eos_brain_parser_init(eos_brain_parser_t *p, eos_brain_text_fn on_text, void *user);
 eos_brain_parse_t eos_brain_parser_feed(eos_brain_parser_t *p, const uint8_t *data, size_t len);
 
-// Call when the peer closes. A body that was being read until close ends
-// cleanly here; anything else becomes EOS_BRAIN_ERR_TRUNCATED. Either way the
-// staged text is flushed first, minus a dangling partial UTF-8 sequence, which
-// is dropped because there is no way to complete it.
+// Call when the peer closes in an orderly way — a FIN, not a reset. Two shapes
+// of response are complete at that point and settle as success: a body that was
+// being read until close, where the close IS the terminator, and a chunked body
+// whose zero-length chunk has already been read, where the only byte still owed
+// is the blank line that ends the trailer section. Anything else becomes
+// EOS_BRAIN_ERR_TRUNCATED. Either way the staged text is flushed first, minus a
+// dangling partial UTF-8 sequence, which is dropped because there is no way to
+// complete it.
 eos_brain_parse_t eos_brain_parser_finish(eos_brain_parser_t *p);
+
+// Call when the socket broke rather than closed — a reset, or an error from the
+// transport. The difference matters for exactly one case: a read-until-close
+// body has no framing of its own, so the orderly close is the ONLY evidence
+// that the reply was all there, and a broken socket destroys that evidence.
+// Such a stream is truncated here where finish() would have called it complete.
+// A chunked body that has already read its zero-length chunk is complete on its
+// own framing, and stays complete however the socket ended.
+eos_brain_parse_t eos_brain_parser_abort(eos_brain_parser_t *p);
+
+// True once the framing itself proves the body is all here, whatever the socket
+// does next: content-length satisfied, zero-length chunk read, or already done.
+// A read-until-close body is never body-complete, because nothing but the close
+// can make it so.
+bool eos_brain_parser_body_complete(const eos_brain_parser_t *p);
 
 int             eos_brain_parser_status(const eos_brain_parser_t *p);
 eos_brain_err_t eos_brain_parser_error(const eos_brain_parser_t *p);

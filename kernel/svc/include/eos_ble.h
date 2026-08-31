@@ -255,6 +255,40 @@ int eos_ble_name_sanitize(char *dst, int dstmax, const char *src, int srclen);
 // the advertisement carried no service list.
 bool eos_ble_adv_is_hid(uint16_t appearance, const uint16_t *uuid16, int n);
 
+// ------------------------------------------------------------- boot mouse
+//
+// The K809 is a keyboard with a trackpad and the trackpad is a second HID
+// device behind the same bond: three-byte notifications on their own report
+// handle while the keys arrive as eight-byte reports on another. Three bytes
+// with no report id is the HID boot mouse protocol exactly - byte 0 a button
+// bitmap, byte 1 dx, byte 2 dy.
+//
+// EXACTLY three, and that is the second thing worth knowing. A four-byte
+// report is a boot mouse with a scroll wheel on most devices and is the
+// consumer-control page on this one - the K809 sends its media keys as four
+// bytes on a third handle - and there is nothing in a HOGP notification to
+// tell the two apart. Decoding four bytes would turn a volume key into a
+// middle-button click, so four bytes are refused and this board has no scroll.
+//
+// dx and dy are SIGNED eight-bit counts and this is the one place in the whole
+// path where that can be got wrong. A uint8_t read of 0xFF is 255, not -1, and
+// the symptom is a cursor that can travel right and down and never left or up:
+// it pins itself in the bottom-right corner on the first swipe and stays
+// there. The decode is therefore split out of the radio half and tested on the
+// host against exactly that byte.
+
+typedef struct {
+    int16_t dx, dy;     // signed relative counts, sign extended from the wire
+    uint8_t buttons;    // EOS_BTN_* in eos_input.h, which is HID's own bitmap
+} eos_ble_mouse_t;
+
+// Decodes one HID boot-mouse input report. Returns false - and writes nothing
+// - for anything that is not one, which includes the eight-byte keyboard
+// report and the four-byte consumer-control report the same keyboard sends on
+// two other handles. Reports arrive from an untrusted peripheral, so every
+// length from 0 to 255 and every byte value is safe to hand to this.
+bool eos_ble_decode_mouse(const uint8_t *rep, int len, eos_ble_mouse_t *out);
+
 // Merges one advertisement into a scan table, in place. Returns the index it
 // landed at, or -1 when the table was full of better candidates. Merging is
 // what makes an active scan work: the name usually arrives in the scan

@@ -143,6 +143,25 @@ bool eos_ble_adv_is_hid(uint16_t appearance, const uint16_t *uuid16, int n)
     return false;
 }
 
+// ========================================================== boot mouse
+
+bool eos_ble_decode_mouse(const uint8_t *rep, int len, eos_ble_mouse_t *out)
+{
+    if (!rep || !out) return false;
+
+    // Exactly three. See eos_ble.h: four bytes is this keyboard's consumer
+    // page, eight is its keyboard, and neither is a pointer.
+    if (len != 3) return false;
+
+    // The cast to int8_t IS the sign extension, and it is the only thing
+    // standing between the owner and a cursor that can only travel right and
+    // down. rep[] is uint8_t, so 0xFF is 255 here and -1 one line later.
+    out->dx      = (int16_t)(int8_t)rep[1];
+    out->dy      = (int16_t)(int8_t)rep[2];
+    out->buttons = rep[0];
+    return true;
+}
+
 // Higher is better. A HID advertiser outranks anything else whatever the
 // signal, and a keyboard outranks a HID device that has not said what it is,
 // because the table is eight entries and a room can hold more than eight
@@ -354,6 +373,7 @@ void eos_ble_status(eos_ble_status_t *out)
 #include "services/gap/ble_svc_gap.h"
 
 #include "eos_input.h"
+#include "eos_pointer.h"
 
 static const char *TAG = "eos_ble";
 
@@ -368,7 +388,12 @@ static const char *TAG = "eos_ble";
 #define UUID_BATTERY   0x2A19
 
 #define CHR_MAX  10
-#define SUB_MAX   4
+
+// Notifying handles we will listen to at once. Four was exactly enough for the
+// K809 - boot keyboard, keys, media keys, trackpad - and exactly enough is the
+// wrong amount when the cost of one more is four bytes of BSS and the cost of
+// one too few is a device whose pointer silently never arrives. Six.
+#define SUB_MAX   6
 
 // A boot keyboard report is eight bytes: modifiers, reserved, six usages. HOGP
 // notifications carry no report id - the characteristic identity is the id -
@@ -439,6 +464,11 @@ static int      s_nsub;
 // The handle that actually delivers keyboard reports, latched on the first
 // one that arrives. Zero until then. See choose_reports().
 static uint16_t s_kbd_handle;
+// And the same for the trackpad. Latched separately and for the same reason:
+// the K809 notifies on three handles and only says which is which by what it
+// sends, so the first handle to deliver a three-byte report owns the pointer
+// and a later three-byte report from anywhere else is ignored.
+static uint16_t s_mouse_handle;
 static uint16_t s_cccd[SUB_MAX];    // CCCDs still to be written
 static int      s_ncccd, s_cccd_i;
 static bool     s_subscribed;
@@ -523,6 +553,7 @@ static void gatt_reset(void)
 {
     s_nchr = s_nsub = s_ncccd = s_cccd_i = 0;
     s_kbd_handle = 0;
+    s_mouse_handle = 0;
     s_svc_start = s_svc_end = 0;
     s_subscribed = false;
 }
@@ -648,6 +679,7 @@ static void choose_reports(void)
 
     s_nsub = 0;
     s_kbd_handle = 0;
+    s_mouse_handle = 0;
     for (i = 0; i < s_nchr; i++) {
         if (s_chr[i].uuid == UUID_PROTO)    proto = s_chr[i].val_handle;
         if (s_chr[i].uuid == UUID_BOOT_KBD) boot  = s_chr[i].val_handle;
@@ -764,7 +796,13 @@ static void connect_end(void)
 static void drop_link(void)
 {
     connect_end();
-    if (s_subscribed) eos_input_inject_conn(EOS_SRC_KEYBOARD, false, now_ms());
+    if (s_subscribed) {
+        eos_input_inject_conn(EOS_SRC_KEYBOARD, false, now_ms());
+        // The trackpad leaves with the keyboard - one bond, one link - so any
+        // button it was holding is released here rather than being left down
+        // forever with nothing able to lift it.
+        eos_pointer_disconnect(eos_pointer_shared(), now_ms());
+    }
     s_conn = BLE_HS_CONN_HANDLE_NONE;
     s_passkey = 0;
     s_passkey_shown = false;
@@ -946,6 +984,30 @@ static int ble_gap_event(struct ble_gap_event *ev, void *arg)
             }
             if (ev->notify_rx.attr_handle != s_kbd_handle) return 0;
             eos_input_hid_report(rep, (uint8_t)got, now_ms());
+            return 0;
+        }
+
+        // A pointer report, resolved the same way: three bytes is a HID boot
+        // mouse and the first handle to deliver one owns the trackpad. The
+        // decode itself is eos_ble_decode_mouse() up in the portable half of
+        // this file, where the host suite can hand it 0xFF and check that it
+        // comes back as minus one.
+        {
+            eos_ble_mouse_t m;
+
+            if (eos_ble_decode_mouse(rep, (int)got, &m)) {
+                if (!s_mouse_handle) {
+                    s_mouse_handle = ev->notify_rx.attr_handle;
+                    ESP_LOGI(TAG, "pointer reports on handle %u",
+                             (unsigned)s_mouse_handle);
+                }
+                if (ev->notify_rx.attr_handle != s_mouse_handle) return 0;
+                // Straight into the cursor, on the host task, because the
+                // position must be current the instant the frame loop next
+                // draws - the ring carries the click, not the coordinates.
+                eos_pointer_feed(eos_pointer_shared(), m.dx, m.dy, m.buttons,
+                                 now_ms());
+            }
         }
         return 0;
     }

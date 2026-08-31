@@ -477,7 +477,7 @@ static void test_parser_truncation(void)
     sink_t sink;
     framed_t f;
     const char *want = "alpha beta gamma";
-    size_t cut;
+    size_t cut, body_all_here;
     int wrong_state = 0, not_prefix = 0, guard_bad = 0;
 
     printf("  stream dies at every possible offset\n");
@@ -489,16 +489,37 @@ static void test_parser_truncation(void)
     bchunks(&s, "gamma");
     bend(&s);
 
-    for (cut = 0; cut < s.n; cut++) {
+    // The zero-length chunk line is the moment the body stops being partial.
+    // Its last byte is three from the end of "0\r\n\r\n", so a cut at or after
+    // s.n - 2 has the whole answer in hand and only the trailer's blank line is
+    // still owed. Before that, bytes of the body itself are missing.
+    body_all_here = s.n - 2;
+
+    for (cut = 0; cut < body_all_here; cut++) {
         eos_brain_parse_t r = run(s.b, cut, 1, &sink, &f, 1);
         if (r != EOS_BRAIN_PARSE_ERROR) wrong_state++;
         if (eos_brain_parser_error(&f.p) != EOS_BRAIN_ERR_TRUNCATED) wrong_state++;
         if (strncmp(want, sink.text, sink.len) != 0) not_prefix++;
         if (!framed_ok(&f) || !sink_guards_ok(&sink)) guard_bad++;
     }
-    CK(wrong_state == 0, "every truncation reports TRUNCATED, none reports success");
+    CK(wrong_state == 0, "every cut that loses body bytes reports TRUNCATED, none reports success");
     CK(not_prefix == 0, "text delivered before the cut is always a prefix of the real answer");
     CK(guard_bad == 0, "no out-of-bounds write on any truncation");
+
+    // And from that byte on the reply is whole, however the socket ends. This
+    // is the false error the panel was showing: a complete answer whose last
+    // two framing bytes the server never bothered to send.
+    wrong_state = 0; not_prefix = 0; guard_bad = 0;
+    for (cut = body_all_here; cut <= s.n; cut++) {
+        eos_brain_parse_t r = run(s.b, cut, 1, &sink, &f, 1);
+        if (r != EOS_BRAIN_PARSE_DONE) wrong_state++;
+        if (eos_brain_parser_error(&f.p) != EOS_BRAIN_OK) wrong_state++;
+        if (strcmp(want, sink.text) != 0) not_prefix++;
+        if (!framed_ok(&f) || !sink_guards_ok(&sink)) guard_bad++;
+    }
+    CK(wrong_state == 0, "a close after the zero-length chunk is a finished reply, not a truncation");
+    CK(not_prefix == 0, "and it carries the whole answer");
+    CK(guard_bad == 0, "no out-of-bounds write on any of those");
 
     // Losing the connection mid-character must drop the fragment, not print it.
     {
@@ -726,6 +747,167 @@ static void test_parser_garbage(void)
     CK(r == EOS_BRAIN_PARSE_ERROR, "a NULL parser is refused, not dereferenced");
 }
 
+
+// ------------------------------------------------- end of stream, for real
+//
+// Captured off the wire on 2026-08-30: the exact bytes megabrain answered the
+// board's own GET /ask with, headers and Caddy's chunk framing included, kept
+// byte for byte so that a change to the parser has to keep working against
+// what the mini really says rather than against what this file thinks it says.
+// The mini DOES send the zero-length chunk and DOES then close, which is worth
+// having written down: the end-of-stream bug the panel showed was never the
+// server failing to terminate.
+static const char MEGABRAIN_CAPTURE[] =
+    "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Headers: content-t"
+    "ype\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-c"
+    "ache\r\nContent-Type: text/plain; charset=utf-8\r\nDate: Mon"
+    ", 31 Aug 2026 02:57:05 GMT\r\nVia: 1.1 Caddy\r\nX-Accel-Buff"
+    "ering: no\r\nConnection: close\r\nTransfer-Encoding: chunked"
+    "\r\n\r\n1\r\n*\r\n1\r\nP\r\n3\r\nops\r\n3\r\n up\r\n5\r\n from\r\n4\r\n the\r\n4\r\n i"
+    "ce\r\n5\r\n cube\r\n5\r\n tray\r\n5\r\n with\r\n2\r\n a\r\n9\r\n cheerful\r\n2"
+    "\r\n \"\r\n5\r\nHello\r\n2\r\n!\"\r\n4\r\n and\r\n6\r\n waves\r\n4\r\n his\r\n3\r\n "
+    "fl\r\n6\r\nippers\r\n2\r\n.*\r\n4\r\n\n\nHi\r\n3\r\n Hi\r\n1\r\n!\r\n2\r\n I\r\n2\r\n'"
+    "m\r\n4\r\n Lil\r\n2\r\n P\r\n6\r\nenguin\r\n7\r\n Square\r\n1\r\n!\r\n5\r\n \xF0""\x9F""\x90""\xA7"""
+    "\r\n3\r\n\xE2""\x9C""\xA8""\r\n4\r\n\n\nIt\r\n2\r\n's\r\n3\r\n so\r\n5\r\n good\r\n3\r\n to\r\n5\r\n "
+    "meet\r\n4\r\n you\r\n1\r\n,\r\n2\r\n L\r\n3\r\nalo\r\n1\r\n!\r\n4\r\n Dad\r\n7\r\n a"
+    "lways\r\n5\r\n told\r\n3\r\n me\r\n5\r\n that\r\n5\r\n when\r\n4\r\n you\r\n5\r"
+    "\n talk\r\n6\r\n about\r\n5\r\n cool\r\n7\r\n things\r\n3\r\n\xE2""\x80""\x94""\r\n4\r\nlike"
+    "\r\n3\r\n AI\r\n4\r\n and\r\nc\r\n electronics\r\n6\r\n\xE2""\x80""\x94""you\r\n4\r\n get\r\n"
+    "6\r\n these\r\n4\r\n big\r\n7\r\n sparks\r\n3\r\n in\r\n5\r\n your\r\n9\r\n ci"
+    "rcuits\r\n1\r\n.\r\n4\r\n And\r\n5\r\n here\r\n3\r\n we\r\n4\r\n are\r\n1\r\n:\r\n"
+    "2\r\n a\r\n2\r\n p\r\n6\r\nenguin\r\n5\r\n made\r\n3\r\n of\r\n5\r\n pure\r\n5\r\n"
+    " code\r\n2\r\n (\r\n4\r\nwell\r\n1\r\n,\r\n7\r\n mostly\r\n4\r\n ice\r\n2\r\n!)\r"
+    "\n4\r\n and\r\n3\r\n he\r\n4\r\n who\r\n6\r\n knows\r\n4\r\n the\r\n8\r\n secre"
+    "ts\r\n3\r\n of\r\n4\r\n the\r\n8\r\n digital\r\n6\r\n world\r\n1\r\n!\r\n5\r\n \xF0"""
+    "\x9F""\x96""\xA5""\r\n3\r\n\xEF""\xB8""\x8F""\r\n4\r\n\xF0""\x9F""\xA4""\x96""\r\n4\r\n\n\nSo\r\n1\r\n,\r\n5\r\n what\r\n3\r\n do\r\n4"
+    "\r\n you\r\n6\r\n think\r\n1\r\n?\r\n3\r\n We\r\n3\r\n're\r\n5\r\n just\r\n6\r\n g"
+    "oing\r\n3\r\n to\r\n5\r\n dive\r\n5\r\n into\r\n2\r\n a\r\n7\r\n little\r\n8\r\n"
+    " virtual\r\n4\r\n lab\r\n9\r\n together\r\n3\r\n to\r\n6\r\n build\r\na\r\n "
+    "something\r\n2\r\n *\r\n1\r\nb\r\n5\r\neyond\r\n1\r\n*\r\nc\r\n imagination\r"
+    "\n1\r\n?\r\n2\r\n I\r\n8\r\n promise\r\n3\r\n it\r\n4\r\n won\r\n2\r\n't\r\n3\r\n b"
+    "e\r\n4\r\n any\r\n5\r\n more\r\n7\r\n square\r\n5\r\n than\r\n4\r\n you\r\n1\r\n"
+    "!\r\n5\r\n \xF0""\x9F""\xA7""\x8A""\r\n3\r\n\xE2""\x9E""\xA1""\r\n3\r\n\xEF""\xB8""\x8F""\r\n3\r\n\xE2""\x9A""\xA1""\r\n0\r\n\r\n";
+
+static const char MEGABRAIN_TEXT[] =
+    "*Pops up from the ice cube tray with a cheerful \"Hello!\" and waves his "
+    "flippers.*\n\nHi Hi! I'm Lil Penguin Square! \xF0\x9F\x90\xA7\xE2\x9C\xA8\n\nIt's so good to "
+    "meet you, Lalo! Dad always told me that when you talk about cool things"
+    "\xE2\x80\x94like AI and electronics\xE2\x80\x94you get these big sparks in your circuits. "
+    "And here we are: a penguin made of pure code (well, mostly ice!) and he "
+    "who knows the secrets of the digital world! \xF0\x9F\x96\xA5\xEF\xB8\x8F\xF0\x9F\xA4\x96\n\nSo, what do you "
+    "think? We're just going to dive into a little virtual lab together to "
+    "build something *beyond* imagination? I promise it won't be any more "
+    "square than you! \xF0\x9F\xA7\x8A\xE2\x9E\xA1\xEF\xB8\x8F\xE2\x9A\xA1";
+
+static void test_parser_end_of_stream(void)
+{
+    buf_t s;
+    sink_t sink;
+    framed_t f;
+    size_t piece;
+    int wrong = 0;
+
+    printf("  end of stream: close, reset, and a terminator that never comes\n");
+
+    // ---- the capture, at every read size a 192-byte socket buffer can give.
+    {
+        size_t cap = sizeof MEGABRAIN_CAPTURE - 1;
+        int bad_state = 0, bad_text = 0, bad_guard = 0;
+        for (piece = 1; piece <= EOS_BRAIN_RX_MAX; piece++) {
+            eos_brain_parse_t r = run(MEGABRAIN_CAPTURE, cap, piece, &sink, &f, 1);
+            if (r != EOS_BRAIN_PARSE_DONE) bad_state++;
+            if (eos_brain_parser_status(&f.p) != 200) bad_state++;
+            if (strcmp(sink.text, MEGABRAIN_TEXT) != 0) bad_text++;
+            if (!framed_ok(&f) || !sink_guards_ok(&sink)) bad_guard++;
+        }
+        CK(bad_state == 0, "the real megabrain reply reaches DONE at every read size");
+        CK(bad_text == 0, "and decodes byte for byte, emoji and em-dashes included");
+        CK(bad_guard == 0, "and writes nothing outside the parser or the sink");
+    }
+
+    // The terminator really is in there, so nobody has to take my word for it.
+    {
+        size_t cap = sizeof MEGABRAIN_CAPTURE - 1;
+        CK(cap >= 5 && memcmp(MEGABRAIN_CAPTURE + cap - 5, "0\r\n\r\n", 5) == 0,
+           "the captured reply does end with a zero-length chunk");
+    }
+
+    // ---- a complete body whose trailer blank line never arrives.
+    s.n = 0; s.b[0] = 0;
+    bput(&s, HDR_CHUNKED);
+    bchunks(&s, "all here");
+    bput(&s, "0\r\n");                 // zero chunk read; the blank line never comes
+    for (piece = 1; piece <= 8; piece++) {
+        eos_brain_parse_t r = run(s.b, s.n, piece, &sink, &f, 0);
+        if (r != EOS_BRAIN_PARSE_MORE) wrong++;
+        if (!eos_brain_parser_body_complete(&f.p)) wrong++;
+        if (eos_brain_parser_finish(&f.p) != EOS_BRAIN_PARSE_DONE) wrong++;
+        if (eos_brain_parser_error(&f.p) != EOS_BRAIN_OK) wrong++;
+        if (strcmp(sink.text, "all here") != 0) wrong++;
+    }
+    CK(wrong == 0, "a body ended by the zero chunk survives a missing trailer line");
+
+    // ---- and it survives the socket breaking instead of closing, because the
+    // framing already said the body was whole.
+    (void)run(s.b, s.n, 3, &sink, &f, 0);
+    CK(eos_brain_parser_abort(&f.p) == EOS_BRAIN_PARSE_DONE,
+       "a reset after the zero chunk is still a finished reply");
+    CKS(sink.text, "all here", "and it keeps every byte of the answer");
+
+    // ---- the terminator arriving split down the middle is still a terminator.
+    wrong = 0;
+    s.n = 0; s.b[0] = 0;
+    bput(&s, HDR_CHUNKED);
+    bchunks(&s, "split");
+    bput(&s, "0\r");                    // half a chunk-size line, then silence
+    (void)run(s.b, s.n, 1, &sink, &f, 0);
+    if (eos_brain_parser_body_complete(&f.p)) wrong++;
+    if (eos_brain_parser_finish(&f.p) != EOS_BRAIN_PARSE_ERROR) wrong++;
+    if (eos_brain_parser_error(&f.p) != EOS_BRAIN_ERR_TRUNCATED) wrong++;
+    CK(wrong == 0, "half a zero-chunk line is not a terminator; that reply is truncated");
+
+    // ---- a body read until close: only an orderly close can end it.
+    {
+        static const char EOF_BODY[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nno framing at all";
+        (void)RUNS(EOF_BODY, 4, &sink, &f, 0);
+        CK(!eos_brain_parser_body_complete(&f.p),
+           "a read-until-close body is never complete on its framing alone");
+        CK(eos_brain_parser_finish(&f.p) == EOS_BRAIN_PARSE_DONE,
+           "an orderly close ends a read-until-close body cleanly");
+        CKS(sink.text, "no framing at all", "and delivers all of it");
+
+        (void)RUNS(EOF_BODY, 4, &sink, &f, 0);
+        CK(eos_brain_parser_abort(&f.p) == EOS_BRAIN_PARSE_ERROR,
+           "a broken socket does not: nothing else could have said the body ended there");
+        CK(eos_brain_parser_error(&f.p) == EOS_BRAIN_ERR_TRUNCATED,
+           "and it is reported as truncated, not bought as a success");
+    }
+
+    // ---- a body cut mid-chunk is truncated whichever way the socket goes.
+    {
+        s.n = 0; s.b[0] = 0;
+        bput(&s, HDR_CHUNKED);
+        bput(&s, "10\r\nonly eight");     // claims 16 bytes, sends 10
+        (void)run(s.b, s.n, 5, &sink, &f, 0);
+        CK(eos_brain_parser_finish(&f.p) == EOS_BRAIN_PARSE_ERROR,
+           "a close mid-chunk is still truncated");
+        (void)run(s.b, s.n, 5, &sink, &f, 0);
+        CK(eos_brain_parser_abort(&f.p) == EOS_BRAIN_PARSE_ERROR,
+           "and so is a reset mid-chunk");
+    }
+
+    // ---- a short content-length body, both ways.
+    {
+        static const char SHORT_LEN[] =
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nonly ten!!";
+        (void)RUNS(SHORT_LEN, 3, &sink, &f, 0);
+        CK(!eos_brain_parser_body_complete(&f.p), "ten of twenty bytes is not a complete body");
+        CK(eos_brain_parser_finish(&f.p) == EOS_BRAIN_PARSE_ERROR,
+           "a content-length body that stops short is truncated on a close");
+    }
+}
+
 // ------------------------------------------------------- fake transport
 
 typedef struct {
@@ -744,6 +926,7 @@ typedef struct {
     int       stall_every;   // hand over bytes only every other recv, so the
     int       stalled;       // pump actually yields the way a real socket makes it
     int       never_eof;     // pretend the peer is alive but silent, forever
+    int       broke;         // the socket errors instead of closing cleanly
     int       is_open;
     char      host[8][EOS_BRAIN_HOST_MAX];
     int       nhost;
@@ -789,6 +972,7 @@ static int fake_recv(void *ctx, uint8_t *buf, size_t cap)
     a = &t->attempt[t->cur];
     if (t->pos >= a->len) {
         if (t->never_eof) { t->now += (uint32_t)t->stall_ms; return 0; }
+        if (t->broke) return -2;          // not a FIN; the connection died
         return EOS_BRAIN_EOF;
     }
     n = a->len - t->pos;
@@ -1004,6 +1188,99 @@ static void test_service_happy(void)
     spin(&b);
     CK(t.opens == 1, "inside the link ttl the health probe is skipped");
     CKS(w.text, "Hello there", "the shortcut path still streams correctly");
+}
+
+
+static void test_service_end_of_stream(void)
+{
+    fake_t t;
+    eos_brain_transport_t tp;
+    hookctx_t h;
+    eos_brain_hooks_t hooks = { NULL, h_mdns, h_load, h_save };
+    eos_brain_t b;
+    watch_t w;
+    eos_brain_req_t r;
+
+    // A whole reply, terminated by its zero-length chunk, on a server that then
+    // holds the socket open and says nothing more. This is the shape that left
+    // the browser waiting out the full stream deadline on a reply that had
+    // already arrived, and it must settle as success rather than as a timeout.
+    static const char ASK_NO_TRAILER[] =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n"
+        "Transfer-Encoding: chunked\r\n\r\n"
+        "6\r\nHello \r\n5\r\nthere\r\n0\r\n";
+    static const char ASK_EOF_BODY[] =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhalf an ans";
+
+    printf("  service: a finished reply that nobody terminated\n");
+
+    fake_reset(&t);
+    t.drip       = 4;
+    t.never_eof  = 1;
+    t.stall_ms   = 1500;              // walk the clock past the 20 s idle
+    arm(&t, 0, HEALTH_OK);
+    arm(&t, 1, ASK_NO_TRAILER);
+    t.n = 2;
+
+    memset(&h, 0, sizeof h);
+    memset(&w, 0, sizeof w);
+    hooks.ctx = &h;
+    eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    eos_brain_set_event_cb(&b, w_event, &w);
+
+    memset(&r, 0, sizeof r);
+    r.prompt   = "hello there";
+    r.on_token = w_token;
+    r.on_done  = w_done;
+    r.user     = &w;
+    CK(eos_brain_submit(&b, &r) > 0, "the request goes out");
+    spin(&b);
+    CK(!eos_brain_busy(&b), "a server that goes quiet after the last chunk does not hold the service");
+    CK(w.done_calls == 1, "completion fires exactly once");
+    CK(w.done_err == EOS_BRAIN_OK,
+       "a reply whose body is all here settles as success, not as a timeout");
+    CKS(w.text, "Hello there", "and the whole answer was delivered");
+    CK(w.order[strlen(w.order) - 1] == 'D', "the shell is told it finished, not that it failed");
+
+    // The other half of the rule. A read-until-close body has nothing but the
+    // close to prove it ended, so a socket that breaks under it is a lost
+    // reply and has to say so.
+    printf("  service: a socket that breaks is not a clean end\n");
+
+    fake_reset(&t);
+    t.drip  = 4;
+    t.broke = 1;
+    arm(&t, 0, HEALTH_OK);
+    arm(&t, 1, ASK_EOF_BODY);
+    t.n = 2;
+    memset(&h, 0, sizeof h);
+    memset(&w, 0, sizeof w);
+    hooks.ctx = &h;
+    eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    eos_brain_set_event_cb(&b, w_event, &w);
+    CK(eos_brain_submit(&b, &r) > 0, "the request goes out");
+    spin(&b);
+    CK(w.done_calls == 1, "completion fires exactly once");
+    CK(w.done_err == EOS_BRAIN_ERR_TRUNCATED,
+       "a reset under a close-delimited body is truncated, not a success");
+    CK(w.order[strlen(w.order) - 1] == 'X', "and the shell is told it failed");
+
+    // Same body, ended by an orderly close: that one really is finished.
+    fake_reset(&t);
+    t.drip = 4;
+    arm(&t, 0, HEALTH_OK);
+    arm(&t, 1, ASK_EOF_BODY);
+    t.n = 2;
+    memset(&h, 0, sizeof h);
+    memset(&w, 0, sizeof w);
+    hooks.ctx = &h;
+    eos_brain_init(&b, fake_tp(&t, &tp), NULL, &hooks);
+    eos_brain_set_event_cb(&b, w_event, &w);
+    CK(eos_brain_submit(&b, &r) > 0, "the request goes out");
+    spin(&b);
+    CK(w.done_calls == 1 && w.done_err == EOS_BRAIN_OK,
+       "the same body ended by a real close is a complete reply");
+    CKS(w.text, "half an ans", "and every byte of it reaches the shell");
 }
 
 static void test_service_discovery(void)
@@ -1236,7 +1513,9 @@ int main(void)
     test_parser_truncation();
     test_parser_edges();
     test_parser_garbage();
+    test_parser_end_of_stream();
     test_service_happy();
+    test_service_end_of_stream();
     test_service_discovery();
     test_service_failures();
 

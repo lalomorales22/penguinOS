@@ -26,12 +26,15 @@
  * while it is being built rather than after it has been uploaded. Nothing here
  * ever raises a limit past the format's; a board may only narrow them.
  *
- * The one non-obvious constraint on the writer: SIZE is written from the
- * model's occupied bounds, not from the editing grid. eos_buddy.c centres and
- * scales the avatar on sx/sy/sz, so declaring a 22-cube around a 15x13x22
- * penguin draws it small and off-centre on the panel. Voxel coordinates are
- * identical either way, so a tight SIZE costs nothing and a loose one is a bug
- * you only see on the glass.
+ * The one non-obvious constraint on the writer is SIZE. eos_buddy.c centres
+ * and scales the avatar on sx/sy/sz, so the declared box is not metadata, it
+ * is the model's proportions on the panel: writing a 22-cube around a 15x13x22
+ * penguin draws it small and off-centre, and re-deriving 15x11x22 from the
+ * occupied cells makes it taller than the author drew it, because the author
+ * left two empty rows in the box on purpose. So the box a file arrived in is
+ * remembered and written back, grown when the model outgrows it and cleared
+ * only when the model is. A new model, which arrived in no box at all, gets
+ * its own bounds. Voxel coordinates never move under any of this.
  */
 (function (global) {
 'use strict';
@@ -60,6 +63,15 @@ function numIn(v, lo, hi, dflt) {
   v = Math.floor(Number(v));
   if (!isFinite(v) || v < lo || v > hi) return dflt;
   return v;
+}
+
+// numIn() rejects an out-of-range number; this one folds it into range. The
+// remembered SIZE wants folding, because a box that no longer fits the grid is
+// still a statement about proportion worth honouring as far as it can be.
+function clampIn(v, lo, hi) {
+  v = Math.floor(Number(v));
+  if (!isFinite(v)) return lo;
+  return v < lo ? lo : (v > hi ? hi : v);
 }
 
 // Takes the `limits` object out of GET /api/buddy and turns it into something
@@ -200,7 +212,7 @@ function istag(a, o, s) {
   return true;
 }
 
-function writeVox(grid, pal, limits) {
+function writeVox(grid, pal, limits, prefSize) {
   var lim = sanitizeLimits(limits);
   var d = grid.dim, list = [], x, y, z, c;
   var mx = 0, my = 0, mz = 0;
@@ -219,12 +231,29 @@ function writeVox(grid, pal, limits) {
   var nb = voxBytes(n);
   if (nb > lim.bytes)
     throw new Error('this board stages ' + lim.bytes + ' bytes of .vox and this is ' + nb);
-  if (d > lim.dim) throw new Error('grid larger than ' + lim.dim);
+  // The editing grid is deliberately NOT checked against lim.dim. What the
+  // board has to accept is the SIZE this writes, and a small model sitting in
+  // a large grid declares a small SIZE. Refusing on the grid would refuse a
+  // file the board would have taken.
 
+  // The box the model arrived in, where there was one, grown to hold whatever
+  // has been added since and never allowed past the grid or the board's dim.
+  // Math.max with the occupied bound is what keeps every voxel inside SIZE,
+  // which is the one thing eos_vox_parse() will not forgive.
+  if (prefSize && prefSize.length === 3) {
+    mx = Math.max(mx, clampIn(prefSize[0], 1, d));
+    my = Math.max(my, clampIn(prefSize[1], 1, d));
+    mz = Math.max(mz, clampIn(prefSize[2], 1, d));
+  }
   // eos_vox_parse() calls a zero dimension EOS_VOX_ERR_DIM, so an empty model
   // is written as a legal 1x1x1 with no voxels in it rather than as a file the
   // board will refuse to read back.
-  if (!n) { mx = my = mz = 1; }
+  if (!mx) mx = 1;
+  if (!my) my = 1;
+  if (!mz) mz = 1;
+  if (mx > lim.dim || my > lim.dim || mz > lim.dim)
+    throw new Error('model is ' + mx + 'x' + my + 'x' + mz +
+                    ', larger than ' + lim.dim + ' on an axis');
 
   var szSize = 12, szXyzi = 4 + 4 * n, szRgba = 1024;
   var children = (12 + szSize) + (12 + szXyzi) + (12 + szRgba);
@@ -414,6 +443,9 @@ function Editor(opt) {
   // to be built that these forbid, so an editor that never reaches a board
   // still writes a file every board can read.
   this.limits = sanitizeLimits(opt.limits);
+  // The SIZE the current model arrived in, or null for a model that was drawn
+  // here. See the note at the top of the file about why this is kept.
+  this.size = null;
 
   this.color = 1 + 5 * 16 + 9;    // a mid green, an inoffensive default
   this.tool = 'build';
@@ -588,6 +620,9 @@ Editor.prototype.redo = function () {
 
 Editor.prototype.clear = function () {
   if (!this.grid.n) return;
+  // The box belonged to the model that is going. Keeping it would draw the
+  // next, smaller model shrunk into a corner of a penguin-sized volume.
+  this.size = null;
   this.beginStroke();
   var d = this.grid.dim, x, y, z;
   for (z = 0; z < d; z++) for (y = 0; y < d; y++) for (x = 0; x < d; x++) {
@@ -1046,17 +1081,47 @@ Editor.prototype._bindInput = function () {
 
 // ------------------------------------------------------------------ files
 
-Editor.prototype.toVox = function () { return writeVox(this.grid, this.pal, this.limits); };
+Editor.prototype.toVox = function () {
+  return writeVox(this.grid, this.pal, this.limits, this.size);
+};
+
+// The box the file will declare, which is what eos_buddy.c draws the avatar
+// inside. Shown in the UI so the owner is never surprised by it.
+Editor.prototype.declaredSize = function () {
+  var b = this._bounds(), d = this.grid.dim, i;
+  var out = this.grid.n ? [b[3] + 1, b[4] + 1, b[5] + 1] : [1, 1, 1];
+  if (this.size) for (i = 0; i < 3; i++) {
+    out[i] = Math.max(out[i], clampIn(this.size[i], 1, d));
+  }
+  return out;
+};
 
 Editor.prototype.fromVox = function (u8) {
   var r = readVox(u8, this.limits);
   this.grid = r.grid;
+  this.size = r.size.slice();
   if (r.pal) {
-    this.pal = r.pal;
+    // The file's palette is MERGED over a fresh wheel, not adopted whole. A
+    // .vox carries all 256 entries whether the model references them or not,
+    // and the penguin this OS ships with has 0x111111 in the 251 it does not:
+    // adopting that wholesale turns the colour picker into a grid of identical
+    // dark squares the instant the buddy loads, which is the blank-canvas
+    // failure again in a different costume. Entries a voxel actually paints
+    // with are taken byte for byte, so the model is exact and round-trips
+    // exact; the rest are the editor's own wheel, so there is something to
+    // paint WITH. Nothing references the free entries, so writing them back
+    // differently changes no pixel on the panel.
+    var used = this.usedIndices(), i;
+    this.pal = buildPalette();
+    for (i = 1; i < 256; i++) {
+      if (!used[i]) continue;
+      this.pal[i * 3]     = r.pal[i * 3];
+      this.pal[i * 3 + 1] = r.pal[i * 3 + 1];
+      this.pal[i * 3 + 2] = r.pal[i * 3 + 2];
+    }
     // Anything at or past the custom base that a voxel uses is a real colour
     // now, not a free slot.
-    var used = this.usedIndices();
-    for (var i = CUSTOM_BASE; i < 256; i++) this.customUsed[i] = used[i];
+    for (i = CUSTOM_BASE; i < 256; i++) this.customUsed[i] = used[i];
   }
   this.undoStack.length = 0;
   this.redoStack.length = 0;

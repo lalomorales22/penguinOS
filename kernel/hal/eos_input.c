@@ -438,6 +438,29 @@ void eos_input_inject_pointer(uint8_t type, int16_t x, int16_t y, uint8_t btn,
     e.x    = x;
     e.y    = y;
     e.ms   = now_ms;
+
+    // Motion coalesces into the motion already waiting at the tail. A trackpad
+    // swipe is a few hundred reports and this ring is thirty-two events deep,
+    // so without this the first thirty-two reports of a swipe would fill it
+    // and every keystroke and every click behind them would be dropped. The
+    // newest position is the only one that matters — the cursor's real
+    // position lives in eos_pointer_t and never came through here — whereas
+    // every button event is load bearing and none of them coalesce.
+    if (type == EOS_EV_POINTER_MOVE) {
+        bool merged = false;
+
+        QLOCK();
+        if (S.count > 0) {
+            uint8_t tail = (uint8_t)((S.head + S.count - 1u) % EOS_INPUT_QUEUE);
+            if (S.q[tail].type == EOS_EV_POINTER_MOVE && S.q[tail].src == src) {
+                S.q[tail] = e;
+                merged = true;
+            }
+        }
+        QUNLOCK();
+        if (merged) return;
+    }
+
     eos_input_push(&e);
 }
 

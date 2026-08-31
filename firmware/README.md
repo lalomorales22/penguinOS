@@ -23,11 +23,20 @@ same files are compiled by six host suites with a plain `cc` and a copy under
 | `main/eos_brain_bridge.c` | the one task that owns `eos_brain`, and the ring the HTTP workers drain |
 | `main/eos_settings_bind.c` | `/api/settings`, `/api/system`, `/api/themes`: the board's answers |
 | `main/eos_buddy_model.c` | the buddy compiled into the image, for a board with no `buddy.vox` |
-| `main/eos_shell_draw.c` | the scene: tiles, tab strips, status bar, the avatar. No IDF calls |
-| `main/eos_shell_input.c` | keybind dispatch, over the HAL's event ring |
+| `main/eos_shell_draw.c` | the scene: tiles, tab strips, close boxes, status bar, the launcher overlay, the avatar, the cursor. No IDF calls |
+| `main/eos_shell_input.c` | **the one dispatcher.** Every event leaves the HAL's ring here; see *The input pipeline* below |
+| `main/eos_app_registry.c` | **the one table of windows**, with a draw function in each row |
+| `main/eos_app_basic.c` | the clock, board, heap, keys and settings bodies |
+| `main/eos_app_chat.c` | megabrain on the panel, through `httpd.ports.brain_*` |
+| `main/eos_app_files.c` | a read-only browser over `/int` |
+| `main/eos_app_media.c` | the WS2812: colour, brightness, effects. Light, not audio |
+| `main/eos_app_party.c` | the demo: Pip dancing, the LED cycling |
+| `main/eos_led.c` | the WS2812 on GPIO8, over RMT, and the effect engine |
 | `main/eos_setup_screen.c` | the three full-screen scenes: setup, passkey, message. No IDF calls |
 | `main/test/test_setup_screen.c` | host test: renders those scenes and checks the QR module for module |
-| `main/test/test_shell_draw.c` | host test: renders the desktop, and writes it as a PPM |
+| `main/test/test_shell_draw.c` | host test: renders the desktop, writes it as a PPM, and reads the close boxes back out of the composited panel |
+| `main/test/test_apps_ui.c` | host test: every app body, at every size, with no clip, twice |
+| `main/test/test_dispatch.c` | host test: the input ladder, end to end, nothing mocked |
 | `components/eos_kernel/` | the kernel as an IDF component |
 | `components/eos_kernel/eos_board_active.c` | `eos_board_get()` and `eos_board_probe()` |
 
@@ -167,10 +176,113 @@ neutral slate fallback, and it is the only thing in the image that runs
 `eos_theme_parse()` on RISC-V — 213 host checks say the parser is right, and
 none of them ran on target.
 
+### The input pipeline
+
+There is **one** event queue and **one** dispatcher. Keys from the BLE HID host,
+characters from the phone page, bytes from the serial console, GPIO buttons and
+the trackpad's clicks all arrive in kernel/hal's 32-event ring as the same
+`eos_event_t`, and every one of them leaves that ring in
+`eos_shell_input_pump()`. `eos_shell_input_next()` has exactly one caller.
+
+The frame loop calls the pump on **every** pass, whatever is on the glass. It
+used to call it only inside the desktop branch and run a discard loop of its own
+at the foot of the loop for the other two screens — one queue, two consumers,
+and the discard ran *after* the desktop branch, so the first pass that arrived
+at the desktop dispatched the whole backlog the setup screen had collected.
+`eos_shell_input_set_active()` moved that rule inside the dispatcher, where it is
+rung 1 of a ladder rather than a second code path.
+
+The ladder, in order, and the full argument for it is at the top of
+`main/eos_shell_input.h`:
+
+| Rung | Who | What it takes |
+|---|---|---|
+| 1 | **inactive** — setup or passkey owns the panel | everything, dropped |
+| 2 | **locked** | everything; only the keymap sees a key, and the pointer and text are dropped |
+| 3 | **the launcher**, while open | its own keys, and every hover and click. It hands back SUPER chords and keys it does not bind |
+| 4 | **the keymap** | the global chords. A chord a bind *claimed* is consumed whether or not it moved anything |
+| 5 | **the focused window** | printable characters, and keys no bind claimed |
+| 6 | dropped | |
+
+Rung 4 beating rung 5 is not negotiable: an app that decided it wanted `q` would
+otherwise stop `super+q` closing anything.
+
+An app's answer never sets `moved`. `moved` means the **layout** changed and the
+whole screen has to be repainted, which is the expensive answer on a banded
+backend; an app that took an arrow key changed one tile and says so through its
+own dirty flag, which `eos_app_damage()` turns into a single tile-sized rect.
+
+`main/test/test_dispatch.c` drives all six rungs through the real ring, the real
+keymap, the real window manager, the real launcher and the real app table. 67
+checks, nothing mocked — every bug it exists to catch is a bug of agreement
+between two of those.
+
+### Closing a window
+
+Two ways, one call. `super+q` is `EOS_ACT_CLOSE`, and every visible tile draws
+an **x** at the right of its header that a click closes it with. Both end in
+`eos_wm_close()`, so a window shut with the trackpad and a window shut with the
+keyboard leave the tree in the same state — `eos_wm` owns which sibling absorbs
+the space and where the focus lands, and neither decision is repeated anywhere
+else.
+
+The box is 11 px wide and as tall as the border plus the header (10 px on this
+board), growing **up** through the border to the tile's own top edge so the
+target is bigger than the glyph without the glyph moving out of the title row.
+`eos_pointer_close_box()` computes it, and both the painter in
+`eos_shell_draw.c` and the hit test in `eos_pointer.c` call that one function:
+the x on the glass and the x a click lands on are the same rectangle by
+construction, not by agreement. `test_shell_draw.c` proves it from the other
+end, by reading the composited panel back and counting ink inside the rectangle
+the dispatcher would test against.
+
+A box is `close_w` wide or it does not exist. A tile that cannot spare it and
+still keep half its header for the window's name gets none — a shrunken box
+would be a rectangle that closes a window with nothing drawn on it.
+
+### The app launcher
+
+`super+space`. A single column over the whole desktop, arrow keys or `j`/`k` to
+move, enter to open, escape or a second `super+space` to close, and a click
+outside the panel closes it too. The list is `eos_app_count()` /
+`eos_app_at()` — the registry, unfiltered and in registry order — so a window
+added to the table appears in the overlay without anyone remembering to add it
+twice.
+
+Picking an app that already has a window on the current workspace **focuses**
+that window rather than opening a second copy of it. Five windows already fill a
+240x240 panel and a launcher that answers "buddy" with a sixth buddy tile makes
+the desktop worse every time it is used.
+
+Its geometry is computed by the scene, which knows the panel and the theme's UI
+face, stored once, and read back by both the renderer and the hit test — the
+same pattern the close box uses, for the same reason. It is recomputed on a live
+theme change, because a theme may name a different face and the row height is
+derived from the face's height.
+
+### The cursor
+
+Three-byte HID boot-mouse reports on the K809's trackpad handle. Byte 0 is
+buttons, bytes 1 and 2 are signed dx and dy. Exactly three bytes and never
+four: four bytes is a scroll wheel on most devices and is *this* keyboard's
+consumer-control page on another handle, and HOGP notifications carry no report
+id to tell them apart — so penguinOS has no scroll, deliberately.
+
+`kernel/shell/eos_pointer.c` owns where the cursor is. The HAL takes absolute
+pixels because it has no idea how big the screen is; the radio hands over signed
+relative counts; the acceleration, the sub-pixel accumulation and the clamp in
+between are all integer, because this chip has no FPU.
+
+On a tiling window manager a click is deliberately only three things: focus the
+tile under it, raise the tab under it, or close the window whose x it landed on.
+There is no drag and no edge-resize — a tiling layout is computed from a tree,
+so a dragged window has nowhere to land.
+
 ### What is on the screen
 
-Six windows: five on workspace 1, one on workspace 2 so the bar's pips have
-something to show. With `min_tile_w` 80 in a 117 px tile, the third split cannot
+Ten windows in the table; six open at boot — five on workspace 1, one on
+workspace 2 so the bar's pips have something to show. The other five are opened
+from the launcher. With `min_tile_w` 80 in a 117 px tile, the third split cannot
 give both children the minimum and **collapses into a tab group**, which is the
 one window-manager rule this board exists to demonstrate.
 
@@ -299,8 +411,22 @@ buddy behind a tab each skip the render and say so; and all seven moods draw.
 | the second ticked | the bar rect and the `clock` tile's rect, nothing else |
 | a net event fired | the same two rects on the desktop; a whole frame on the setup screen |
 | the buddy tile is visible | that tile's rect, **every pass** |
+| an app changed its picture | that app's tile rect, one per app, via `eos_app_damage()` |
+| the cursor moved | **two rects and never the screen**: the hole it left and the place it went |
 | the screen changed | `eos_display_damage_all()` |
-| nothing | none; the loop sleeps 250 ms, or 100 ms while the buddy is on screen |
+| nothing | none; the loop sleeps 250 ms, 100 ms while the buddy or an animating app is on screen, 33 ms while the cursor is visible |
+
+The cursor is the one thing on the glass that can move every frame, and it is
+the reason the damage rule above is a rule. A trackpad reports about fifty times
+a second; a moved arrow that damaged the screen would ask a banded backend with
+no framebuffer for 115,200 B per report. Two 7x11 boxes are 154 pixels. The
+draw suite measures it rather than asserting it: a cursor move comes back in
+strictly fewer bands than a full frame and changes fewer than four hundred of
+the panel's 57,600 pixels.
+
+`eos_pointer_commit()` runs **after** the draw and never before. The damage is
+the difference between where the arrow was and where it is; committing early
+collapses that difference to nothing and leaves the old arrow on the glass.
 
 The avatar is the only thing on this board that animates, so it is the only
 thing that earns a faster loop. It bobs, blinks and eases its yaw; at 4 fps that
@@ -470,10 +596,12 @@ against guessed pins would be untestable code.
 because there is no SNTP client. The `clock` window shows uptime and says so.
 The first file written on a fresh board carries a 1970 mtime for ever.
 
-**`sys.autostart` does not launch anything.** Every window is open from boot, so
+**`sys.autostart` does not launch anything.** Six windows are open from boot, so
 the honest meaning of the key on this board is which one has the focus when the
 desktop appears — and that is what `apply_autostart()` does. There is no process
-to start; `apps/` is still empty.
+to start. It resolves the stored string through `eos_app_index_of()`, which
+matches the registry's `id` column: the same column `/api/apps` publishes and
+the same one the web picker sends back.
 
 **A distinct join failure reason.** `eos_net_last_error()` collapses every
 association failure into `EOS_NET_ERR_JOIN`, so `/api/net/status` reports
@@ -591,69 +719,56 @@ dead at the end of flash. The app slot costs nothing for it.
 
 ### Margins as built
 
-Measured after this run, with WiFi, NimBLE, LittleFS, the HTTP server, the
-settings store, the megabrain client and the avatar all in the image.
+Measured from this build (`idf.py build && idf.py size && idf.py size-components`),
+with WiFi, NimBLE, LittleFS, the HTTP server, the settings store, the megabrain
+client, the avatar, the app table, the launcher and the cursor all in the image.
 
 | Measure | esp32c6 (C6-LCD-1.3) |
 |---|---|
-| `penguinos.bin` | 1,640,048 B (0x190670) |
-| `factory` free | 1,505,680 B (48%) |
+| `penguinos.bin` | 1,713,552 B (0x1a2390) |
+| `factory` free | 1,432,688 B (**46%**) |
 | bootloader | 22,176 B |
 | bootloader headroom to 0x8000 | 10,592 B (32%) |
 | `int` free | 983,040 B less whatever LittleFS costs on format |
-| DIRAM static | 242,428 of 452,112 B; **209,684 B remaining** |
+| DIRAM static | 252,494 of 452,112 B; **199,618 B remaining** |
+| of which `.bss` | 94,032 B |
 
 The static DIRAM split, by archive:
 
 | Archive | DIRAM | What |
 |---|---|---|
-| `libpp.a` | 47,134 | WiFi PHY/MAC layer |
-| `libmain.a` | 35,483 | the boot glue: `eos_httpd_t` 5,324, the QR pixel buffer 5,330, the avatar's box and shade table 7,184, the compiled-in buddy 1,941, `eos_settings_bind` 1,580, `eos_brain_bridge` 4,620, `eos_net_t` 1,068, the rest |
-| `libeos_kernel.a` | 26,275 | mostly `eos_apps.c`: a 6,144 B `.vox` staging buffer, a 1,024-voxel pool, the console ring |
+| `libpp.a` | 47,190 | WiFi PHY/MAC layer |
+| `libmain.a` | 39,394 | the boot glue and the scene: `eos_httpd_t` 5,324, the QR pixel buffer 5,330, the avatar's box and shade table 7,184, the compiled-in buddy 1,941, the app bodies 2,423 (chat 1,294, files 1,068), `eos_settings_bind` 1,580, `eos_brain_bridge` 4,620, `eos_net_t` 1,068, `launcher` 316, `input` 36, the rest |
+| `libeos_kernel.a` | 30,019 | mostly `eos_apps.c`: a 6,144 B `.vox` staging buffer, a 1,024-voxel pool, the console ring. The cursor is 52 B of it |
 | `libble_app.a` | 23,011 | the NimBLE controller |
 | `libnet80211.a` | 19,392 | the 802.11 MAC |
 | `libfreertos.a` | 14,750 | |
-| `libhw_support.a` | 12,553 | |
+| `libesp_hw_support.a` | 12,553 | |
+| `libhal.a` | 10,361 | |
+| `libspi_flash.a` | 10,234 | |
 | `libphy.a` | 5,629 | |
 | `libjoltwallet__littlefs.a` | 136 | the mount's own statics; its pools are heap |
 
-**209 KB of DRAM is what the heap starts from, not the 425,648 B the tier
+**199 KB of DRAM is what the heap starts from, not the 425,648 B the tier
 decisions were made against.** Out of it the display takes 38,400 B for its DMA
 strips at `eos_display_init()`, LittleFS takes 1,424 B for the mount plus 648 B
 per open file, `eos_brain_bridge` takes about 4.6 KB for a task stack and a
-mutex, and then WiFi, NimBLE and `esp_http_server` take their dynamic buffers.
-On the evidence above it fits with room, but nobody has measured it on silicon
-since the previous flash — the `heap` lines in the boot log are what settle it,
-and they are the first thing to read on the next one.
+mutex, `eos_led`'s RMT channel and byte encoder take a few hundred, and then
+WiFi, NimBLE and `esp_http_server` take their dynamic buffers.
 
-The last measurement on real hardware was **173,100 B free after boot, largest
-block 155,648**, and that was before storage, settings, megabrain, the apps
-component and the avatar. The static DIRAM has grown by roughly 39 KB since, so
-the number to expect is in the low 130s. If the boot log says otherwise, the log
-is right and this paragraph is wrong.
+The last measurement on real hardware was **114 KB free after boot, largest
+block 94 KB**, with everything up. Nothing added since allocates: the launcher,
+the cursor, the dispatcher and every app body are file statics claimed before
+`app_main` runs, so they never show as a heap step and the boot log names them
+instead:
 
-If it turns out not to fit, the levers in order, none of which is a quiet buffer
-shrink:
+```
+shell  launcher 10 of 10 apps, N rows of N px, panel NxN
+shell  input 36 B, launcher 316 B, cursor 52 B of static RAM; close box 11x10 px, border 1
+apps   10 windows, 2423 B of static RAM, led up on GPIO8
+```
 
-1. `CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM` and `..._TX_BUFFER_NUM` are at IDF's
-   defaults (32 each) and are the largest single dynamic cost. Halving them
-   costs throughput this board does not use.
-2. `EOS_HTTPD_RESP_MAX` (4,096) and `EOS_HTTPD_SCAN_MAX` (16) are tunables in
-   `eos_httpd.h` and cost only the length of the network list.
-3. `hcfg.workers` is 4. A phone is one client.
-4. Sequence it, as `docs/provisioning.md` already proposes for the CYD:
-   provisioning becomes a reboot-into mode with the WM and the avatar down,
-   rather than a service running alongside them.
-
-The esp32/xtensa cross-build of the CYD still configures and links; its
-bootloader margin was 2,592 B (9%) when last measured and is the tight number
-in this project.
-
-The esp32 bootloader margin is the tight one. Nothing needs it today, but
-turning on secure boot, flash encryption, or a verbose bootloader log on a CYD
-will overflow into the partition table. The fix when that happens is
-`CONFIG_BOOTLOADER_LOG_LEVEL_WARN` in a `sdkconfig.defaults.esp32`, not moving
-`CONFIG_PARTITION_TABLE_OFFSET`, which would shift every partition above.
+If the boot log's `heap` lines disagree with this table, the log is right.
 
 ## What is deliberately not configured
 

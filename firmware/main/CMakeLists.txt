@@ -18,6 +18,13 @@ idf_component_register(
         "eos_brain_bridge.c"
         "eos_buddy_model.c"
         "eos_shell_draw.c"
+        "eos_app_registry.c"
+        "eos_app_basic.c"
+        "eos_app_chat.c"
+        "eos_app_files.c"
+        "eos_app_media.c"
+        "eos_app_party.c"
+        "eos_led.c"
         "eos_shell_input.c"
         "eos_setup_screen.c"
         "eos_web_embed.c"
@@ -26,6 +33,10 @@ idf_component_register(
     REQUIRES
         eos_kernel
         esp_timer
+        # The WS2812 on GPIO8, which the Media and Party windows drive. It is
+        # the RMT transmit driver and nothing else; the LED is one part and its
+        # whole frame is 24 bits, so no strip library is pulled in for it.
+        esp_driver_rmt
     EMBED_TXTFILES
         "${EOS_KERNEL_DIR}/theme/themes/cyd-amber.json"
     EMBED_FILES
