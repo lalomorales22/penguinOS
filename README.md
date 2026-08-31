@@ -26,14 +26,14 @@ On a 240×320 panel that happens quickly, which is exactly why it exists.
 |---|---|
 | `clock` | uptime in a large face |
 | `board` | what this board is, and its address once it has joined |
-| `heap` | live memory, which matters more than you'd think on these parts |
-| `keys` | every keybinding, on the glass |
-| `buddy` | the voxel avatar |
-| `chat` | talk to your model |
-| `settings` | network, Bluetooth, theme, model host |
-| `files` | browse the board's filesystem |
-| `media` | |
-| `party` | |
+| `heap` | free heap and largest block, live — which matters more than you'd expect on these parts |
+| `keys` | the compiled-in keymap, on the glass |
+| `buddy` | the voxel avatar and the mood it's in |
+| `chat` | ask your model, and watch the reply arrive |
+| `settings` | theme, brightness, board info and model host |
+| `files` | browse the internal filesystem |
+| `media` | the RGB LED: colour, brightness and effects |
+| `party` | the demo — the buddy dancing, the LED cycling, the colours moving |
 
 There is deliberately **no terminal** — there's no shell to run in one.
 
