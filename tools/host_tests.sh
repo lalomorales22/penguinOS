@@ -136,6 +136,17 @@ run dispatch -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             kernel/shell/eos_pointer.c kernel/hal/eos_input.c \
             kernel/font/eos_font.c \
             kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c -lm
+# detect.py is Python, so it cannot go through run(); its output is shaped to
+# match anyway. It had NO coverage at all until a one-character regex bug made
+# the flasher unable to identify either ESP32-C6 board.
+printf '%-10s ' "detect"
+if out=$(python3 tools/test_detect.py 2>&1); then
+    printf '%6s checks 0 failed\n' "$(echo "$out" | sed -nE 's/^=== ([0-9]+) checks.*/\1/p')"
+    total=$((total + $(echo "$out" | sed -nE 's/^=== ([0-9]+) checks.*/\1/p')))
+else
+    printf 'RUN FAILED\n'; echo "$out" | grep FAIL; fail=1
+fi
+
 run webpath -Wpedantic -Ifirmware/main firmware/main/test/test_web_path.c
 
 run setup   -Wpedantic -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
