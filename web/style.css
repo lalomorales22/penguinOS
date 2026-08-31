@@ -733,3 +733,26 @@ ul.plain li { margin-bottom: 7px; }
 }
 .vx-who b { font-size: 15px; }
 .vx-who .mono { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The live-state blocks in Settings: the board's current WiFi link and its
+   keyboard bond. These say what IS, above the fields that change it. */
+.live {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+.live b.ok   { color: var(--ok); }
+.live b.warn { color: var(--warn); }
+.live .muted { margin-top: 4px; font-size: .85em; }
+
+/* The BLE passkey. It is typed on a keyboard that has no screen, so it is the
+   largest thing on the card and spaced so a six-digit number reads as one. */
+.passkey {
+  font-family: var(--mono, monospace);
+  font-size: 2em;
+  letter-spacing: .18em;
+  color: var(--accent);
+  margin: 10px 0 2px;
+}

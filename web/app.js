@@ -634,6 +634,138 @@ function bindFiles() {
 
 // =============================================================== SETTINGS
 
+// The live network line. Filled asynchronously so the card renders instantly
+// and the status arrives when the board answers.
+function netLive() {
+  var box = el('div', 'live');
+  box.appendChild(el('span', 'muted', 'checking the connection...'));
+  api('/api/net/status').then(function (s) {
+    box.textContent = '';
+    if (!s) { box.appendChild(el('span', 'muted', 'the board did not answer')); return; }
+    var up = s.sta && s.sta.up;
+    box.appendChild(el('b', up ? 'ok' : 'warn', up ? 'Connected' : 'Not connected'));
+    if (up) {
+      box.appendChild(document.createTextNode(' to '));
+      box.appendChild(el('b', null, s.ssid || '(unnamed)'));
+      box.appendChild(el('div', 'muted',
+        s.ip + (s.rssi != null ? '   ' + s.rssi + ' dBm' : '') +
+        (s.mdns ? '   ' + s.mdns : '')));
+    } else {
+      box.appendChild(el('div', 'muted', 'Fill the fields below to join one.'));
+    }
+  });
+  return box;
+}
+
+// ---------------------------------------------------------------- bluetooth
+//
+// Pairing lived only in the SETUP-mode page, which is served when the board is
+// running its own access point. So a board that had joined a network - the
+// normal case, and the only case where anyone is reading this page - had no
+// way to pair a keyboard at all, and a bond that was lost could only be
+// recovered with a serial cable or curl. It belongs here.
+
+var BT = { scanning: false, devices: [], poll: 0 };
+
+function btCard() {
+  var card = el('div', 'card');
+  card.appendChild(el('h2', null, 'Bluetooth keyboard'));
+  var status = el('div', 'live'); status.id = 'bt-status';
+  var list   = el('div', null);   list.id   = 'bt-list';
+  var row    = el('div', 'row');
+
+  var scan = el('button', null, 'Scan');
+  scan.onclick = function () { btScan(); };
+  var forget = el('button', 'ghost', 'Forget');
+  forget.onclick = function () {
+    api('/api/ble/forget', { method: 'POST' }).then(btRefresh);
+  };
+  row.appendChild(scan); row.appendChild(forget);
+
+  card.appendChild(status);
+  card.appendChild(row);
+  card.appendChild(list);
+  card.appendChild(el('div', 'muted',
+    'A keyboard bonds to one board at a time. Pairing it here will stop it ' +
+    'working on the board it was paired to before.'));
+  btRefresh();
+  return card;
+}
+
+function btRefresh() {
+  var s = $('bt-status');
+  if (!s) return;
+  api('/api/ble/status').then(function (d) {
+    s.textContent = '';
+    if (!d) { s.appendChild(el('span', 'muted', 'no answer')); return; }
+    if (d.connected) {
+      s.appendChild(el('b', 'ok', 'Connected'));
+      s.appendChild(document.createTextNode(' to ' + (d.name || d.addr)));
+      if (d.battery != null) s.appendChild(el('div', 'muted', 'battery ' + d.battery + '%'));
+    } else if (d.bonded) {
+      s.appendChild(el('b', 'warn', 'Paired, not connected'));
+      s.appendChild(el('div', 'muted', (d.bonded.name || d.bonded.addr) +
+        ' - it reconnects on its own when it wakes.'));
+    } else {
+      s.appendChild(el('b', 'warn', 'No keyboard paired'));
+      s.appendChild(el('div', 'muted', 'Put one in pairing mode and press Scan.'));
+    }
+    if (d.passkey) {
+      var pk = el('div', 'passkey', d.passkey);
+      s.appendChild(pk);
+      s.appendChild(el('div', 'muted',
+        'Type this ON THE KEYBOARD and press enter. It has no screen of its own.'));
+    }
+  });
+}
+
+function btScan() {
+  var list = $('bt-list');
+  if (!list) return;
+  list.textContent = '';
+  list.appendChild(el('div', 'muted', 'scanning...'));
+  api('/api/ble/scan?rescan=1').then(function () {
+    var tries = 0;
+    (function poll() {
+      api('/api/ble/scan').then(function (d) {
+        if (!d) return;
+        if (d.scanning && tries++ < 12) { setTimeout(poll, 1500); return; }
+        list.textContent = '';
+        if (!d.devices || !d.devices.length) {
+          list.appendChild(el('div', 'muted',
+            'Nothing advertising. A keyboard already paired to something else ' +
+            'will not appear until you put it back into pairing mode.'));
+          return;
+        }
+        d.devices.forEach(function (dev) {
+          var r = el('div', 'row');
+          r.appendChild(el('span', null, (dev.name || '(unnamed)') +
+            '   ' + dev.rssi + ' dBm' + (dev.hid ? '' : '   not a keyboard')));
+          var b = el('button', null, 'Pair');
+          b.disabled = !dev.hid;
+          b.onclick = function () {
+            b.disabled = true; b.textContent = 'pairing...';
+            api('/api/ble/pair', { method: 'POST',
+                                   body: JSON.stringify({ addr: dev.addr }) })
+              .then(function () {
+                var n = 0;
+                (function w() {
+                  btRefresh();
+                  api('/api/ble/status').then(function (s) {
+                    if (s && !s.connected && n++ < 20) setTimeout(w, 1000);
+                    else b.textContent = 'Pair';
+                  });
+                })();
+              });
+          };
+          r.appendChild(b);
+          list.appendChild(r);
+        });
+      });
+    })();
+  });
+}
+
 // Flat dotted keys, every one at most fifteen characters so it fits an NVS
 // key. `reboot` marks the ones the firmware cannot apply live.
 var GROUPS = [
@@ -693,6 +825,13 @@ function buildSettings() {
     dirty.textContent = 'unsaved';
     h.appendChild(dirty);
     card.appendChild(h);
+
+    // A board you are reading this page ON is a board that already has WiFi.
+    // Leading the Network card with three empty boxes asks it to be set up
+    // again, which is both redundant and the easiest way to break a working
+    // connection by half-filling them. Show the live link first; the fields
+    // below stay, folded away, for actually changing networks.
+    if (g.title === 'Network') card.appendChild(netLive());
 
     g.fields.forEach(function (f) {
       var lab = el('label', f.type === 'range' ? 'inline' : null);
@@ -756,6 +895,8 @@ function buildSettings() {
     card.appendChild(bar);
     host.appendChild(card);
   });
+
+  host.appendChild(btCard());
 }
 
 function groupDirty(g) {
