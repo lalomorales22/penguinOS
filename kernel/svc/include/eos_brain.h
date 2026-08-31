@@ -80,10 +80,21 @@
 
 #define EOS_BRAIN_CANDIDATES 3     // cached host, mDNS answer, compiled-in fallback
 
-// Hard-won: the mini answers on port 80 behind Caddy. mDNS is advertised but is
-// not always up before the board is, hence the literal fallback.
-#define EOS_BRAIN_FALLBACK_HOST "192.168.0.139"
-#define EOS_BRAIN_MDNS_NAME     "megabrain"
+// The board tries three sources in order: the host it last talked to
+// successfully (cached in NVS), an mDNS lookup, then this compiled-in fallback.
+//
+// The fallback is EMPTY on purpose. It used to be a literal LAN address, which
+// worked on exactly one network and on every other one pointed the board at
+// whatever unrelated device happened to hold that address - a stranger's
+// printer, say. Failing cleanly with "no host configured" is better than
+// succeeding at reaching the wrong machine, and the Settings tab is one field.
+#define EOS_BRAIN_FALLBACK_HOST ""
+
+// The name looked up over mDNS when no host is set. There is no convention for
+// this, so it is a starting guess rather than something that will resolve on an
+// unconfigured network - set the host in Settings and this path never runs.
+// Anyone who wants zero-configuration discovery can name their machine this.
+#define EOS_BRAIN_MDNS_NAME     "penguinos-brain"
 #define EOS_BRAIN_PATH_ASK      "/ask"
 #define EOS_BRAIN_PATH_HEALTH   "/health"
 #define EOS_BRAIN_DEFAULT_MODEL "qwen3.5:2b"

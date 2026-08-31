@@ -160,9 +160,57 @@ board at.
 
 ### On the board
 
-Open the web app, go to **Settings**, and set the brain host to the **computer
-running the bridge** (its LAN address) and the port to **8080**. Set the model
-name to whatever you pulled.
+Open the web app, go to **Settings**, and fill in three things:
+
+| Field | What to put |
+|---|---|
+| **Host** | The **hostname of the computer running the bridge** — see below |
+| **Port** | `8080` |
+| **Model** | `qwen3.5:2b`, or whatever you pulled |
+
+#### What "host" means here
+
+It's the name or address of **your computer** — the one running Ollama and the
+bridge — not the board, and not a website. The board has to reach across your
+network to find it.
+
+The easiest thing to type is your computer's own name with `.local` on the end.
+The board resolves those, so you don't have to go hunting for an IP address:
+
+**macOS** — this prints it:
+
+```bash
+echo "$(scutil --get LocalHostName).local"
+```
+
+**Linux** — usually your hostname plus `.local` (needs `avahi-daemon`, which
+most desktop distributions run already):
+
+```bash
+echo "$(hostname).local"
+```
+
+**Windows** — `.local` names need Bonjour installed, so an IP address is the
+safer choice. Get it with `ipconfig` and use the IPv4 address of the adapter
+you're actually connected through.
+
+An IP address works everywhere and is the fallback if a `.local` name doesn't
+resolve — find it on macOS or Linux with `ipconfig getifaddr en0` or
+`hostname -I`. The cost is that many routers hand out a different one after a
+reboot, and then the board quietly stops finding your model until you update it.
+A `.local` name follows the computer around, which is why it's worth trying
+first.
+
+**Check it before you type it into the board.** From the computer running the
+bridge:
+
+```bash
+curl "http://$(scutil --get LocalHostName).local:8080/health"
+```
+
+If that returns JSON listing your models, the board will reach it too. If it
+doesn't, the board won't either, and you'll save yourself debugging the wrong
+end.
 
 ### Notes worth knowing
 
