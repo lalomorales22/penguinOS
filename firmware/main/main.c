@@ -84,6 +84,7 @@
 #include "eos_settings.h"
 #include "eos_settings_bind.h"
 #include "eos_web_embed.h"
+#include "eos_seed_buddy.h"
 
 static const char *TAG = "eos";
 
@@ -684,9 +685,15 @@ void app_main(void)
                      (unsigned long long)used, (unsigned long long)total);
         }
     }
-    // The avatar, off the filesystem. Absent on every board that exists, which
-    // is why a 404 here is a log line and not a warning: the editor's whole
-    // first-run flow is "there is no buddy.vox on the card yet, build one".
+    // Put the shipped buddy on the card before asking for one. Without this
+    // the panel wears a penguin the web app cannot see - the avatar is
+    // compiled in, GET /api/buddy reports what is on /int, and /int is empty
+    // on a new board. Seeding it means the Buddy tab opens on the buddy that
+    // is actually on screen, so editing him starts from him rather than from
+    // an empty grid. It writes once and never overwrites.
+    eos_seed_buddy();
+
+    // The avatar, off the filesystem.
     {
         eos_err_t be = eos_apps_buddy_reload();
         if (be == EOS_OK)

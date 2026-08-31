@@ -82,16 +82,19 @@
 // this board's: a 4096-voxel pool is 20,480 bytes of .bss and the staging
 // buffer for the file that fills it is another 21 KB, on a board with 173 KB of
 // heap and no renderer for it yet. 1024 voxels holds a solid 10x8x12 model
-// before culling, which is a buddy. A model past the cap is refused with
+// before culling, which is a buddy. The numbers below are sized so the buddy
+// this OS SHIPS with fits back through its own upload path: Pip is 1,280
+// voxels in a 6,216 byte file, and a cap that refuses the default model is a
+// cap that fails the first thing anyone tries. A model past them is refused with
 // EOS_VOX_ERR_POOL and the number, so the editor can say so rather than the
 // board silently drawing half a face.
 #ifndef EOS_APPS_VOX_VOXELS
-#define EOS_APPS_VOX_VOXELS 1024
+#define EOS_APPS_VOX_VOXELS 1536
 #endif
 // Enough for the above: 8 header + 12 MAIN + 24 SIZE + 12+4 XYZI header +
 // 4*VOXELS + 12+1024 RGBA, rounded up.
 #ifndef EOS_APPS_VOX_BYTES
-#define EOS_APPS_VOX_BYTES 6144
+#define EOS_APPS_VOX_BYTES 7264
 #endif
 
 // buddy.json, staged whole. web/README.md caps `personality` at 480 bytes and

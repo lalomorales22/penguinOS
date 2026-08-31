@@ -318,7 +318,7 @@ function pollSystem() {
 // ================================================================== FILES
 
 var F = {
-  path: '/sd',
+  path: '/int',
   entries: [],
   offset: 0,
   more: false,
