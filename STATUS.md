@@ -1,8 +1,8 @@
-# esp-os — status
+# penguinos — status
 
 Last integration pass: 2026-08-30.
 
-**One sentence: ESP-OS boots on a Waveshare ESP32-C6-LCD-1.3, tiles five windows
+**One sentence: penguinOS boots on a Waveshare ESP32-C6-LCD-1.3, tiles five windows
 with the buddy in one of them, joins the house WiFi, shows its own address on
 the panel, and serves a companion app whose entire API the firmware now
 answers.** The owner sets a new board up by pointing a phone camera at a QR code
@@ -97,7 +97,7 @@ checked the joins.
 | Defect | Why not | Who should |
 |---|---|---|
 | **`render.heap_budget_bytes` is still a guess on five of the six boards.** Only `waveshare-c6-lcd-13` is measured (425,648, radios down). The wavvy figure (64 KB) contradicts the owner's own measurement — `../tft-videos/CLAUDE.md` records free heap at 48–55 KB on that exact firmware. `eos_display_init()` sizes off this number, so a wrong value is an OOM at boot, not a degradation. | Needs a real heap dump on real silicon. Cannot be derived. | First bring-up. |
-| **The C5's `render.band_height` (40) disagrees with its own BSP.** `../esp32-c5/bsp/Kconfig` defaults the draw buffer to 20 rows at 172 wide, not 40 at 320. The profile's `reason` text describes the post-rotation logical frame, not the buffer the BSP allocates. | It is a Kconfig knob ESP-OS may legitimately set, so the value is not necessarily wrong — but the prose and the BSP have to be reconciled by whoever writes the build. | Build wiring. |
+| **The C5's `render.band_height` (40) disagrees with its own BSP.** `../esp32-c5/bsp/Kconfig` defaults the draw buffer to 20 rows at 172 wide, not 40 at 320. The profile's `reason` text describes the post-rotation logical frame, not the buffer the BSP allocates. | It is a Kconfig knob penguinOS may legitimately set, so the value is not necessarily wrong — but the prose and the BSP have to be reconciled by whoever writes the build. | Build wiring. |
 | **`eos_board_fb_bytes()` lies on LVGL boards.** It returns `w*h`, assuming one palette index per pixel, so on the C5 it returns 55,040 — a number with no meaning, since LVGL owns the buffers and the profile correctly derives `EOS_FB_BYTES = 0`. | It is a one-line guard on `render.compositor == EOS_COMP_LVGL`, but changing a HAL function's return contract while no backend exists yet is guessing at which caller is right. | Whoever writes the first LVGL backend. |
 | **The buddy has no 1bpp path.** `eos_buddy_pix_t` is I8 or RGB565. `wavvy-oled-c5` is tier SOFT with the `mono1` compositor, so the buddy cannot be drawn on it at all. | A real feature, not a mismatch. Also possibly the right answer — a 2.5D voxel character on 128x64 mono may not be worth it. | Design call. |
 | **`eos_buddy_pix_t` and `eos_display_pixfmt_t` are two enums for the same idea, differently numbered.** I8 is 0 in both, but RGB565 is 1 in one and 3 in the other. Anything that casts between them is wrong. | Merging them would couple the avatar to the HAL, which the avatar author deliberately avoided. | The shell glue, which must translate explicitly. |
@@ -115,7 +115,7 @@ checked the joins.
 
 | Measure | esp32c6 (C6-LCD-1.3) |
 |---|---|
-| `esp-os.bin` | 1,640,048 B (0x190670) |
+| `penguinos.bin` | 1,640,048 B (0x190670) |
 | `factory` free | 1,505,680 B of 3 MB (48%) |
 | DIRAM static | 242,428 of 452,112 B; **209,684 B remaining at link** |
 | free heap after boot, **last measured on hardware** | 173,100 B, largest block 155,648 — and that was before storage, settings, megabrain, `eos_apps` and the avatar, which have added about 39 KB of static DIRAM since |

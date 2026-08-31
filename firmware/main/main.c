@@ -6,7 +6,7 @@
 // hands out glyph bits, eos_net owns the credential state machine, eos_ble owns
 // the keyboard and eos_httpd owns the API — and none of them knows the others
 // exist. Nothing in the kernel joins them up, and nothing in the kernel is
-// allowed to call IDF. This file is the join, and it is the only file in ESP-OS
+// allowed to call IDF. This file is the join, and it is the only file in penguinOS
 // that does both.
 //
 // The one non-obvious constraint: the order below is load-bearing and is not
@@ -770,7 +770,7 @@ void app_main(void)
 
     // 5. Something on the panel before anything slow. eos_net_start() below can
     //    block for the whole fifteen second join budget.
-    eos_setup_screen_message(&theme, "ESP-OS", "starting the radios");
+    eos_setup_screen_message(&theme, "penguinOS", "starting the radios");
 
     // 6. Input, which is what brings up the NimBLE HID host. Before WiFi: see
     //    the file header. NULL takes eos_input_defaults().
@@ -789,7 +789,7 @@ void app_main(void)
     eos_net_idf_defaults(&ncfg);
     ncfg.on_event = on_net_event;
     // net.host. Empty leaves eos_net's own rule in place, which derives the
-    // label from the MAC so six boards do not all claim esp-os.local.
+    // label from the MAC so six boards do not all claim penguinos.local.
     if (settings.v.net_host[0])
         snprintf(ncfg.hostname, sizeof ncfg.hostname, "%s", settings.v.net_host);
     nerr = eos_net_init(&net, &ncfg);
@@ -800,7 +800,7 @@ void app_main(void)
              eos_net_radio_serialised() ? "serialised" : "NOT SERIALISED");
 
     if (net_ok && eos_net_has_credentials(&net))
-        eos_setup_screen_message(&theme, "ESP-OS", "joining the stored network");
+        eos_setup_screen_message(&theme, "penguinOS", "joining the stored network");
 
     // The three-state boot. It returns OK for both landing states: reaching
     // SETUP because a join failed is an outcome, not an error.

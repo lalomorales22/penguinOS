@@ -1,6 +1,6 @@
 # avatar — the voxel buddy
 
-The little 3D character that is the face of ESP-OS. Two pieces:
+The little 3D character that is the face of penguinOS. Two pieces:
 
 | File | What |
 |---|---|

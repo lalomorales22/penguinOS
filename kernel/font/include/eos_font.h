@@ -1,4 +1,4 @@
-// eos_font — the four bitmap faces, and the only reason anything in ESP-OS can
+// eos_font — the four bitmap faces, and the only reason anything in penguinOS can
 // draw a character. eos_display.h declares eos_font_t, eos_font_id_t and
 // eos_font_get(); this component is where the glyphs actually live and where
 // that getter is implemented. Nothing here allocates and nothing here is

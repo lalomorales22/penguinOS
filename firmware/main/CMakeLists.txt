@@ -8,7 +8,7 @@
 # a missing or corrupt theme file cannot stop the boot, and the fallback it
 # guarantees is the neutral slate default. Linking cyd-amber.json in gives the
 # search one more step before that default, so a board with no card and no
-# mounted filesystem still comes up looking like ESP-OS. ~1.7 KB of rodata, and
+# mounted filesystem still comes up looking like penguinOS. ~1.7 KB of rodata, and
 # it is the only thing in the image that runs eos_theme_parse() on target.
 
 idf_component_register(

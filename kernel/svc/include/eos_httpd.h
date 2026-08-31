@@ -57,7 +57,7 @@
 #endif
 // That number is spent out of the HTTP worker's task stack, byte for byte: the
 // body buffer lives in on_request()'s frame. Measured on riscv32 at -Os, the
-// deepest request path costs 1,248 bytes of ESP-OS frames of which 513 are this
+// deepest request path costs 1,248 bytes of penguinOS frames of which 513 are this
 // buffer, against the 5,376-byte stack eos_httpd_start() asks for and the 4,096
 // esp_http_server assumes for a bare handler. Raising BODY_MAX without raising
 // cfg.stack_size in eos_httpd_start() by the same amount spends the margin.

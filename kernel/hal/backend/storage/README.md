@@ -80,7 +80,7 @@ Four decisions worth stating because the obvious alternative is defensible and
 worse:
 
 - **`..` is rejected, not resolved.** Folding `a/../b` into `b` is correct and
-  it is one off-by-one from being an escape. Nothing in ESP-OS builds a path
+  it is one off-by-one from being an escape. Nothing in penguinOS builds a path
   that needs a parent, so refusing costs nothing.
 - **Backslash is rejected.** FatFs accepts `\` as a path separator. No card is
   mounted today; the rule is here so that finding the pins is a profile edit
@@ -168,7 +168,7 @@ defaults.
 ## Cost
 
 Measured by building the tree twice — once at the commit before this backend
-existed, once with it — and diffing `idf.py size-files` and the two `esp-os.bin`
+existed, once with it — and diffing `idf.py size-files` and the two `penguinos.bin`
 sizes. Both builds used the same sdkconfig, the same board and the same
 toolchain. The linker discards the whole backend until something calls it, so a
 build that adds the file without wiring `eos_storage_init()` into `app_main`

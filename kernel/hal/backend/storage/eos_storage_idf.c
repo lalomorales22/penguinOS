@@ -194,7 +194,7 @@ static int mount_index(const char *name, int len)
     return -1;
 }
 
-// Splits an ESP-OS path into a mount and the remainder below it, and is the
+// Splits an penguinOS path into a mount and the remainder below it, and is the
 // whole of this file's defence against a hostile path.
 //
 //   "/int/a/b"     -> mount int, rel "a/b"
@@ -206,7 +206,7 @@ static int mount_index(const char *name, int len)
 //
 // ".." is rejected rather than folded away on purpose. Folding is correct and
 // it is also one off-by-one away from being an escape; refusing costs a caller
-// nothing, because nothing in ESP-OS builds a path that needs a parent.
+// nothing, because nothing in penguinOS builds a path that needs a parent.
 static eos_err_t path_split(const char *path, int *mount_out, char *rel, int rel_cap)
 {
     int i = 0, n = 0, m = -1;

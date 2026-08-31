@@ -1,4 +1,4 @@
-// eos_vox — MagicaVoxel .vox reader for the ESP-OS avatar.
+// eos_vox — MagicaVoxel .vox reader for the penguinOS avatar.
 //
 // Reads the RIFF-ish chunk stream (MAIN / SIZE / XYZI / RGBA) into a caller
 // supplied voxel array. No allocation, no seeking, no scene graph: the first

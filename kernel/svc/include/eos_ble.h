@@ -15,7 +15,7 @@
 // this fleet (on the C6 they share it with 802.15.4 as well). A BLE scan and a
 // WiFi scan running at the same time do not merely go slowly, they corrupt each
 // other's results and can wedge the controller. So both go through the advisory
-// lock at the bottom of this header, and every scan in ESP-OS takes it. It is
+// lock at the bottom of this header, and every scan in penguinOS takes it. It is
 // advisory: it works only because both callers use it.
 //
 // The second thing that is not obvious and costs an afternoon: a BLE keyboard
@@ -77,7 +77,7 @@ typedef struct {
 
 // ------------------------------------------------------------------- bond
 //
-// This is ESP-OS's memory of WHICH device it bonded to, not the bond itself.
+// This is penguinOS's memory of WHICH device it bonded to, not the bond itself.
 // The link keys live in NimBLE's own NVS store and are never copied out of it;
 // what is kept here is the address to reconnect to and the name to show, so
 // that the status page can say "K809" instead of six hex bytes, and so that a
@@ -131,7 +131,7 @@ typedef struct {
 // ------------------------------------------------------------------ config
 
 typedef struct {
-    const char *host_name;      // GAP name. NULL means "esp-os".
+    const char *host_name;      // GAP name. NULL means "penguinos".
     uint16_t    scan_ms;        // default scan duration
     uint16_t    reconnect_ms;   // backoff between reconnect attempts
     bool        auto_reconnect; // chase the bonded keyboard when it wakes up
@@ -140,7 +140,7 @@ typedef struct {
 static inline eos_ble_cfg_t eos_ble_defaults(void)
 {
     eos_ble_cfg_t c;
-    c.host_name      = "esp-os";
+    c.host_name      = "penguinos";
     c.scan_ms        = 6000;
     c.reconnect_ms   = 3000;
     c.auto_reconnect = true;

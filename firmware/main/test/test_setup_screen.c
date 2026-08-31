@@ -319,7 +319,7 @@ static void test_message(void)
 
     printf("  message screen\n");
     clear_fb();
-    eos_setup_screen_message(&theme, "ESP-OS", "joining the stored network");
+    eos_setup_screen_message(&theme, "penguinOS", "joining the stored network");
     dump();
     extent(&top, &bot, &left, &right);
     printf("    ink rows %d..%d, cols %d..%d\n", top, bot, left, right);
@@ -345,11 +345,11 @@ int main(void)
     CK(ink != paper, "the QR's two colours are two different palette entries");
 
     // The real thing: eos-os-<last4> and a 12-character generated password.
-    test_setup("esp-os-f048", "k9mQ2xR7vT4b", big);
+    test_setup("penguinos-f048", "k9mQ2xR7vT4b", big);
     // A longer name pushes the symbol to version 4 and the scale down one step.
-    test_setup("esp-os-with-a-much-longer-name", "k9mQ2xR7vT4b", big);
+    test_setup("penguinos-with-a-much-longer-name", "k9mQ2xR7vT4b", big);
     // Past the version-4 byte-mode capacity: refused, and the text layout runs.
-    test_setup("esp-os-f048",
+    test_setup("penguinos-f048",
                "0123456789012345678901234567890123456789012345678901234567890123", false);
 
     test_passkey();

@@ -6,7 +6,7 @@
 // password on the LCD, and prints a QR beside it so a phone camera joins by
 // pointing rather than by typing. The string is short and fixed in shape:
 //
-//     WIFI:S:esp-os-f048;T:WPA;P:<12 chars>;;      about 42 characters
+//     WIFI:S:penguinos-f048;T:WPA;P:<12 chars>;;      about 42 characters
 //
 // So this encoder is byte mode only, error-correction level L only, versions 1
 // through 4 only — 21x21 up to 33x33 modules, 78 bytes at the top end. That is

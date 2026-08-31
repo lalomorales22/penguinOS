@@ -5,7 +5,7 @@
 // so a board carried somewhere new is unreachable. The way out is that every
 // board in this fleet has a screen. Boot takes one of three shapes: credentials
 // in NVS and a join that lands inside a 15 s budget means RUN; anything else
-// means SETUP — a WPA2 SoftAP named esp-os-<last4 of MAC> whose password was
+// means SETUP — a WPA2 SoftAP named penguinos-<last4 of MAC> whose password was
 // generated at first boot and is PRINTED ON THE PANEL, plus a captive-portal
 // DNS responder that answers every query with 192.168.4.1 so joining the AP
 // opens the page by itself. The screen is the out-of-band channel; that is the
@@ -37,7 +37,7 @@
 
 #define EOS_NET_SSID_MAX     33    // 802.11 SSID is 32 octets; +1 for the NUL
 #define EOS_NET_PSK_MAX      64    // WPA2 passphrase is 8..63 chars; +1
-#define EOS_NET_AP_NAME_MAX  16    // "esp-os-" + 4 hex + NUL = 12
+#define EOS_NET_AP_NAME_MAX  16    // "penguinos-" + 4 hex + NUL = 15
 #define EOS_NET_AP_PSK_MAX   16
 #define EOS_NET_HOSTNAME_MAX 32    // mDNS label, <name>.local
 #define EOS_NET_QR_MAX       224   // a fully escaped WIFI: URI never exceeds this
@@ -52,7 +52,7 @@
 #define EOS_NET_AP_IP        0xC0A80401u   /* 192.168.4.1, host order */
 #define EOS_NET_AP_IP_STR    "192.168.4.1"
 
-#define EOS_NET_AP_PREFIX    "esp-os-"
+#define EOS_NET_AP_PREFIX    "penguinos-"
 
 // NVS. The namespace and all three keys are <= 15 characters, which is the
 // hard NVS key limit; eos_net_key_ok() is the assertion of that.
@@ -258,8 +258,8 @@ typedef struct {
     uint32_t finish_delay_ms;  // 1500: see eos_net_commit()
     int8_t   rssi_hysteresis;  // 3 dBm; smaller moves do not raise an event
 
-    // Empty means "derive it from the MAC", which gives esp-os-f048.local and
-    // not six boards all claiming esp-os.local.
+    // Empty means "derive it from the MAC", which gives penguinos-f048.local and
+    // not six boards all claiming penguinos.local.
     char hostname[EOS_NET_HOSTNAME_MAX];
 
     eos_net_cb_t on_event;
@@ -398,7 +398,7 @@ int eos_net_bar_wifi(const eos_net_t *n);
 // Pure, no state, and separately testable — which is the reason they are public
 // rather than static.
 
-// "esp-os-f048" from the last two octets of the MAC, lowercase hex. Returns out.
+// "penguinos-f048" from the last two octets of the MAC, lowercase hex. Returns out.
 char *eos_net_ap_name(const uint8_t mac[6], char *out, size_t cap);
 
 // EOS_NET_AP_PSK_LEN characters from a 32-symbol alphabet, one input byte per
@@ -412,7 +412,7 @@ int eos_net_ap_psk_from_entropy(const uint8_t *entropy, size_t n,
 bool eos_net_ap_psk_valid(const char *psk);
 
 // The payload a phone camera joins an AP from:
-//   WIFI:S:esp-os-f048;T:WPA;P:hqm4x7bt2fkd;;
+//   WIFI:S:penguinos-f048;T:WPA;P:hqm4x7bt2fkd;;
 // Backslash-escapes the four characters the format reserves. Returns the length
 // written, or <0 if it will not fit. `out` wants EOS_NET_QR_MAX.
 int eos_net_wifi_qr(const char *ssid, const char *psk, char *out, size_t cap);

@@ -1,6 +1,6 @@
-# tools — the ESP-OS universal flasher
+# tools — the penguinOS universal flasher
 
-Plug in any board in `boards/`, run one script, get ESP-OS.
+Plug in any board in `boards/`, run one script, get penguinOS.
 
 ```bash
 tools/flash.sh
@@ -143,7 +143,7 @@ wavvy CP2102 cable fails with `Invalid head of packet (0xFF)` at 460800 and
 921600 *for plain reads*, not just writes, so a detector that used the upload
 baud would fail to identify the one board whose upload baud matters most.
 
-**The MAC cache lives outside the repo**, at `~/.esp-os/board-cache.json`
+**The MAC cache lives outside the repo**, at `~/.penguinos/board-cache.json`
 (override with `$EOS_BOARD_CACHE` or `--cache`). It is per-machine state about
 physical boards, not source. To pin a board for everyone who clones the repo,
 add its MAC to `identification.mac_allowlist` in its profile — the registry

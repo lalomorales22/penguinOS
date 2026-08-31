@@ -780,7 +780,7 @@ static void footprints(void)
 
 int main(void)
 {
-    printf("== esp-os cross-component integration ==\n\n");
+    printf("== penguinos cross-component integration ==\n\n");
     moods();
     workspaces();
     palette_sentinel();

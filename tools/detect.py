@@ -43,7 +43,7 @@ DETECT_BAUD = 115200
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 DEFAULT_BOARDS = os.path.join(REPO, "boards")
-DEFAULT_CACHE = os.path.join(os.path.expanduser("~"), ".esp-os", "board-cache.json")
+DEFAULT_CACHE = os.path.join(os.path.expanduser("~"), ".penguinos", "board-cache.json")
 
 # Serial devices that are always present on a Mac and are never a board. Matched
 # against the basename, case-insensitively, as a substring.
@@ -637,7 +637,7 @@ class Cache(object):
 
     def save(self):
         self.data["schema"] = SCHEMA
-        self.data["note"] = ("Written by esp-os tools/detect.py. Maps a board's "
+        self.data["note"] = ("Written by penguinos tools/detect.py. Maps a board's "
                              "MAC to the profile a human confirmed for it.")
         directory = os.path.dirname(self.path)
         try:
@@ -799,7 +799,7 @@ def w(line=""):
 
 
 def print_human(report):
-    w("esp-os board detection")
+    w("penguinos board detection")
     w("=" * 62)
     et = report["esptool"]
     w("registry   %s (%d profiles)" % (report["boards_dir"], len(report["profiles"])))

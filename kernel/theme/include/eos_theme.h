@@ -2,7 +2,7 @@
 //
 // A theme is a fixed set of named colour roles, the sixteen ANSI terminal
 // colours, and a handful of scalars the shell and the window manager consume.
-// It is read off the card at boot, so changing how ESP-OS looks never means
+// It is read off the card at boot, so changing how penguinOS looks never means
 // rebuilding it. The parser is hand-rolled recursive descent over a buffer the
 // caller owns: no allocation anywhere, no third-party library, and no parsed
 // document tree, because the tier 0 board sits at roughly 20KB of free heap
@@ -13,7 +13,7 @@
 // bytes, empty file — every one of them leaves the caller holding the
 // compiled-in default and returns a reason code. There is no partial theme.
 //
-// Three resolvers, because ESP-OS draws on three kinds of panel: RGB565 for
+// Three resolvers, because penguinOS draws on three kinds of panel: RGB565 for
 // the LVGL tiers and the SPI LCDs, an 8-bit palette index for the tier 0
 // indexed compositor, and one lit/unlit bit for the SSD1306.
 

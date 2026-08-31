@@ -289,7 +289,7 @@ static void test_measure(void)
     static const char *SAMPLE[] = {
         "", "x", "12:34", "heap 401408", "?", "\x01\x02\x7f",
         "The quick brown fox jumps over the lazy dog",
-        "~esp-os~", "[  ]", "                                "
+        "~penguinos~", "[  ]", "                                "
     };
     int i, s, n, h;
     printf("measure\n");
@@ -417,7 +417,7 @@ static void render_face(int i)
     printf("\n");
     draw(f, "The quick brown fox jumps over the lazy dog.", '#', ' ');
     printf("\n");
-    draw(f, "ESP-OS 0.1 // esp32c6 // ST7789 240x240", '#', ' ');
+    draw(f, "penguinOS 0.1 // esp32c6 // ST7789 240x240", '#', ' ');
     printf("\n");
 
     // Digits alone, spaced out, because the status bar renders them in

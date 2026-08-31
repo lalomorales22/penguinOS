@@ -6,7 +6,7 @@
 // target. Nothing here checks the wiring; that is the probe's job and it is
 // already done.
 //
-// The buddy is why this file exists. It is the one window in ESP-OS whose
+// The buddy is why this file exists. It is the one window in penguinOS whose
 // correctness cannot be read off a number, and it is also the one that breaks
 // the rule the rest of the scene is built on: eos_buddy_render() writes whole
 // pixels and REORDERS the model in place, and the scene is replayed once per
@@ -248,7 +248,7 @@ int main(int argc, char **argv)
     view.keys  = &keys;
     view.buddy = &buddy;
     view.heap_free = 156000; view.heap_largest = 147456; view.uptime_ms = 52321000u;
-    view.board_line[0] = "esp-os.local";
+    view.board_line[0] = "penguinos.local";
     view.board_line[1] = "192.168.0.160";
     view.board_line[2] = "WavvyWorld";
     view.board_line[3] = "ESP32-C6 -58dBm";

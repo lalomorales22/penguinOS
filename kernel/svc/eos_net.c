@@ -1345,7 +1345,7 @@ static int idf_mdns_start(void *ud, const char *hostname)
         s_mdns_up = true;
     }
     if (mdns_hostname_set(hostname) != ESP_OK) return -1;
-    mdns_instance_name_set("ESP-OS");
+    mdns_instance_name_set("penguinOS");
     mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     ESP_LOGI(TAG, "mdns: %s.local", hostname);
     return 0;

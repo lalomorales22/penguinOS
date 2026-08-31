@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# flash.sh - plug in any board in boards/, run this, get ESP-OS.
+# flash.sh - plug in any board in boards/, run this, get penguinOS.
 #
 # The flow is: identify the chip with esptool, narrow to profiles in the
 # registry, resolve whatever esptool could not (by cache, by the human, or by
@@ -47,7 +47,7 @@ OPT_SD_PORT=8765
 
 usage() {
     cat <<'EOF'
-flash.sh - the ESP-OS universal flasher
+flash.sh - the penguinOS universal flasher
 
 usage: tools/flash.sh [options]
 
@@ -835,7 +835,7 @@ if [ -n "$OPT_PROVISION_SD" ] && [ "$OPT_PROBE" -eq 0 ] && [ -z "$OPT_PROFILE" ]
     exit 0
 fi
 
-head1 "ESP-OS flasher"
+head1 "penguinOS flasher"
 detect_board
 
 case "$EOS_DETECT_STATUS" in

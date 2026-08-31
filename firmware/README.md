@@ -77,7 +77,7 @@ is 115,200 B of SPI and nothing on it moves except the status line.
 
 | Fact | Value |
 |---|---|
-| payload | `WIFI:S:esp-os-f048;T:WPA;P:<12 chars>;;` — 41 bytes |
+| payload | `WIFI:S:penguinos-f048;T:WPA;P:<12 chars>;;` — 41 bytes |
 | symbol | version 3, 29x29 modules, ECC level L |
 | scale | 4 px per module, chosen at runtime to fit the box left over after the text |
 | drawn | 148x148 px at (46,21), quiet zone 16 px on all four sides |
@@ -162,7 +162,7 @@ picker entry that vanishes the moment it is chosen. A theme switch through
 colours follow immediately, `gap`/`bar_h`/`tab_h` do not and come back in
 `reboot_required`.
 
-Step 3 exists so the board comes up looking like ESP-OS rather than like the
+Step 3 exists so the board comes up looking like penguinOS rather than like the
 neutral slate fallback, and it is the only thing in the image that runs
 `eos_theme_parse()` on RISC-V — 213 host checks say the parser is right, and
 none of them ran on target.
@@ -362,7 +362,7 @@ Three details a client will notice:
 
 The whole of `docs/provisioning.md` is implemented in this image. The short
 version: a board that has never seen your network brings up a **closed** WPA2
-SoftAP called `esp-os-<last 4 of MAC>`, prints its name, its password and a QR of
+SoftAP called `penguinos-<last 4 of MAC>`, prints its name, its password and a QR of
 `WIFI:S:...;T:WPA;P:...;;` on the panel, answers every DNS question with
 192.168.4.1 so the phone opens the page by itself, and serves this:
 
@@ -596,7 +596,7 @@ settings store, the megabrain client and the avatar all in the image.
 
 | Measure | esp32c6 (C6-LCD-1.3) |
 |---|---|
-| `esp-os.bin` | 1,640,048 B (0x190670) |
+| `penguinos.bin` | 1,640,048 B (0x190670) |
 | `factory` free | 1,505,680 B (48%) |
 | bootloader | 22,176 B |
 | bootloader headroom to 0x8000 | 10,592 B (32%) |

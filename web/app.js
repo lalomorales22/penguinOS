@@ -1,4 +1,4 @@
-/* app — the companion web app for ESP-OS.
+/* app — the companion web app for penguinOS.
  *
  * Everything here is written against the fact that the server is an ESP32 with
  * a few kilobytes of free heap and a handful of sockets. Two things follow.
@@ -291,7 +291,7 @@ function loadThemes() {
 function renderBar() {
   var s = S.sys;
   if (!s) return;
-  $('boardname').textContent = (s.net && s.net.hostname) || (s.board && s.board.id) || 'esp-os';
+  $('boardname').textContent = (s.net && s.net.hostname) || (s.board && s.board.id) || 'penguinos';
   var b = $('barstats');
   b.textContent = '';
   var add = function (label, val) {

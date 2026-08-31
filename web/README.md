@@ -1,4 +1,4 @@
-# web — the ESP-OS companion app
+# web — the penguinOS companion app
 
 Served by the board, launched at startup, reached at `http://<boardname>.local`.
 Two pages out of one bundle: the four-tab app — **Files**, **Settings**,
@@ -358,7 +358,7 @@ call it. `/api/system` is polled every 5s while the page is visible.
   "heap":   {"free":21344,"min_free":18120,"largest_block":10240,"total":295000},
   "fs":     [{"point":"/sd","fs":"fat","mounted":true,"writable":true,
               "removable":true,"total":7948206080,"used":124035}],
-  "net":    {"ip":"192.168.0.51","hostname":"esp-os","mdns":"esp-os.local",
+  "net":    {"ip":"192.168.0.51","hostname":"penguinos","mdns":"penguinos.local",
              "ssid":"WavvyWorld","rssi":-58,"up":true},
   "uptime_ms": 128394,
   "time":   {"epoch":1756500000,"tz":"PST8PDT,M3.2.0,M11.1.0","synced":true},

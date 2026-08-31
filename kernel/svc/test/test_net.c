@@ -360,11 +360,11 @@ static void test_names(void)
 static void test_ap_name(void)
 {
     static const struct { uint8_t mac[6]; const char *want; } V[] = {
-        { { 0x40, 0x4C, 0xCA, 0x11, 0xF0, 0x48 }, "esp-os-f048" },
-        { { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, "esp-os-0000" },
-        { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, "esp-os-ffff" },
-        { { 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC }, "esp-os-9abc" },
-        { { 0xDE, 0xAD, 0xBE, 0xEF, 0x0A, 0x0B }, "esp-os-0a0b" },
+        { { 0x40, 0x4C, 0xCA, 0x11, 0xF0, 0x48 }, "penguinos-f048" },
+        { { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, "penguinos-0000" },
+        { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, "penguinos-ffff" },
+        { { 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC }, "penguinos-9abc" },
+        { { 0xDE, 0xAD, 0xBE, 0xEF, 0x0A, 0x0B }, "penguinos-0a0b" },
     };
     char buf[EOS_NET_AP_NAME_MAX];
 
@@ -373,7 +373,7 @@ static void test_ap_name(void)
     for (size_t i = 0; i < sizeof V / sizeof V[0]; i++) {
         eos_net_ap_name(V[i].mac, buf, sizeof buf);
         CKS(buf, V[i].want, "ap name derives from the last two mac octets");
-        CK(strlen(buf) == 11, "ap name is 11 characters, well inside the 32-octet SSID limit");
+        CK(strlen(buf) == 14, "ap name is 14 characters, well inside the 32-octet SSID limit");
     }
 
     // Only the last two octets matter, which is what makes two boards from the
@@ -637,9 +637,9 @@ static void test_qr(void)
 
     printf("  wifi QR payload\n");
 
-    n = eos_net_wifi_qr("esp-os-f048", "hqm4x7bt2fkd", b, sizeof b);
+    n = eos_net_wifi_qr("penguinos-f048", "hqm4x7bt2fkd", b, sizeof b);
     CK(n > 0, "a normal payload builds");
-    CKS(b, "WIFI:S:esp-os-f048;T:WPA;P:hqm4x7bt2fkd;;",
+    CKS(b, "WIFI:S:penguinos-f048;T:WPA;P:hqm4x7bt2fkd;;",
         "the payload is exactly the form docs/provisioning.md specifies");
     CKI(n, (int)strlen(b), "the return value is the written length");
 
@@ -662,7 +662,7 @@ static void test_qr(void)
     // Truncation is a refusal, never a short payload. A QR that encodes half a
     // password is worse than no QR: the phone joins nothing and says nothing.
     {
-        const char *ssid = "esp-os-f048", *psk = "hqm4x7bt2fkd";
+        const char *ssid = "penguinos-f048", *psk = "hqm4x7bt2fkd";
         int full = eos_net_wifi_qr(ssid, psk, b, sizeof b);
         for (int cap = 1; cap <= full; cap++) {
             char small[EOS_NET_QR_MAX];
@@ -865,14 +865,14 @@ static void test_boot(void)
     CKI(eos_net_init(&r.f.n, &r.cfg), EOS_NET_OK, "init succeeds");
     CKI(eos_net_mode(&r.f.n), EOS_NET_OFF, "before start, the mode is OFF");
     CKI(eos_net_bar_wifi(&r.f.n), 0, "and the bar shows OFF");
-    CKS(eos_net_ap_ssid(&r.f.n), "esp-os-f048", "the AP name is derived at init");
-    CKS(eos_net_hostname(&r.f.n), "esp-os-f048", "and so is the mDNS name, so boards do not collide");
+    CKS(eos_net_ap_ssid(&r.f.n), "penguinos-f048", "the AP name is derived at init");
+    CKS(eos_net_hostname(&r.f.n), "penguinos-f048", "and so is the mDNS name, so boards do not collide");
 
     CKI(eos_net_start(&r.f.n), EOS_NET_OK, "an empty store still starts cleanly");
     CKI(eos_net_mode(&r.f.n), EOS_NET_SETUP, "with no credentials the board goes to SETUP");
     CKI(r.d.joins, 0, "and does not attempt a join it has nothing for");
     CKI(r.d.ap_starts, 1, "the SoftAP is up");
-    CKS(r.d.last_ap_ssid, "esp-os-f048", "under the derived name");
+    CKS(r.d.last_ap_ssid, "penguinos-f048", "under the derived name");
     CK(eos_net_ap_psk_valid(r.d.last_ap_psk), "with a generated WPA2 password");
     CK(strlen(r.d.last_ap_psk) >= 8, "THE SOFTAP IS NOT OPEN");
     CKS(r.d.last_ap_psk, eos_net_ap_psk(&r.f.n),
@@ -893,7 +893,7 @@ static void test_boot(void)
         char qr[EOS_NET_QR_MAX];
         int n = eos_net_ap_qr(&r.f.n, qr, sizeof qr);
         CK(n > 0, "the AP's QR payload builds");
-        CK(strstr(qr, "WIFI:S:esp-os-f048;T:WPA;P:") == qr, "and names this board's AP with WPA");
+        CK(strstr(qr, "WIFI:S:penguinos-f048;T:WPA;P:") == qr, "and names this board's AP with WPA");
     }
     guards_ok(&r, "boot setup");
 
@@ -912,7 +912,7 @@ static void test_boot(void)
     CKI(r.d.ap_starts, 0, "the SoftAP never comes up");
     CKI(r.d.scans, 0, "and nothing is scanned");
     CKI(r.d.mdns, 1, "mDNS starts");
-    CKS(r.d.last_mdns, "esp-os-f048", "under the derived hostname");
+    CKS(r.d.last_mdns, "penguinos-f048", "under the derived hostname");
     CKI(eos_net_ip(&r.f.n), 0xC0A80042u, "the address is the one the driver reported");
     CKI(eos_net_rssi(&r.f.n), -47, "and so is the signal");
     CKI(eos_net_bar_wifi(&r.f.n), 3, "the bar shows UP");
@@ -1297,7 +1297,7 @@ static void test_dns(void)
     {
         static const char *NAMES[] = {
             "captive.apple.com", "connectivitycheck.gstatic.com", "www.msftconnecttest.com",
-            "esp-os-f048.local", "a", "example.com", "detectportal.firefox.com"
+            "penguinos-f048.local", "a", "example.com", "detectportal.firefox.com"
         };
         for (size_t i = 0; i < sizeof NAMES / sizeof NAMES[0]; i++) {
             qlen = mk_query(q, NAMES[i], 1, 1);

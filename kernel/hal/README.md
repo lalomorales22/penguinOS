@@ -1,7 +1,7 @@
 # kernel/hal — the line every board has to cross
 
 Four headers and one `.c` file. The headers define the only things the rest of
-ESP-OS is allowed to know about hardware:
+penguinOS is allowed to know about hardware:
 
 | Header | What it fixes |
 |---|---|

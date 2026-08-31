@@ -367,7 +367,7 @@ never gets the antenna.
 
 ## The bond record
 
-48 bytes in NVS (`eos_ble` / `bond`). This is ESP-OS's memory of WHICH device it
+48 bytes in NVS (`eos_ble` / `bond`). This is penguinOS's memory of WHICH device it
 bonded to, not the bond itself — the link keys live in NimBLE's own store and
 are never copied out of it. What is kept here is the address to reconnect to and
 the name to show.
@@ -982,7 +982,7 @@ captures its own ports as the fallback and the first miss recurses until the
 ## Memory
 
 Measured by building the tree twice with the same sdkconfig and toolchain, once
-with this file and its wiring and once without, and diffing `esp-os.bin` and
+with this file and its wiring and once without, and diffing `penguinos.bin` and
 `idf.py size`.
 
 | | Flash | Static RAM |

@@ -2,7 +2,7 @@
 
 The four bitmap faces. `eos_display.h` declares `eos_font_t`, `eos_font_id_t`
 and `eos_font_get()`; this component holds the glyphs and implements the getter.
-Without it nothing in ESP-OS can draw a character.
+Without it nothing in penguinOS can draw a character.
 
 Static const throughout. No allocation, no writable state, `.data` and `.bss`
 are both zero bytes — every glyph lives in flash.

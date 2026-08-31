@@ -976,7 +976,7 @@ eos_err_t eos_ble_init(const eos_ble_cfg_t *cfg)
     if (b && !b->input.ble_keyboard) return EOS_ERR_NODEV;
 
     s_cfg = cfg ? *cfg : eos_ble_defaults();
-    if (!s_cfg.host_name) s_cfg.host_name = "esp-os";
+    if (!s_cfg.host_name) s_cfg.host_name = "penguinos";
 
     // NimBLE keeps its bonds in NVS and so do we. A partition that will not
     // open is recoverable exactly once, by erasing it, and that costs the WiFi

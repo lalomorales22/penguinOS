@@ -1246,9 +1246,9 @@ static void fake_reset(void)
     FK.net.join   = EOS_HTTPD_JOIN_NONE;
     FK.ble.battery = -1;
     snprintf(FK.net.ap_ip, sizeof FK.net.ap_ip, "192.168.4.1");
-    snprintf(FK.net.host, sizeof FK.net.host, "esp-os");
-    memcpy(FK.net.ap_ssid, "esp-os-f048", 11);
-    FK.net.ap_ssid_len = 11;
+    snprintf(FK.net.host, sizeof FK.net.host, "penguinos");
+    memcpy(FK.net.ap_ssid, "penguinos-f048", 14);
+    FK.net.ap_ssid_len = 14;
     FK.net.ap_up = true;
 }
 
@@ -1626,9 +1626,9 @@ static void test_wifi_forget_and_status(void)
     CK(has_kv(r.body, "mode", "\"setup\""), "status: setup mode");
     CK(has_kv(r.body, "state", "\"setup\""), "status: setup state");
     CK(strstr(r.body, "\"rssi\":null") != NULL, "status: no rssi without a link");
-    CK(strstr(r.body, "\"mdns\":\"esp-os.local\"") != NULL, "status: the mDNS name");
+    CK(strstr(r.body, "\"mdns\":\"penguinos.local\"") != NULL, "status: the mDNS name");
     CK(strstr(r.body, "\"ip\":\"192.168.4.1\"") != NULL, "status: the AP address");
-    CK(strstr(r.body, "esp-os-f048") != NULL, "status: the AP name");
+    CK(strstr(r.body, "penguinos-f048") != NULL, "status: the AP name");
     CK(has_kv_after(r.body, "\"join\":", "state", "\"none\""),
        "status: nothing has been tried yet");
 
@@ -2120,9 +2120,9 @@ static void test_web_contract(void)
     CK(has_kv(r.body, "ip", "\"192.168.0.51\""),     "net/status: ip at the top level");
     CK(has_kv(r.body, "ssid", "\"WavvyWorld\""),     "net/status: ssid at the top level");
     CK(has_kv(r.body, "rssi", "-47"),                "net/status: rssi at the top level");
-    CK(has_kv(r.body, "hostname", "\"esp-os\""),     "net/status: hostname");
-    CK(has_kv(r.body, "host", "\"esp-os\""),         "net/status: host, the other spelling");
-    CK(has_kv(r.body, "mdns", "\"esp-os.local\""),   "net/status: mdns");
+    CK(has_kv(r.body, "hostname", "\"penguinos\""),     "net/status: hostname");
+    CK(has_kv(r.body, "host", "\"penguinos\""),         "net/status: host, the other spelling");
+    CK(has_kv(r.body, "mdns", "\"penguinos.local\""),   "net/status: mdns");
     CK(strstr(r.body, "\"ap\":{") != NULL,           "net/status: an ap object");
     CK(has_kv_after(r.body, "\"ap\":", "ssid", "\""), "net/status: ap.ssid");
     CK(strstr(r.body, "\"join\":{") != NULL,         "net/status: a join object");
