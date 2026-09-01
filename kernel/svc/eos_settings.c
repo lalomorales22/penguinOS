@@ -31,6 +31,7 @@ static const struct {
     { "wifi.psk_set",  EOS_SET_T_BOOL, EOS_SET_F_READONLY },
     { "net.host",      EOS_SET_T_STR,  EOS_SET_F_PERSIST | EOS_SET_F_REBOOT },
     { "brain.host",    EOS_SET_T_STR,  EOS_SET_F_PERSIST },
+    { "cam.host",      EOS_SET_T_STR,  EOS_SET_F_PERSIST },
     { "brain.port",    EOS_SET_T_INT,  EOS_SET_F_PERSIST },
     { "brain.model",   EOS_SET_T_STR,  EOS_SET_F_PERSIST },
     { "brain.max",     EOS_SET_T_INT,  EOS_SET_F_PERSIST },
@@ -86,6 +87,7 @@ static char *field_str(eos_settings_t *s, int key, int *cap)
     switch (key) {
     case EOS_SET_NET_HOST:      *cap = EOS_SETTINGS_HOST_MAX;   return s->net_host;
     case EOS_SET_BRAIN_HOST:    *cap = EOS_SETTINGS_BHOST_MAX;  return s->brain_host;
+    case EOS_SET_CAM_HOST:      *cap = EOS_SETTINGS_BHOST_MAX;  return s->cam_host;
     case EOS_SET_BRAIN_MODEL:   *cap = EOS_SETTINGS_MODEL_MAX;  return s->brain_model;
     case EOS_SET_BRAIN_SYSTEM:  *cap = EOS_SETTINGS_SYSTEM_MAX; return s->brain_system;
     case EOS_SET_UI_THEME:      *cap = EOS_SETTINGS_THEME_MAX;  return s->ui_theme;
@@ -148,6 +150,7 @@ void eos_settings_defaults(eos_settings_t *s)
     // empty is the answer.
     s->net_host[0]      = '\0';
     s->brain_host[0]    = '\0';
+    s->cam_host[0]      = '\0';
     s->brain_model[0]   = '\0';
     s->brain_system[0]  = '\0';
     s->sys_tz[0]        = '\0';

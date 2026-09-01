@@ -58,6 +58,7 @@ typedef enum {
     EOS_APP_FILES,       // a read-only browser over /int
     EOS_APP_MEDIA,       // the WS2812 on GPIO8. Light, not sound.
     EOS_APP_PARTY,       // the ten-second demo
+    EOS_APP_CAMERA,      // a viewfinder onto a penguinOS camera node
     EOS_APP_COUNT
 } eos_app_id_t;
 
@@ -217,6 +218,7 @@ bool eos_app_media_key(const eos_event_t *e);
 bool eos_app_media_take_dirty(void);
 
 void eos_app_draw_party(const eos_app_ctx_t *c, eos_rect_t r);
+void eos_app_draw_camera(const eos_app_ctx_t *c, eos_rect_t r);
 bool eos_app_party_key(const eos_event_t *e);
 
 // Party owns the LED and the buddy's mood while it is on the glass and gives

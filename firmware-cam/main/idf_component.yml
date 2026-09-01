@@ -1,0 +1,8 @@
+dependencies:
+  # The camera driver. Espressif's own component. NOTE the sensor on this
+  # board is an OV3660 (PID 0x3660), not the OV2640 the listing claims -
+  # this component supports both.
+  espressif/esp32-camera: "^2.0.15"
+  # eos_net advertises the node over mDNS, exactly as the screen boards do, so
+  # this one is inherited from the service rather than chosen here.
+  espressif/mdns: "^1.5"

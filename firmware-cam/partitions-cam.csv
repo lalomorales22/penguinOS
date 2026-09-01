@@ -1,0 +1,21 @@
+# penguinOS camera node, 8 MB flash.
+#
+# No filesystem to speak of: this node stores nothing. It has no themes, no
+# buddy gallery and no web app of its own - it captures, scales and serves. The
+# 'int' partition exists only because eos_storage mounts it unconditionally and
+# eos_net keeps Wi-Fi credentials in NVS beside it.
+#
+#   0x000000  bootloader                     reserved to 0x8000
+#   0x008000  partition table                 0x001000       4 KB
+#   0x009000  nvs                             0x006000      24 KB
+#   0x00F000  phy_init                        0x001000       4 KB
+#   0x010000  factory                         0x400000   4,096 KB
+#   0x410000  int (littlefs)                  0x3F0000   4,032 KB
+#   0x800000  end of flash                   -----------------------
+#                                            total       8,192 KB
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x6000,
+phy_init,   data, phy,      0xF000,    0x1000,
+factory,    app,  factory,  0x10000,   0x400000,
+int,        data, littlefs, 0x410000,  0x3F0000,

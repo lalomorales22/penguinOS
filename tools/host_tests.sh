@@ -93,7 +93,7 @@ run draw    -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
             -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
             firmware/main/test/test_shell_draw.c firmware/main/eos_buddy_model.c \
-            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c \
+            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c firmware/main/eos_app_camera.c \
             firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
             firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
             firmware/main/eos_led.c \
@@ -107,7 +107,7 @@ run appsui  -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/shell/include -Ikernel/font/include -Ikernel/avatar/include \
             -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
             firmware/main/test/test_apps_ui.c \
-            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c \
+            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c firmware/main/eos_app_camera.c \
             firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
             firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
             firmware/main/eos_led.c firmware/main/eos_shell_draw.c \
@@ -124,7 +124,7 @@ run dispatch -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             -Ikernel/svc/include -Iboards/generated -Ifirmware/main \
             firmware/main/test/test_dispatch.c firmware/main/eos_shell_input.c \
             firmware/main/eos_shell_draw.c firmware/main/eos_buddy_model.c \
-            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c \
+            firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c firmware/main/eos_app_camera.c \
             firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
             firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
             firmware/main/eos_led.c \

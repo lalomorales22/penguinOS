@@ -104,6 +104,7 @@ typedef enum {
     EOS_SET_WIFI_PSK_SET,    // read-only, derived: does eos_net hold one
     EOS_SET_NET_HOST,
     EOS_SET_BRAIN_HOST,
+    EOS_SET_CAM_HOST,
     EOS_SET_BRAIN_PORT,
     EOS_SET_BRAIN_MODEL,
     EOS_SET_BRAIN_MAX,
@@ -135,6 +136,10 @@ typedef enum {
 typedef struct {
     char     net_host[EOS_SETTINGS_HOST_MAX];
     char     brain_host[EOS_SETTINGS_BHOST_MAX];
+    // Where a penguinOS camera node lives. Same shape as brain_host and for
+    // the same reason: it is another board's address on the owner's network,
+    // and no default can be right for two different networks.
+    char     cam_host[EOS_SETTINGS_BHOST_MAX];
     char     brain_model[EOS_SETTINGS_MODEL_MAX];
     char     brain_system[EOS_SETTINGS_SYSTEM_MAX];
     char     ui_theme[EOS_SETTINGS_THEME_MAX];

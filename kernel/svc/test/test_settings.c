@@ -183,9 +183,14 @@ static void t_keys(void)
 {
     int i;
 
-    printf("  keys: the twelve names, their types and their flags\n");
+    printf("  keys: the names, their types and their flags\n");
 
-    CKI(EOS_SET_COUNT, 13, "thirteen key slots, twelve of them settable");
+    /* Bumped from 13 when cam.host was added for the camera node. This check
+       is deliberately brittle: the enum and the key TABLE must stay in step,
+       and a mismatch between them silently maps one setting onto another's
+       storage. A count that has to be updated on purpose is how that stays
+       impossible to do by accident. */
+    CKI(EOS_SET_COUNT, 14, "fourteen key slots");
     CKS(eos_settings_key_name(EOS_SET_WIFI_SSID),    "wifi.ssid",     "wifi.ssid");
     CKS(eos_settings_key_name(EOS_SET_WIFI_PSK_SET), "wifi.psk_set",  "wifi.psk_set");
     CKS(eos_settings_key_name(EOS_SET_SYS_AUTOSTART),"sys.autostart", "sys.autostart");

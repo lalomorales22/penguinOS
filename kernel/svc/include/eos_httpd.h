@@ -272,6 +272,16 @@ typedef enum {
     EOS_ROUTE_BUDDY_GALLERY_REMOVE,
     EOS_ROUTE_APPS,
     EOS_ROUTE_CAPTIVE,         // an OS connectivity probe: redirect to the portal
+    // A CAMERA NODE. penguinOS's network and web services have no display
+    // dependency, so a screenless board - the XIAO ESP32-S3 Sense - runs them
+    // headless and serves frames instead of a desktop. These routes exist in
+    // the one route table for the same reason every other route does: a second
+    // table is one that drifts. On a board with no camera they simply answer
+    // 501, which is what an unregistered route already means here.
+    EOS_ROUTE_CAM_STATUS,      // is there a sensor, and what is it doing
+    EOS_ROUTE_CAM_FRAME,       // raw RGB565, already rotated and scaled
+    EOS_ROUTE_CAM_SNAP,        // the same frame as JPEG, for a browser
+
     EOS_ROUTE_STATIC,          // a file under the active document root
 } eos_route_t;
 

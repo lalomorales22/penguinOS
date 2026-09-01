@@ -1,0 +1,27 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# The XIAO ESP32-S3 Sense: 8MB flash, 8MB OCTAL PSRAM. Octal is not a
+# preference - quad mode fails to initialise on this part, exactly as on the
+# Waveshare S3 board. The camera NEEDS the PSRAM: an RGB565 frame at even
+# modest sizes will not fit in internal RAM, and esp32-camera allocates its
+# frame buffers there.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=131072
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-cam.csv"
+
+# Native USB, no bridge chip - the console goes over the SoC's own USB.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_FREERTOS_HZ=1000
+
+# The camera pushes far more data than the setup page ever did, and a frame is
+# streamed rather than buffered, so the send path wants room.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=23360
+CONFIG_LWIP_TCP_WND_DEFAULT=23360

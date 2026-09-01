@@ -687,6 +687,9 @@ static const struct {
     // answers two methods and nothing else - web/README.md's rule, and the
     // reason is that a small HTTP server's method table is one more thing to
     // get wrong for no gain the browser can feel.
+    { "/api/cam/status",          "GET",  EOS_ROUTE_CAM_STATUS           },
+    { "/api/cam/frame",           "GET",  EOS_ROUTE_CAM_FRAME            },
+    { "/api/cam/snap",            "GET",  EOS_ROUTE_CAM_SNAP             },
     { "/api/buddy/gallery",        "GET",  EOS_ROUTE_BUDDY_GALLERY        },
     { "/api/buddy/gallery/select", "POST", EOS_ROUTE_BUDDY_GALLERY_SELECT },
     { "/api/buddy/gallery/remove", "POST", EOS_ROUTE_BUDDY_GALLERY_REMOVE },
@@ -2500,6 +2503,12 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_BUDDY_GALLERY:
     case EOS_ROUTE_BUDDY_GALLERY_SELECT:
     case EOS_ROUTE_BUDDY_GALLERY_REMOVE:
+    // The camera routes reach the same hook. A board with no camera never
+    // registers a handler for them and they answer 501, which is the honest
+    // answer to "send me a frame" from a board that has no sensor.
+    case EOS_ROUTE_CAM_STATUS:
+    case EOS_ROUTE_CAM_FRAME:
+    case EOS_ROUTE_CAM_SNAP:
         h->req_api++;
         if (!s_api)
             return fail_err(h, r, -7, "this image was built without the files, "
