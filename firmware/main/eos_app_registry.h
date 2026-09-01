@@ -219,6 +219,8 @@ bool eos_app_media_take_dirty(void);
 
 void eos_app_draw_party(const eos_app_ctx_t *c, eos_rect_t r);
 void eos_app_draw_camera(const eos_app_ctx_t *c, eos_rect_t r);
+void eos_app_camera_tick(bool visible, uint32_t now_ms);
+bool eos_app_camera_take_dirty(void);
 bool eos_app_party_key(const eos_event_t *e);
 
 // Party owns the LED and the buddy's mood while it is on the glass and gives
