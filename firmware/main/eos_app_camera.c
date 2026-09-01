@@ -39,7 +39,15 @@
 // How many rows are FETCHED per draw call. Measured: a request costs a fixed
 // ~65ms regardless of size, so 16-row strips spend 1.55s per picture on
 // connection setup alone while 40-row strips take 0.75s.
-#define CAM_STRIP_ROWS 40
+// SCREEN rows per request. Raised from 40 once the picture went to half
+// resolution: a strip that used to be 18,560 bytes is now 4,640, so four times
+// as many rows fit in the same transfer. That matters more than the bytes -
+// each request costs a FIXED ~65ms of connection setup regardless of size, so
+// halving the request count halves the dominant cost.
+//
+//   40 screen rows, full size   8 requests, ~134 KB, about 2.4s a picture
+//  160 screen rows, half size   2 requests,  ~33 KB, well under a second
+#define CAM_STRIP_ROWS 160
 #define CAM_MAX_W      240
 
 // How many rows are HELD AT ONCE, which is a different question and much
@@ -52,12 +60,30 @@
 // realisation that a strip does not need to be held either. The picture arrives
 // as a stream and leaves as a stream, and the only memory required is the
 // window between the two.
-#define CAM_CHUNK_ROWS 8
+// SOURCE rows held at once. Each becomes two rows on the glass - see
+// CAM_SCALE - so eight rows of screen come out of four rows of wire.
+#define CAM_CHUNK_ROWS 4
+
+// The picture is fetched at HALF the tile's size and doubled on the way to the
+// panel. That is a quarter of the bytes for a barely visible loss on a 2.4 inch
+// screen, and it is the difference between a viewfinder and a wipe:
+//
+//   full size   232x289 = 134,096 bytes, 8 requests, about 2.4s per picture
+//   half size   116x144 =  33,408 bytes, 4 requests, well under a second
+//
+// At 2.4s the top of the frame is already being redrawn before the bottom has
+// arrived, so what you watch is a bar sweeping down rather than an image.
+#define CAM_SCALE 2
 #ifdef ESP_PLATFORM
-// Only on the device. Off-target there is no socket to fill it from, and a
-// 3,840-byte buffer nothing reads is a -Werror=unused-variable away from
-// breaking three host suites - which is exactly how this was found.
-static uint16_t s_chunk[CAM_MAX_W * CAM_CHUNK_ROWS];
+// Two small buffers, both device-only: off-target there is no socket to fill
+// them and an unused array is a -Werror away from breaking three host suites,
+// which is exactly how that was found the first time.
+//
+// s_chunk holds SOURCE rows straight off the wire - half width, so half of
+// CAM_MAX_W. s_out holds the doubled result on its way to the panel. Together
+// about 4.6 KB, against 134 KB for the frame neither of them ever holds.
+static uint16_t s_chunk[(CAM_MAX_W / CAM_SCALE) * CAM_CHUNK_ROWS];
+static uint16_t s_out[CAM_MAX_W * CAM_CHUNK_ROWS * CAM_SCALE];
 #endif
 
 static bool     s_visible;       // is the window on the glass this pass
@@ -78,7 +104,7 @@ static bool     s_dirty;         // ask the shell for a redraw
 // THE REAL FIX is to move the fetch off the draw path entirely - a background
 // task that owns a strip buffer and blits under the display lock - which needs
 // the shell to hand out that lock and is a larger change than this app.
-#define CAM_PERIOD_MS 300
+#define CAM_PERIOD_MS 120
 
 static int      s_y;             // which strip comes next
 static uint32_t s_ok, s_fail;    // strips fetched, strips that failed
@@ -90,8 +116,10 @@ static char     s_note[64];      // what to say when there is nothing to show
 //
 // The shell calls this from its draw path, so the timeouts are short: a camera
 // that has gone away must cost a stutter, not a hung desktop.
+// sw is the width ARRIVING (half), dw the width DRAWN (full), rows the number
+// of screen rows this strip should fill.
 static int cam_stream(const char *host, const char *path,
-                      int w, int rows, int16_t dx, int16_t dy,
+                      int sw, int dw, int rows, int16_t dx, int16_t dy,
                       const eos_app_ctx_t *c)
 {
     (void)c;
@@ -116,7 +144,7 @@ static int cam_stream(const char *host, const char *path,
                      path, host);
     if (send(fd, req, (size_t)n, 0) != n) { close(fd); return -4; }
 
-    const size_t row_bytes   = (size_t)w * 2u;
+    const size_t row_bytes   = (size_t)sw * 2u;   /* a SOURCE row */
     const size_t chunk_bytes = row_bytes * CAM_CHUNK_ROWS;
     uint8_t *acc = (uint8_t *)s_chunk;
 
@@ -153,32 +181,67 @@ static int cam_stream(const char *host, const char *path,
             have += n2; src += n2; take -= n2;
 
             if (have == chunk_bytes) {
-                int cr = CAM_CHUNK_ROWS;
-                if (drawn + cr > rows) cr = rows - drawn;
-                eos_bitmap_t b = {
-                    .pixels = s_chunk, .w = (int16_t)w, .h = (int16_t)cr,
-                    .stride = (int16_t)row_bytes, .fmt = EOS_PIXFMT_RGB565,
-                    .key = EOS_COLOR_NONE, .tint = EOS_COLOR_NONE, .bg = EOS_COLOR_NONE,
-                };
-                eos_display_blit(dx, (int16_t)(dy + drawn), &b);
-                drawn += cr;
+                // Expand in place on the way out: each source row becomes
+                // CAM_SCALE rows, each source pixel CAM_SCALE pixels. Done here
+                // rather than asked of the camera because the wire is the
+                // expensive part - doubling on this side is a memcpy the CPU
+                // barely notices, while sending the big version costs four
+                // times the radio time and the shell's whole frame budget.
+                int srows = CAM_CHUNK_ROWS;
+                if (drawn + srows * CAM_SCALE > rows)
+                    srows = (rows - drawn) / CAM_SCALE;
+                if (srows > 0) {
+                    for (int sy = srows - 1; sy >= 0; sy--) {
+                        const uint16_t *sp = s_chunk + (size_t)sy * (size_t)sw;
+                        for (int k = CAM_SCALE - 1; k >= 0; k--) {
+                            uint16_t *dp = s_out + (size_t)(sy * CAM_SCALE + k) * (size_t)dw;
+                            for (int x = 0; x < sw; x++) {
+                                uint16_t v = sp[x];
+                                for (int j = 0; j < CAM_SCALE; j++)
+                                    dp[x * CAM_SCALE + j] = v;
+                            }
+                        }
+                    }
+                    eos_bitmap_t b = {
+                        .pixels = s_out, .w = (int16_t)dw,
+                        .h = (int16_t)(srows * CAM_SCALE),
+                        .stride = (int16_t)(dw * 2), .fmt = EOS_PIXFMT_RGB565,
+                        .key = EOS_COLOR_NONE, .tint = EOS_COLOR_NONE,
+                        .bg = EOS_COLOR_NONE,
+                    };
+                    eos_display_blit(dx, (int16_t)(dy + drawn), &b);
+                    drawn += srows * CAM_SCALE;
+                }
                 have = 0;
             }
         }
     }
 
-    // A partial tail: whole rows only, so a half-received row is dropped rather
-    // than drawn as garbage.
+    // A partial tail: whole SOURCE rows only, so a half-received row is dropped
+    // rather than drawn as noise.
     if (have >= row_bytes && drawn < rows) {
-        int cr = (int)(have / row_bytes);
-        if (drawn + cr > rows) cr = rows - drawn;
-        eos_bitmap_t b = {
-            .pixels = s_chunk, .w = (int16_t)w, .h = (int16_t)cr,
-            .stride = (int16_t)row_bytes, .fmt = EOS_PIXFMT_RGB565,
-            .key = EOS_COLOR_NONE, .tint = EOS_COLOR_NONE, .bg = EOS_COLOR_NONE,
-        };
-        eos_display_blit(dx, (int16_t)(dy + drawn), &b);
-        drawn += cr;
+        int srows = (int)(have / row_bytes);
+        if (drawn + srows * CAM_SCALE > rows) srows = (rows - drawn) / CAM_SCALE;
+        if (srows > 0) {
+            for (int sy = srows - 1; sy >= 0; sy--) {
+                const uint16_t *sp = s_chunk + (size_t)sy * (size_t)sw;
+                for (int k = CAM_SCALE - 1; k >= 0; k--) {
+                    uint16_t *dp = s_out + (size_t)(sy * CAM_SCALE + k) * (size_t)dw;
+                    for (int x = 0; x < sw; x++) {
+                        uint16_t v = sp[x];
+                        for (int j = 0; j < CAM_SCALE; j++) dp[x * CAM_SCALE + j] = v;
+                    }
+                }
+            }
+            eos_bitmap_t b = {
+                .pixels = s_out, .w = (int16_t)dw,
+                .h = (int16_t)(srows * CAM_SCALE),
+                .stride = (int16_t)(dw * 2), .fmt = EOS_PIXFMT_RGB565,
+                .key = EOS_COLOR_NONE, .tint = EOS_COLOR_NONE, .bg = EOS_COLOR_NONE,
+            };
+            eos_display_blit(dx, (int16_t)(dy + drawn), &b);
+            drawn += srows * CAM_SCALE;
+        }
     }
 
     close(fd);
@@ -194,10 +257,11 @@ static int cam_stream(const char *host, const char *path,
 // registry test no longer checks the row that ships, and that test exists
 // precisely to catch a table whose entries do not match its enum.
 static int cam_stream(const char *host, const char *path,
-                      int w, int rows, int16_t dx, int16_t dy,
+                      int sw, int dw, int rows, int16_t dx, int16_t dy,
                       const eos_app_ctx_t *c)
 {
-    (void)host; (void)path; (void)w; (void)rows; (void)dx; (void)dy; (void)c;
+    (void)host; (void)path; (void)sw; (void)dw; (void)rows;
+    (void)dx; (void)dy; (void)c;
     return 0;
 }
 #endif
@@ -249,27 +313,35 @@ void eos_app_draw_camera(const eos_app_ctx_t *c, eos_rect_t r)
     int h = r.h;
     if (w <= 0 || h <= 0) return;
 
+    // Everything below is in SCREEN rows; the wire carries half of each.
     int rows = CAM_STRIP_ROWS;
     if (s_y + rows > h) rows = h - s_y;
-    if (rows <= 0) { s_y = 0; rows = CAM_STRIP_ROWS > h ? h : CAM_STRIP_ROWS; }
+    rows = (rows / CAM_SCALE) * CAM_SCALE;      /* whole source rows only */
+    if (rows <= 0) { s_y = 0; return; }
 
-    // y == 0 is what makes the node capture a NEW frame; every other strip is
-    // sliced out of the one it is holding.
+    const int sw = w / CAM_SCALE;               /* what we ask for */
+    const int sh = h / CAM_SCALE;
+    const int sy = s_y / CAM_SCALE;
+    const int srows = rows / CAM_SCALE;
+    if (sw <= 0 || sh <= 0) return;
+
+    // y == 0 is what makes the node capture a NEW frame; every later strip is
+    // sliced out of the one it is holding, so all of them agree.
     char path[128];
     snprintf(path, sizeof path,
-             "/api/cam/frame?w=%d&h=%d&rotate=90&y=%d&rows=%d", w, h, s_y, rows);
+             "/api/cam/frame?w=%d&h=%d&rotate=90&y=%d&rows=%d", sw, sh, sy, srows);
 
-    int drawn = cam_stream(host, path, w, rows, r.x, (int16_t)(r.y + s_y), c);
+    int drawn = cam_stream(host, path, sw, w, rows, r.x, (int16_t)(r.y + s_y), c);
 
-    if (drawn == rows) {
+    if (drawn > 0) {
         s_ok++;
-        s_y += rows;
-        if (s_y >= h) s_y = 0;          // wrap: start the next picture
+        s_y += drawn;
+        if (s_y >= h - (CAM_SCALE - 1)) s_y = 0;   // wrap: next picture
         s_note[0] = 0;
     } else {
         s_fail++;
-        s_y = 0;                        // start clean rather than half a picture
-        snprintf(s_note, sizeof s_note, "no frame (%d)", drawn);
+        s_y = 0;
+        snprintf(s_note, sizeof s_note, "no frame");
     }
 
     if (s_note[0] && r.h >= lh)
