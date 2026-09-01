@@ -56,6 +56,9 @@ static const eos_app_t APPS[EOS_APP_COUNT] = {
 
     { "party", "party", "the demo: Pip dancing, the LED cycling, the colours moving",
       0, eos_app_draw_party,    eos_app_party_key },
+
+    { "camera", "camera", "a viewfinder onto a penguinOS camera node",
+      0, eos_app_draw_camera,   NULL },
 };
 
 // ============================================================ the lookups

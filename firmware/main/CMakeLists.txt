@@ -20,6 +20,7 @@ idf_component_register(
         "eos_shell_draw.c"
         "eos_app_registry.c"
         "eos_app_basic.c"
+    "eos_app_camera.c"
         "eos_app_chat.c"
         "eos_app_files.c"
         "eos_app_media.c"

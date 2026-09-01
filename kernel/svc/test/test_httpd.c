@@ -993,6 +993,25 @@ static void test_routes(void)
         { "GET",  "/Generate_204",              EOS_ROUTE_CAPTIVE,      "probes match case-insensitively" },
         { "GET",  "/generate_204?x=1",          EOS_ROUTE_CAPTIVE,      "a probe with a query" },
         { "GET",  "/generate_205",              EOS_ROUTE_STATIC,       "a near miss is not a probe" },
+
+        /* A camera node - a screenless board running these same services and
+           serving frames instead of a desktop. On a board with no sensor these
+           routes still RESOLVE and then answer 501, which says "this image
+           cannot do that" rather than 404's "no such thing". Only the first is
+           true, and the difference is what someone debugging will act on. */
+        { "GET",  "/api/cam/status",            EOS_ROUTE_CAM_STATUS,   "camera status" },
+        { "GET",  "/api/cam/frame",             EOS_ROUTE_CAM_FRAME,    "a raw RGB565 frame" },
+        { "GET",  "/api/cam/snap",              EOS_ROUTE_CAM_SNAP,     "the same frame as jpeg" },
+        { "GET",  "/api/cam/frame?w=240&h=320", EOS_ROUTE_CAM_FRAME,    "a frame request carries its size in the query" },
+        /* METHOD, not NONE: the router knows this path and only the verb is
+           wrong, so it can answer 405 instead of 404. "you asked the wrong
+           way" is a different problem from "there is no such thing", and the
+           router keeps them apart. */
+        { "POST", "/api/cam/frame",             EOS_ROUTE_METHOD,       "a frame is fetched, not posted - 405, not 404" },
+        /* NONE, not STATIC: anything unmatched under /api/ is a 404 rather
+           than falling through to the file handler. /api/ is a namespace, and
+           a typo there must not be answered with a web page. */
+        { "GET",  "/api/cam/framed",            EOS_ROUTE_NONE,         "a near miss under /api/ is a 404, not a static file" },
     };
 
     for (size_t i = 0; i < sizeof T / sizeof T[0]; i++) {
