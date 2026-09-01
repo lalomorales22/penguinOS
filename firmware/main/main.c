@@ -358,12 +358,40 @@ static void apply_autostart(const char *id)
     // today, so this fixed nothing visible and closed the one seam left where
     // the app list existed twice.
     i = eos_app_index_of(id);
-    if (i >= 0 && i < EOS_APP_COUNT && win_of[i] >= 0) {
+    if (i < 0 || i >= EOS_APP_COUNT) {
+        ESP_LOGW(TAG, "start  sys.autostart \"%s\" is not an app id", id);
+        return;
+    }
+
+    // Focus it if a window already has it. open_startup_windows() opens a fixed
+    // set, so most apps do.
+    if (win_of[i] >= 0) {
         eos_wm_focus_win(&wm, win_of[i]);
         ESP_LOGI(TAG, "start  autostart focuses \"%s\" (window %d)", id, win_of[i]);
         return;
     }
-    ESP_LOGW(TAG, "start  sys.autostart \"%s\" names no window on this board", id);
+
+    // Otherwise OPEN one. A setting called autostart that silently does nothing
+    // for an app outside the boot set is a setting that lies: the page offers
+    // every id from /api/apps and the board accepted this one, so refusing it
+    // here leaves the store and the screen disagreeing with nothing to say so.
+    //
+    // This is how the camera app is reachable at all on a board with no
+    // keyboard paired - the launcher is super+space, and a board nobody can
+    // type at cannot open a window any other way.
+    {
+        // The same rect open_startup_windows() uses; the window manager lays
+        // out against the whole screen and splits from there.
+        eos_rect_t scr = eos_board_screen(eos_board_get());
+        int w = eos_wm_open(&wm, (uint16_t)i, scr);
+        if (w >= 0) {
+            win_of[i] = w;
+            eos_wm_focus_win(&wm, w);
+            ESP_LOGI(TAG, "start  autostart opened \"%s\" (window %d)", id, w);
+            return;
+        }
+    }
+    ESP_LOGW(TAG, "start  sys.autostart \"%s\": no window free to open it", id);
 }
 
 // Everything in the bar that changes while the board sits there. The clock is
