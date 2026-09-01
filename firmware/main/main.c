@@ -386,8 +386,28 @@ static void apply_autostart(const char *id)
         int w = eos_wm_open(&wm, (uint16_t)i, scr);
         if (w >= 0) {
             win_of[i] = w;
+
+            // Give it a workspace of its own. sys.autostart names the ONE thing
+            // the owner wants to be looking at, and opening it beside the ten
+            // windows the boot set already made is not that: on a 240x320 panel
+            // an eleventh tile is about 113x47, which is too small to read and
+            // too small to be a viewfinder. The camera app measured exactly
+            // that before this existed.
+            //
+            // An empty workspace makes it the only window, so the layout gives
+            // it the whole screen.
+            int ws;
+            for (ws = 0; ws < EOS_WORKSPACES; ws++)
+                if (wm.root[ws] < 0) break;
+            if (ws < EOS_WORKSPACES && eos_wm_move_to_workspace(&wm, w, ws)) {
+                eos_wm_goto_workspace(&wm, ws);
+                ESP_LOGI(TAG, "start  autostart opened \"%s\" alone on workspace %d",
+                         id, ws + 1);
+            } else {
+                ESP_LOGI(TAG, "start  autostart opened \"%s\" (window %d); no free "
+                              "workspace, so it shares this one", id, w);
+            }
             eos_wm_focus_win(&wm, w);
-            ESP_LOGI(TAG, "start  autostart opened \"%s\" (window %d)", id, w);
             return;
         }
     }
