@@ -174,7 +174,26 @@ int eos_cam_frame_rgb565(uint16_t *dst, int w, int h, int rotate)
             }
             if (sx < 0) sx = 0; else if (sx >= sw) sx = sw - 1;
             if (sy < 0) sy = 0; else if (sy >= sh) sy = sh - 1;
-            row[dx] = src[(size_t)sy * (size_t)sw + (size_t)sx];
+            // BYTE-SWAPPED ON THE WAY OUT, and this is not optional.
+            //
+            // esp32-camera hands back RGB565 in BIG-endian order - high byte
+            // first - while penguinOS's blit assumes a little-endian source and
+            // swaps it for the panel. Sending the sensor's bytes untouched
+            // means they get swapped a SECOND time, and every pixel's channels
+            // are shredded: reds come out yellow, greens come out wrong, and it
+            // reads as a broken camera rather than a byte-order mistake.
+            //
+            // MEASURED rather than reasoned: a photograph has smooth
+            // neighbouring pixels, and reading one frame the wrong way round
+            // produced 929 wild red-channel jumps against 90 the right way.
+            // Ten to one is not a judgement call.
+            //
+            // Swapping HERE rather than on the consumer is deliberate: this
+            // board has 8MB of PSRAM and a spare core, the consumer has 29KB
+            // and is already blocking its shell on the fetch, and the blit is
+            // shared code every board uses.
+            uint16_t v = src[(size_t)sy * (size_t)sw + (size_t)sx];
+            row[dx] = (uint16_t)((v >> 8) | (v << 8));
         }
     }
 

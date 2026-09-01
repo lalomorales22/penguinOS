@@ -186,6 +186,11 @@ void eos_app_tick(const eos_shell_view_t *v, uint32_t now_ms)
     // both back when it is not, which is why it is told rather than asked.
     eos_app_party_tick(vis[EOS_APP_PARTY], now_ms, s_buddy);
 
+    // The camera fetches from another board over the network, and does it
+    // inside its draw call - so it is told whether anyone is looking before
+    // it asks for the redraw that triggers the fetch.
+    eos_app_camera_tick(vis[EOS_APP_CAMERA], now_ms);
+
     // And the light, once, after both windows have had their say. It writes
     // nothing when the colour has not moved, so a SOLID effect costs one
     // comparison per pass and no RMT traffic at all.
@@ -206,6 +211,7 @@ bool eos_app_damage(const eos_shell_view_t *v)
     if (eos_app_files_take_dirty() && eos_shell_damage_app(v, EOS_APP_FILES)) any = true;
     if (eos_app_media_take_dirty() && eos_shell_damage_app(v, EOS_APP_MEDIA)) any = true;
     if (eos_app_party_active()     && eos_shell_damage_app(v, EOS_APP_PARTY)) any = true;
+    if (eos_app_camera_take_dirty() && eos_shell_damage_app(v, EOS_APP_CAMERA)) any = true;
     return any;
 }
 

@@ -60,6 +60,26 @@
 static uint16_t s_chunk[CAM_MAX_W * CAM_CHUNK_ROWS];
 #endif
 
+static bool     s_visible;       // is the window on the glass this pass
+static uint32_t s_next_ms;       // when the next strip may be fetched
+static bool     s_dirty;         // ask the shell for a redraw
+
+// How often a strip may be fetched, and the honest cost of this design.
+//
+// The fetch happens INSIDE the draw call, because that is the only place an app
+// is allowed to put pixels on the glass. Each strip is about 90ms of blocking
+// network, so the shell loses that time whenever a camera window is on screen -
+// which is why the desktop feels heavy while it is open.
+//
+// 300ms is a compromise, not a fix: the shell keeps roughly two thirds of its
+// time and a full picture lands in about two and a half seconds. Lower it for a
+// livelier viewfinder and a heavier desktop; raise it for the reverse.
+//
+// THE REAL FIX is to move the fetch off the draw path entirely - a background
+// task that owns a strip buffer and blits under the display lock - which needs
+// the shell to hand out that lock and is a larger change than this app.
+#define CAM_PERIOD_MS 300
+
 static int      s_y;             // which strip comes next
 static uint32_t s_ok, s_fail;    // strips fetched, strips that failed
 static char     s_note[64];      // what to say when there is nothing to show
@@ -181,6 +201,26 @@ static int cam_stream(const char *host, const char *path,
     return 0;
 }
 #endif
+
+// Told once per pass whether the window is on the glass. A camera that kept
+// fetching behind a tab would spend the board's radio time on pixels nobody is
+// looking at - the same reason the files app only scans while visible.
+void eos_app_camera_tick(bool visible, uint32_t now_ms)
+{
+    s_visible = visible;
+    if (!visible) { s_y = 0; return; }   // start at the top when it comes back
+    if ((int32_t)(now_ms - s_next_ms) >= 0) {
+        s_next_ms = now_ms + CAM_PERIOD_MS;
+        s_dirty = true;
+    }
+}
+
+bool eos_app_camera_take_dirty(void)
+{
+    bool d = s_dirty;
+    s_dirty = false;
+    return d;
+}
 
 void eos_app_draw_camera(const eos_app_ctx_t *c, eos_rect_t r)
 {
