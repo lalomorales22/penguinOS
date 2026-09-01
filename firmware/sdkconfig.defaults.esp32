@@ -45,8 +45,25 @@ CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
+# AMPDU RX BACK ON, and the reasoning that turned it off was right at the time
+# and wrong now. It was disabled to free memory when this board's whole job was
+# a 2.7 KB setup page and a keyboard, where aggregation buys nothing.
+#
+# The camera app changed that. MEASURED with it off: a 33 KB picture took 2,200
+# ms of socket reads on this board against 146 ms for the same request from a
+# laptop, while the pixel work - expanding and blitting - cost ONE millisecond.
+# Aggregation is what makes bulk receive fast, and this board now does bulk
+# receive.
+#
+# TX stays off: this board sends requests measured in bytes and replies measured
+# in kilobytes, so TX aggregation would cost memory for nothing.
 CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n
-CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+
+# A bigger receive window, for the same reason. The default 5,744 bytes means
+# the sender stalls waiting for acknowledgements several times per picture.
+CONFIG_LWIP_TCP_WND_DEFAULT=11440
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 CONFIG_ESP_WIFI_NVS_ENABLED=n
 
 # lwIP's socket table is per-socket state, and 10 is more than this board will

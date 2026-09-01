@@ -39,15 +39,6 @@
 // How many rows are FETCHED per draw call. Measured: a request costs a fixed
 // ~65ms regardless of size, so 16-row strips spend 1.55s per picture on
 // connection setup alone while 40-row strips take 0.75s.
-// SCREEN rows per request. Raised from 40 once the picture went to half
-// resolution: a strip that used to be 18,560 bytes is now 4,640, so four times
-// as many rows fit in the same transfer. That matters more than the bytes -
-// each request costs a FIXED ~65ms of connection setup regardless of size, so
-// halving the request count halves the dominant cost.
-//
-//   40 screen rows, full size   8 requests, ~134 KB, about 2.4s a picture
-//  160 screen rows, half size   2 requests,  ~33 KB, well under a second
-#define CAM_STRIP_ROWS 160
 #define CAM_MAX_W      240
 
 // How many rows are HELD AT ONCE, which is a different question and much
@@ -106,7 +97,6 @@ static bool     s_dirty;         // ask the shell for a redraw
 // the shell to hand out that lock and is a larger change than this app.
 #define CAM_PERIOD_MS 120
 
-static int      s_y;             // which strip comes next
 static uint32_t s_ok, s_fail;    // strips fetched, strips that failed
 static char     s_note[64];      // what to say when there is nothing to show
 
@@ -151,6 +141,11 @@ static int cam_stream(const char *host, const char *path,
     size_t have = 0;          // bytes in the chunk buffer
     int    drawn = 0;         // rows blitted so far
     int    hdr_done = 0;
+    // Small, and on the stack. An MSS-sized static buffer was tried here and
+    // the link failed by 1,416 bytes - almost exactly its 1,460 - on a board
+    // with 29 KB to its name. It was speculative anyway: the timing said the
+    // 2.2 s was the Wi-Fi stack, not the number of recv() calls, so buying
+    // fewer-and-larger reads with BSS was paying for the wrong thing.
     uint8_t rb[512];
     int match = 0;            // how much of CRLFCRLF has been seen
 
@@ -272,7 +267,7 @@ static int cam_stream(const char *host, const char *path,
 void eos_app_camera_tick(bool visible, uint32_t now_ms)
 {
     s_visible = visible;
-    if (!visible) { s_y = 0; return; }   // start at the top when it comes back
+    if (!visible) return;
     if ((int32_t)(now_ms - s_next_ms) >= 0) {
         s_next_ms = now_ms + CAM_PERIOD_MS;
         s_dirty = true;
@@ -313,34 +308,44 @@ void eos_app_draw_camera(const eos_app_ctx_t *c, eos_rect_t r)
     int h = r.h;
     if (w <= 0 || h <= 0) return;
 
-    // Everything below is in SCREEN rows; the wire carries half of each.
-    int rows = CAM_STRIP_ROWS;
-    if (s_y + rows > h) rows = h - s_y;
-    rows = (rows / CAM_SCALE) * CAM_SCALE;      /* whole source rows only */
-    if (rows <= 0) { s_y = 0; return; }
-
-    const int sw = w / CAM_SCALE;               /* what we ask for */
-    const int sh = h / CAM_SCALE;
-    const int sy = s_y / CAM_SCALE;
-    const int srows = rows / CAM_SCALE;
+    // THE WHOLE PICTURE, EVERY DRAW. Not a strip.
+    //
+    // eos_shell_draw.c fills the tile with the theme's surface colour before it
+    // calls an app's draw (the eos_display_fill just above app->draw), so
+    // whatever an app does not paint this pass is background. Painting one strip
+    // per draw therefore did not accumulate into an image - it showed one live
+    // band over a wiped tile, and the band moving down read as black bars
+    // sweeping across a picture that was visibly there behind them.
+    //
+    // Incremental painting cannot work against that contract. It does not need
+    // to any more: at half resolution the whole picture is about 33 KB, which is
+    // one request rather than the eight the full-size version needed. The board
+    // still never HOLDS it - the response is streamed in 4-row chunks and
+    // expanded on the way to the panel, about 4.6 KB of buffer for a 33 KB
+    // picture covering a 232x289 tile.
+    //
+    // The cost is honest: one draw call now carries the whole transfer, so the
+    // shell gives up roughly a third of a second whenever this window is on
+    // screen. A correct picture at three or four frames a second beats a fast
+    // wipe.
+    const int sw = w / CAM_SCALE;
+    // Rounded UP so the doubled height covers the tile. Rounding down left the
+    // final row unpainted, which is a hairline of surface colour along the
+    // bottom edge - visible on a dark theme and easy to mistake for a border.
+    const int sh = (h + CAM_SCALE - 1) / CAM_SCALE;
     if (sw <= 0 || sh <= 0) return;
 
-    // y == 0 is what makes the node capture a NEW frame; every later strip is
-    // sliced out of the one it is holding, so all of them agree.
     char path[128];
     snprintf(path, sizeof path,
-             "/api/cam/frame?w=%d&h=%d&rotate=90&y=%d&rows=%d", sw, sh, sy, srows);
+             "/api/cam/frame?w=%d&h=%d&rotate=270&y=0&rows=0", sw, sh);
 
-    int drawn = cam_stream(host, path, sw, w, rows, r.x, (int16_t)(r.y + s_y), c);
+    int drawn = cam_stream(host, path, sw, w, h, r.x, r.y, c);
 
     if (drawn > 0) {
         s_ok++;
-        s_y += drawn;
-        if (s_y >= h - (CAM_SCALE - 1)) s_y = 0;   // wrap: next picture
         s_note[0] = 0;
     } else {
         s_fail++;
-        s_y = 0;
         snprintf(s_note, sizeof s_note, "no frame");
     }
 

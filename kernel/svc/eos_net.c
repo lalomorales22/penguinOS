@@ -996,6 +996,35 @@ static esp_err_t net_ensure_started(void)
     if (s_started) return ESP_OK;
     err = esp_wifi_start();
     if (err != ESP_OK) return err;
+
+    // POWER SAVE OFF, and this is the single biggest throughput knob on the
+    // whole board.
+    //
+    // IDF defaults to WIFI_PS_MIN_MODEM, which parks the radio between beacons
+    // and wakes it on a listen interval. The boot log spells out the cost:
+    //
+    //     wifi:pm start, type: 1
+    //     wifi:dp: 1, bi: 102400, li: 3, scale listen interval ... 307200 us
+    //
+    // 307 ms. The AP buffers anything that arrives while the radio is parked,
+    // so every TCP round trip can pay a third of a second, and a transfer that
+    // needs a handful of them pays it a handful of times.
+    //
+    // MEASURED on the camera viewfinder, which is the first thing penguinOS
+    // ever asked to receive in bulk: 33 KB took 2,200-3,800 ms on the board
+    // against 146 ms for the identical request from a laptop, while the pixel
+    // work either side of the socket cost ONE millisecond. Enabling AMPDU
+    // aggregation first changed nothing - block-ack sessions were negotiated
+    // and the rate stayed at 0.39 fps - which is what ruled the radio's duty
+    // cycle in and everything else out.
+    //
+    // The trade is real: the radio now stays awake, which costs battery on a
+    // board that may be running off a LiPo. It is the right default anyway,
+    // because a board with a screen is a board someone is looking at, and
+    // every interactive path here - the chat stream, the web UI, the camera -
+    // is a latency path rather than a throughput-at-any-cost one.
+    (void)esp_wifi_set_ps(WIFI_PS_NONE);
+
     s_started = true;
     return ESP_OK;
 }
