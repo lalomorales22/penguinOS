@@ -1273,7 +1273,7 @@ static const struct { const char *word; const char *help; } CMDS[] = {
     { "reboot", "restart the board in half a second"         },
     { "theme",  "the theme the OS is wearing"                },
     { "wifi",   "the network, address and signal"            },
-    { "brain",  "the megabrain host and model"               },
+    { "brain",  "the brain host and model"               },
 };
 #define N_CMDS ((int)(sizeof CMDS / sizeof CMDS[0]))
 

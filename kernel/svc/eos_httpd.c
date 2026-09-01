@@ -1666,11 +1666,11 @@ static int h_brain_status(eos_httpd_t *h, eos_httpd_resp_t *r)
     eos_json_t j;
 
     if (!h->ports.brain_status)
-        return fail_err(h, r, -7, "this board has no megabrain client");
+        return fail_err(h, r, -7, "this board has no brain client");
 
     memset(&b, 0, sizeof b);
     if (!h->ports.brain_status(h->ctx, &b))
-        return fail_err(h, r, -3, "the megabrain client did not answer");
+        return fail_err(h, r, -3, "the brain client did not answer");
 
     eos_json_init(&j, h->resp, (int)sizeof h->resp);
     eos_json_obj_open(&j);
@@ -1709,7 +1709,7 @@ static int h_brain_ask(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     int n = 0, e;
 
     if (!h->ports.brain_ask || !h->ports.brain_read)
-        return fail_err(h, r, -7, "this board has no megabrain client");
+        return fail_err(h, r, -7, "this board has no brain client");
     if (req->body_truncated)
         return fail_err(h, r, -9, "the question is larger than this board accepts");
     if (!req->body || req->body_len <= 0)
@@ -1749,7 +1749,7 @@ static int h_brain_ask(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     e = h->ports.brain_ask(h->ctx, &ask);
     if (e < 0)
         return fail_err(h, r, e, e == -8
-            ? "megabrain is already answering something; stop that first"
+            ? "the brain is already answering something; stop that first"
             : "the question could not be sent");
 
     // From here the response is 200 and everything else is text. An error the
@@ -1772,7 +1772,7 @@ static int h_brain_cancel(eos_httpd_t *h, eos_httpd_resp_t *r)
     bool had;
 
     if (!h->ports.brain_cancel)
-        return fail_err(h, r, -7, "this board has no megabrain client");
+        return fail_err(h, r, -7, "this board has no brain client");
 
     // Never an error. Cancelling nothing is the normal outcome of a stop button
     // pressed a moment after the reply finished, and a 409 there would make the
@@ -2627,7 +2627,7 @@ static void stream_bang(httpd_req_t *rq, const char *why, bool sent_any)
 {
     char line[128];
     int n = snprintf(line, sizeof line, "%s! %s\n", sent_any ? "\n" : "",
-                     why ? why : "megabrain stopped answering");
+                     why ? why : "the brain stopped answering");
     if (n > 0) (void)httpd_resp_send_chunk(rq, line, (size_t)n);
 }
 
@@ -2671,12 +2671,12 @@ static esp_err_t send_stream(httpd_req_t *rq, eos_httpd_t *h)
         // stopped talking must not hold a worker for the length of a session.
         if ((ms_now() - t_last) >= EOS_HTTPD_STREAM_IDLE_MS) {
             if (h->ports.brain_cancel) h->ports.brain_cancel(h->ctx);
-            stream_bang(rq, "megabrain went quiet", sent_any);
+            stream_bang(rq, "the brain went quiet", sent_any);
             break;
         }
         if ((ms_now() - t0) >= EOS_HTTPD_STREAM_TOTAL_MS) {
             if (h->ports.brain_cancel) h->ports.brain_cancel(h->ctx);
-            stream_bang(rq, "megabrain took too long", sent_any);
+            stream_bang(rq, "the brain took too long", sent_any);
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(EOS_HTTPD_STREAM_POLL_MS));

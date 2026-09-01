@@ -35,13 +35,13 @@ static const eos_app_t APPS[EOS_APP_COUNT] = {
     { "keys",  "keys",  "the compiled-in keymap",
       0, eos_app_draw_keys,     NULL },
 
-    { "buddy", "buddy", "Pip, and the mood megabrain has put him in",
+    { "buddy", "buddy", "Pip, and the mood the brain has put him in",
       0, eos_app_draw_buddy,    NULL },
 
-    { "chat",  "chat",  "ask megabrain, and watch the reply arrive",
+    { "chat",  "chat",  "ask the brain, and watch the reply arrive",
       0, eos_app_draw_chat,     eos_app_chat_key },
 
-    { "settings", "settings", "theme, brightness, board and megabrain. read-only here.",
+    { "settings", "settings", "theme, brightness, board and brain. read-only here.",
       0, eos_app_draw_settings, NULL },
 
     { "files", "files", "browse the internal filesystem. read-only here.",

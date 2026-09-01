@@ -270,7 +270,7 @@ static void on_done(void *user, eos_brain_err_t err)
         ev_push(EOS_BUDDY_EV_STREAM_DONE);
     } else {
         settle(CH_FAIL);
-        snprintf(B.err, sizeof B.err, "megabrain: %s", eos_brain_err_name(err));
+        snprintf(B.err, sizeof B.err, "brain: %s", eos_brain_err_name(err));
         ev_push(EOS_BUDDY_EV_ERROR);
     }
     unlock();
@@ -287,9 +287,9 @@ static void on_event(void *user, const eos_brain_evt_t *e)
     case EOS_BRAIN_EV_TOKEN:        ev_push(EOS_BUDDY_EV_STREAM_CHUNK); break;
     case EOS_BRAIN_EV_LINK:
         if (e->link == EOS_BRAIN_LINK_UP)
-            ESP_LOGI(TAG, "link   megabrain answers at %s", e->host ? e->host : "?");
+            ESP_LOGI(TAG, "link   the brain answers at %s", e->host ? e->host : "?");
         else if (e->link == EOS_BRAIN_LINK_DOWN)
-            ESP_LOGW(TAG, "link   no megabrain on this network");
+            ESP_LOGW(TAG, "link   no brain on this network");
         break;
     default: break;
     }
@@ -449,7 +449,7 @@ static void do_submit(void)
     // the channel. Fail it here with the same vocabulary the stream uses.
     lock();
     settle(CH_FAIL);
-    snprintf(B.err, sizeof B.err, "megabrain: %s",
+    snprintf(B.err, sizeof B.err, "brain: %s",
              eos_brain_err_name((eos_brain_err_t)(-rc)));
     ev_push(EOS_BUDDY_EV_ERROR);
     unlock();

@@ -139,6 +139,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             sent = 0
             thought = 0
+            pend, buffered = [], 0
             with urllib.request.urlopen(post, timeout=ARGS.timeout) as r:
                 for line in r:
                     line = line.strip()
@@ -156,9 +157,31 @@ class Handler(BaseHTTPRequestHandler):
                     piece = obj.get("response", "")
                     if piece:
                         sent += len(piece)
-                        self._chunk(piece.encode("utf-8"))
+                        # COALESCED, not one chunk per token. Ollama emits a
+                        # JSON line per token, and forwarding each one as its
+                        # own HTTP chunk put 1- and 2-byte chunks on the wire:
+                        #
+                        #   1\r\n0\r\n1\r\n%\r\n2\r\n C\r\n1\r\n,\r\n
+                        #
+                        # roughly a hundred chunks for a one-line answer, each
+                        # its own little write. The board is an ESP32 on Wi-Fi
+                        # at the far end of that, and it has to stay ahead of
+                        # an idle deadline while decoding them.
+                        #
+                        # Flushed on a size threshold and on the sentence
+                        # endings a reader would notice, so the reply still
+                        # arrives progressively on the glass rather than in
+                        # one lump at the end.
+                        pend.append(piece)
+                        buffered += len(piece)
+                        if buffered >= FLUSH_BYTES or piece[-1:] in ".!?\n":
+                            self._chunk("".join(pend).encode("utf-8"))
+                            pend, buffered = [], 0
                     if obj.get("done"):
                         break
+            if pend:
+                self._chunk("".join(pend).encode("utf-8"))
+                pend, buffered = [], 0
             # Say WHY nothing came back, rather than leaving a blank reply that
             # looks like a bug in the board.
             if sent == 0:
@@ -184,6 +207,12 @@ class Handler(BaseHTTPRequestHandler):
     def _chunk(self, raw):
         self.wfile.write(b"%x\r\n" % len(raw) + raw + b"\r\n")
         self.wfile.flush()
+
+
+# How much answer to gather before putting it on the wire. Small enough that
+# the reply still visibly streams onto the panel, large enough that a short
+# answer is a handful of chunks rather than a hundred.
+FLUSH_BYTES = 48
 
 
 def main():

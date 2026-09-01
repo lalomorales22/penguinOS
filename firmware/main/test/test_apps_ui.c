@@ -277,7 +277,9 @@ static void test_api(void)
         snprintf(want, sizeof want, "\"id\":\"%s\"", eos_app_at(i)->id);
         ck(strstr(BODY, want) != NULL, "each id from the table is in the JSON");
     }
-    ck(strstr(BODY, "megabrain") != NULL, "and the summaries come with them");
+    for (i = 0; i < n; i++)
+        ck(strstr(BODY, eos_app_at(i)->summary) != NULL,
+           "and every summary from the table comes with them");
     ck(strstr(BODY, "\"summary\":null") == NULL, "with no empty summary anywhere");
 }
 

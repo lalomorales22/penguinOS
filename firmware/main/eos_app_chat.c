@@ -250,7 +250,7 @@ static void chat_send(const char *q)
 
     if (!q || !q[0]) return;
     if (!H || !H->ports.brain_ask) {
-        log_add("\n[no megabrain client on this board]\n", -1);
+        log_add("\n[no brain client on this board]\n", -1);
         C.st = CHAT_FAILED;
         return;
     }
@@ -433,7 +433,7 @@ void eos_app_draw_chat(const eos_app_ctx_t *c, eos_rect_t r)
     (void)wrap(c->ui, r.w, &total, &first);
 
     if (C.len == 0) {
-        eos_app_text(r.x, r.y, c->ui, c->muted, "ask megabrain something.", r.w);
+        eos_app_text(r.x, r.y, c->ui, c->muted, "ask the brain something.", r.w);
         eos_app_text(r.x, (int16_t)(r.y + line_h), c->ui, c->muted,
                      "up/down picks, enter asks.", r.w);
     } else {
