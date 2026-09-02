@@ -68,11 +68,11 @@
     "col_offset": 0,
     "row_offset": 0,
     "invert": false,
-    "byte_swap": false,
-    "byte_swap_reason": "PROBED, NOT YET CONFIRMED UNDER penguinOS. The prober drew red, green, blue, white and the panel returned BLUE, GREEN, RED, white - green and white unmoved, so a channel swap rather than any kind of flip. On the four-way table that is no-swap + BGR. The caveat that applies to mirror_x applies here too: the prober drives this panel through Arduino_GFX, whose init sets its own MADCTL, so this must be re-checked with the three-primary test once penguinOS owns the panel.",
+    "byte_swap": true,
+    "byte_swap_reason": "VERIFIED true, and the instrument was the BACKGROUND, not a primary. cyd-amber declares bg as 38,38,36 - a near-black warm grey - and the panel came up vivid green. Grey is the ideal probe for byte order precisely because it is invariant under a red/blue swap: R, G and B are equal, so channel order cannot move it, and anything that DOES move it must be byte order. The arithmetic is unambiguous - (38,38,36) is 0x2124, and only the byte-swapped reading 0x2421 decodes to a green (32,133,8); every channel-order reading of the unswapped value stays grey. Corroborated by the title bar, which is filled with accent (216,142,86, orange) and rendered blue - the same swapped-byte decode - and which returns to (222,141,82) once the byte order is corrected. NOTE that the prober said the opposite (no-swap + BGR) and was wrong to, exactly as its own caveat warned: it drives this panel through Arduino_GFX, which does its own byte handling, so its colour result never transferred to esp_lcd. color_order stays bgr - with the byte order corrected the observed decode is already RGB-correct, so the two faults were one fault.",
     "mirror_x": false,
-    "mirror_y": false,
-    "mirror_reason": "UNVERIFIED, and expected to need changing on first light. The prober cannot settle handedness on this board: Arduino_GFX offers only the four rotations and never calls a mirror, so every pass came out wrong in a way no rotation can fix - rotation 0 gave an F upside down AND backwards (a 180 turn), rotation 1 gave it backwards (mirrored in X) and rotation 3 gave it upside down (mirrored in Y). rot1 and rot3 being 180 apart makes those two results consistent with each other and with a panel whose scan direction is flipped from what the library assumes. This is the same trap cyd-2432s024n documents: a probe that omits a call is not testing the configuration an OS makes with default arguments. Set from a QR code or an F drawn by penguinOS itself, not from the prober.",
+    "mirror_y": true,
+    "mirror_reason": "VERIFIED true on Y, from the setup screen penguinOS draws itself - the only instrument that works here, for the reason cyd-2432s024n already records: the Arduino prober never calls esp_lcd_panel_mirror, so it cannot test the configuration an OS makes with default arguments. Its passes came out backwards (rot1) or upside down (rot3), 180 apart and neither correctable by rotation. WHAT SETTLED IT was word ORDER, not glyph shape: on the mirrored setup screen the line \"scan the code, then open the page\" still read left to right in the right sequence, with only the letterforms flipped. A mirror in X reverses the order of the words too; a mirror in Y does not. The two are therefore separable by reading a sentence, with no need to judge which way round a single letter is - which matters, because judging single flipped glyphs is exactly what produced three contradictory readings from the prober.",
     "invert_reason": "VERIFIED false. Inversion never had to be guessed at here: the three-primary test returned saturated primaries in a recognisable permutation, and an inverting panel would have returned their complements - cyan, yellow, magenta - which is not a result anyone can mistake for red, blue and green.",
     "offset_reason": "VERIFIED zero. A 240-wide fill reached both edges with no shear and no black column, and the row-count test placed row 0 at the top of the glass."
   },
@@ -205,10 +205,6 @@
     "usb_serial": "8C:94:DF:50:02:94"
   },
   "unverified": [
-    "display.mirror_x",
-    "display.mirror_y",
-    "display.byte_swap",
-    "display.color_order",
     "display.clock_hz",
     "inputs.touch.present",
     "peripherals.sdcard.present",
@@ -227,16 +223,16 @@
       "text": "Do NOT reach for wavvy-ili9488-40 because the glass is also 4.0in and also 320x480. That profile is a bare panel hand-wired to a devkit and drives the panel on sck 18 / mosi 23 / cs 5 - which on THIS board is the SPI header and the microSD. Flashing it here drives the card lines and leaves the glass dark. This board is on the CYD set: 14/13/12/2/15 with the backlight on 27."
     },
     {
-      "id": "handedness-unproven",
-      "severity": "critical",
+      "id": "handedness-is-mirror-y",
+      "severity": "note",
       "field": "display.mirror_x",
-      "text": "Expect the first boot to come up mirrored. The panel prober could not settle this: Arduino_GFX offers four rotations and never calls a mirror, so its passes came out backwards or upside down in ways no rotation can fix. Set mirror_x/mirror_y from something asymmetric drawn by penguinOS - the setup QR code is the honest test, because a QR nobody can scan is the failure mode."
+      "text": "Settled: this panel needs mirror_y, not mirror_x. Reached by reading WORD ORDER on the setup screen rather than glyph shape - X reverses the order of words, Y does not - after the prober gave three contradictory readings from single flipped letters."
     },
     {
-      "id": "colour-probed-through-another-library",
-      "severity": "high",
+      "id": "colour-settled-on-grey",
+      "severity": "note",
       "field": "display.byte_swap",
-      "text": "color_order and byte_swap came from the prober, which drives the panel through Arduino_GFX and its own MADCTL. The bars returned BLUE, GREEN, RED against RED, GREEN, BLUE drawn, which is no-swap + BGR on the four-way table. Re-run the three-primary test under penguinOS before trusting it: byte order and channel order are not separable with one colour."
+      "text": "byte_swap is true and was settled on the THEME BACKGROUND, not on a primary: grey is invariant under a red/blue swap, so a grey that turns green indicts byte order and nothing else. The prober had said no-swap and was wrong - it drives the panel through Arduino_GFX, not esp_lcd."
     },
     {
       "id": "touch-pins-contested",
