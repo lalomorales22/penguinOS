@@ -2461,7 +2461,7 @@ function bindConsole() {
   C.poller = new Poller(1500, pollConsole);
 }
 
-// --------------------------------------------------------------- megabrain
+// ------------------------------------------------------------------- brain
 
 var M = { abort: null, node: null };
 
@@ -2500,7 +2500,7 @@ function brainStatus() {
 function brainAsk(q) {
   if (M.abort) return toast('a request is already in flight', 'err');
   chatMsg('you', 'you').textContent = q;
-  var out = chatMsg('megabrain');
+  var out = chatMsg('brain');
   out.classList.add('run');
   M.node = out;
 

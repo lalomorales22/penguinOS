@@ -535,7 +535,7 @@ re-fetches `/api/themes` afterwards and restyles without a reload.
 
 | Method | Path | Params | Response |
 |---|---|---|---|
-| GET | `/api/apps` | — | `{"apps":[{"id":"chat","name":"chat","summary":"ask megabrain, and watch the reply arrive","tier_min":0}]}` |
+| GET | `/api/apps` | — | `{"apps":[{"id":"chat","name":"chat","summary":"ask the brain, and watch the reply arrive","tier_min":0}]}` |
 
 Feeds the autostart picker. `tier_min` is the lowest `render.tier` the app runs
 on; the picker shows everything and lets the board refuse.
