@@ -43,6 +43,7 @@ static const uint32_t kHoldMs = 10000;
 enum eos_ctrl {
     EOS_CTRL_ILI9341,
     EOS_CTRL_ILI9488,
+    EOS_CTRL_ST7796,
     EOS_CTRL_ST7789,
     EOS_CTRL_SSD1306_I2C,
 };
@@ -88,6 +89,30 @@ static const eos_probe_cfg_t kConfigs[] = {
         -1, false,
         -1, -1, 0x00,
         "The 4.0in board. Clean here means this panel holds 80MHz."
+    },
+    {
+        // UNREGISTERED, and the reason this pass exists. The 4.0in integrated
+        // board (touch, microSD, RGB LED, speaker, battery) is NOT the
+        // wavvy-ili9488-40 in the registry, which is a bare panel hand-wired
+        // to a devkit. Its SPI header breaks out 18/23/19 and its microSD sits
+        // there too, so the panel cannot also be on those pins - it is on the
+        // CYD family's HSPI set, with the backlight on 27.
+        "NEW-4in-integrated", "ST7796 on 14/13", EOS_CTRL_ST7796,
+        14, 13, 12, 2, 15, -1,
+        HSPI, 40000000, 0,              // rotation 0 = 320x480 portrait
+        320, 480, 0, 0, 0, 0, true,
+        27, false,
+        -1, -1, 0x00,
+        "4.0in integrated board, ST7796. Clean and correctly coloured means this."
+    },
+    {
+        "NEW-4in-integrated", "ILI9488 on 14/13", EOS_CTRL_ILI9488,
+        14, 13, 12, 2, 15, -1,
+        HSPI, 40000000, 0,
+        320, 480, 0, 0, 0, 0, true,
+        27, false,
+        -1, -1, 0x00,
+        "Same wiring, the other controller. If the ST7796 pass had wrong colour but right shapes, it is this."
     },
     {
         "wavvy-ili9488-35", "ILI9488 40MHz", EOS_CTRL_ILI9488,
@@ -299,6 +324,14 @@ static bool runSpiPass(const eos_probe_cfg_t *c, int pass)
             // 18-bit only. The part has no 16-bit SPI pixel mode, which is the
             // whole reason it is not an ST7796.
             gfx = new Arduino_ILI9488_18bit(bus, c->rst, c->rotation, c->ips);
+            break;
+        case EOS_CTRL_ST7796:
+            // Wired identically to the ILI9488 and the same size, so the two
+            // are only separable by eye: the ST7796 takes 16-bit pixels and
+            // the ILI9488 takes 18-bit, so driving one with the other's
+            // driver gives colour that is wrong in a specific, visible way
+            // rather than a blank screen.
+            gfx = new Arduino_ST7796(bus, c->rst, c->rotation, c->ips);
             break;
         case EOS_CTRL_ST7789:
             gfx = new Arduino_ST7789(bus, c->rst, c->rotation, c->ips,

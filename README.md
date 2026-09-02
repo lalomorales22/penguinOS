@@ -144,7 +144,16 @@ JSON out. So there's a small bridge in this repo that sits between them.
 
 ### On the computer that will run the model
 
-Install [Ollama](https://ollama.com), pull a model, and start the bridge:
+Install Ollama:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+That one-liner is Linux. On **macOS** use `brew install ollama` (or the app from
+[ollama.com/download](https://ollama.com/download)); on **Windows** use the
+installer from the same page. Then, on any of them, pull a model and start the
+bridge:
 
 ```bash
 ollama pull qwen3.5:2b
@@ -157,6 +166,15 @@ Ollama model works; pass `--model <name>` to use a different one.
 
 That's it — no dependencies beyond Python 3. It prints the address to point the
 board at.
+
+**You do not have to expose Ollama to your network.** The bridge runs on the
+same machine and reaches Ollama over `127.0.0.1`, so Ollama keeps its default
+local-only binding and the only thing listening on the LAN is the bridge. There
+is no `OLLAMA_HOST` to set.
+
+The bridge runs in the foreground and stops when you close the terminal, which
+is usually what you want while trying things out. To leave it running, start it
+under `nohup`, `screen`, `tmux`, or whatever service manager you already use.
 
 ### On the board
 
