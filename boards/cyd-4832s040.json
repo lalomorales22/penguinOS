@@ -84,21 +84,21 @@
     },
     "web_input": true,
     "touch": {
-      "present": false,
-      "controller": null,
-      "bus": null,
-      "shares_display_bus": false,
+      "present": true,
+      "controller": "XPT2046",
+      "bus": "spi",
+      "shares_display_bus": true,
       "pins": {
-        "sck": -1,
-        "mosi": -1,
-        "miso": -1,
-        "cs": -1,
-        "irq": -1,
+        "sck": 14,
+        "mosi": 13,
+        "miso": 12,
+        "cs": 33,
+        "irq": 36,
         "sda": -1,
         "scl": -1
       },
       "i2c_address": null,
-      "absent_reason": "The glass IS resistive touch - the silkscreen says so - but the controller wiring is not established. The CYD family usually puts an XPT2046 on 25/32/39/33/36, and on this board 32 and 25 are ALSO broken out as an I2C header and 35/39 as a spare header, so the community pinout and the silkscreen disagree about who owns those pins. Probe before believing either."
+      "absent_reason": ""
     },
     "buttons": [
       {
@@ -206,7 +206,6 @@
   },
   "unverified": [
     "display.clock_hz",
-    "inputs.touch.present",
     "peripherals.sdcard.present",
     "peripherals.rgb_led.present",
     "peripherals.speaker.present",
@@ -235,10 +234,22 @@
       "text": "byte_swap is true and was settled on the THEME BACKGROUND, not on a primary: grey is invariant under a red/blue swap, so a grey that turns green indicts byte order and nothing else. The prober had said no-swap and was wrong - it drives the panel through Arduino_GFX, not esp_lcd."
     },
     {
-      "id": "touch-pins-contested",
+      "id": "touch-shares-the-panel-bus",
       "severity": "high",
+      "field": "inputs.touch.pins",
+      "text": "VERIFIED by probing the silicon, not by inheriting a pinout. The XPT2046 sits on the DISPLAY bus - 14/13/12 - with CS 33 and PENIRQ 36; it does NOT have a bus of its own. The widely repeated CYD touch pinout 25/32/39 was tried first and returned nothing at all, so the community answer is wrong for this board even though its CS happens to match. The test was the TEMP0 channel (control byte 0x87), a single-ended read against the internal reference that returns a stable mid-scale value with nobody touching the glass: the shared-bus candidate answered 0x31C and every other candidate answered 0x000. That distinction matters because every touch-DEPENDENT register reads zero on an idle panel, which is exactly what an absent chip reads too, so a pressure or coordinate read cannot tell a wrong pin from an untouched screen and TEMP0 can."
+    },
+    {
+      "id": "penirq-needs-pd0-clear",
+      "severity": "high",
+      "field": "inputs.touch.pins",
+      "text": "The XPT2046 DISABLES PENIRQ whenever bit PD0 of the control byte is 1, so a driver that reads with 0xB1/0xD1/0x91 - reference off, ADC left on, which looks like the efficient choice - holds the interrupt line high no matter how hard the panel is pressed. This cost a full flash cycle here: the first probe reported IRQ high through every press and the pin was briefly written off. Read with 0xB0/0xD0/0x90 and allow the part to power down between conversions, and GPIO 36 goes low under touch with a clean 100%/0% split across 747 samples."
+    },
+    {
+      "id": "touch-axes-are-swapped",
+      "severity": "note",
       "field": "inputs.touch.present",
-      "text": "The glass is resistive but the controller wiring is unestablished, and the usual CYD XPT2046 pins (25/32/39/33/36) collide with headers this board brings out for the user: 32 and 25 as I2C, 35 and 39 as spares. Probe before wiring anything to those headers."
+      "text": "Calibration, measured from the four corners in a known order rather than guessed: the controller's axes are SWAPPED relative to the screen and neither is mirrored. Touch X is the screen's VERTICAL axis and rises top-to-bottom, roughly 800 at the top edge to 3400 at the bottom. Touch Y is the screen's HORIZONTAL axis and rises left-to-right, roughly 440 to 3470. So screen_x maps from raw Y and screen_y from raw X, both without inversion. Corner medians were TL(733,464) TR(872,3551) BR(3332,3394) BL(3478,411) - note that along the top edge raw X barely moves while raw Y sweeps its whole range, which is what identifies the swap."
     }
   ]
 }
