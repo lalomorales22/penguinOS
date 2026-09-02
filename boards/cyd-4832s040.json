@@ -159,14 +159,18 @@
     }
   },
   "flashing": {
-    "port_hint": "/dev/cu.usbserial-10",
+    "port_hint": "/dev/cu.usbserial-140",
     "usb_bridge": "CH340",
-    "upload_baud": 230400,
+    "upload_baud": 115200,
     "monitor_baud": 115200,
     "bad_baud_rates": [
       {
-        "baud": 460800,
-        "reason": "Fails within a second of 'Configuring flash size...' with \"A fatal error occurred: Invalid head of packet (0xFD): Possible serial noise or corruption.\" - the byte differs run to run (0xFD, 0x7D seen). Reproduced on a 64 KB read, so it is not a length effect: 460800 simply does not work on this CH340. 230400 passes the same read every time."
+        "baud": 921600,
+        "reason": "arduino-cli's default for this FQBN. Dies immediately after 'Changing baud rate to 921600... Changed.' with 'Unable to verify flash chip connection'. Never wrote a byte."
+      },
+      {
+        "baud": 230400,
+        "reason": "Inherited from cyd-2432s024n and WRONG here - the two boards have different CH340s. This one starts writing happily and dies mid-image: 57.7% of 907,927 bytes on the measured run, with 'No more data to read from the serial port'. That failure mode is worse than an outright refusal, because it leaves a half-written app partition that will not boot and looks like a bad build."
       }
     ],
     "flash_mode": "dio",
@@ -210,10 +214,10 @@
     "peripherals.sdcard.present",
     "peripherals.rgb_led.present",
     "peripherals.speaker.present",
-    "flashing.flash_mode",
     "flashing.flash_freq_mhz",
     "render.min_tile_w",
-    "render.min_tile_h"
+    "render.min_tile_h",
+    "flashing.flash_mode"
   ],
   "gotchas": [
     {
