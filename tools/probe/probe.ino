@@ -169,6 +169,8 @@ static const int kConfigCount = (int)(sizeof(kConfigs) / sizeof(kConfigs[0]));
 
 // Defined below, next to the thing it waits for. Declared here because the
 // passes call it and .ino prototype generation is not something to rely on.
+static int g_only = -1;   // >=0 locks the cycle to one pass
+
 static void holdOrSkip();
 
 static void backlightOn(const eos_probe_cfg_t *c)
@@ -231,6 +233,22 @@ static void drawColourCard(Arduino_GFX *gfx, const eos_probe_cfg_t *c, int pass)
     gfx->print(c->profile);
 
     int16_t y = (w >= 300 ? 42 : 34) + 30;
+
+    // AN ASYMMETRIC GLYPH, because nothing else on this card can tell you
+    // which way round the panel is. The colour bars are symmetric in the only
+    // way that matters: swapping red and blue looks EXACTLY like a horizontal
+    // mirror unless you already know which is which, and a grey ramp and a
+    // stripe field look the same in a mirror. A capital F does not - it has no
+    // symmetry in either axis, so it separates a mirror from a rotation from a
+    // colour-order swap at a glance.
+    //
+    // Read it as: F normal = upright. F backwards = mirrored in X. F upside
+    // down and backwards = rotated 180. F upside down but NOT backwards =
+    // mirrored in Y.
+    gfx->setTextColor(RGB565_YELLOW);
+    gfx->setTextSize(w >= 300 ? 7 : 5);
+    gfx->setCursor(w - (w >= 300 ? 52 : 38), 8);
+    gfx->print("F");
 
     // Primary bars. A wrong pixel format gives wrong or smeared colours.
     const uint16_t bars[] = {RGB565_RED, RGB565_GREEN, RGB565_BLUE, RGB565_WHITE};
@@ -421,6 +439,15 @@ static void holdOrSkip()
                     Serial.printf("[probe] pass %d selected. Tell tools/flash.sh, or "
                                   "run: tools/flash.sh --profile %s\n",
                                   want + 1, kConfigs[want].profile);
+                    // HOLD it. Cycling past the pass someone just chose makes
+                    // them chase a ten-second window to look at the one thing
+                    // they asked to see. Press 0 to go back to cycling.
+                    g_only = want;
+                    Serial.printf("[probe] holding on pass %d. Press 0 to cycle again.\n",
+                                  want + 1);
+                } else if (ch == '0') {
+                    g_only = -1;
+                    Serial.println("[probe] cycling again.");
                 }
             }
             return;
@@ -456,7 +483,9 @@ void setup()
 void loop()
 {
     for (int i = 0; i < kConfigCount; i++) {
-        const eos_probe_cfg_t *c = &kConfigs[i];
+        const eos_probe_cfg_t *c;
+        if (g_only >= 0) i = g_only;
+        c = &kConfigs[i];
         announce(c, i + 1);
         if (c->ctrl == EOS_CTRL_SSD1306_I2C) {
             runI2cPass(c, i + 1);
