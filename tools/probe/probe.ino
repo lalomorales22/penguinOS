@@ -106,6 +106,33 @@ static const eos_probe_cfg_t kConfigs[] = {
         "4.0in integrated board, ST7796. Clean and correctly coloured means this."
     },
     {
+        // ROTATION 1. The rotation-0 pass painted 320 columns into a panel
+        // that has 480 of them - two thirds of the glass, with the vendor's
+        // old demo still visible in the third nobody wrote to. That is a
+        // 90-degree disagreement about which axis is long, so the landscape
+        // rotations are what actually fit this panel.
+        "NEW-4in-integrated", "ST7796 rot1", EOS_CTRL_ST7796,
+        14, 13, 12, 2, 15, -1,
+        HSPI, 40000000, 1,
+        320, 480, 0, 0, 0, 0, true,
+        27, false,
+        -1, -1, 0x00,
+        "Landscape. Fills the glass and the F reads normally = this is it."
+    },
+    {
+        // ROTATION 3, the other landscape. rot1 and rot3 differ by 180, and
+        // the F on the rotation-0 pass came out upside down AND backwards,
+        // which is exactly a 180 rotation - so this is the likelier of the
+        // two and both are offered rather than guessed between.
+        "NEW-4in-integrated", "ST7796 rot3", EOS_CTRL_ST7796,
+        14, 13, 12, 2, 15, -1,
+        HSPI, 40000000, 3,
+        320, 480, 0, 0, 0, 0, true,
+        27, false,
+        -1, -1, 0x00,
+        "The other landscape. If rot1 filled the glass but read upside down, it is this."
+    },
+    {
         "NEW-4in-integrated", "ILI9488 on 14/13", EOS_CTRL_ILI9488,
         14, 13, 12, 2, 15, -1,
         HSPI, 40000000, 0,
