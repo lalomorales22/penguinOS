@@ -1222,6 +1222,7 @@ HAL_COMP = {"indexed8": "EOS_COMP_INDEXED8", "mono1": "EOS_COMP_MONO1",
             "lvgl": "EOS_COMP_LVGL"}
 HAL_PANEL = {"ILI9341": "EOS_PANEL_ILI9341", "ST7789": "EOS_PANEL_ST7789",
              "ILI9488": "EOS_PANEL_ILI9488", "ST7735": "EOS_PANEL_ST7735",
+             "ST7796": "EOS_PANEL_ST7796",
              "SSD1306": "EOS_PANEL_SSD1306"}
 HAL_BUS = {"spi": "EOS_BUS_SPI", "i2c": "EOS_BUS_I2C", "sdmmc": "EOS_BUS_SDMMC",
            None: "EOS_BUS_NONE"}

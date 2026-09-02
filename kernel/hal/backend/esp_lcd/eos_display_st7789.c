@@ -684,7 +684,14 @@ eos_err_t eos_display_init(void)
     // 16-bit mode at all and needs three bytes per pixel, which the wire_bytes
     // check below rejects anyway - but rejecting it by NAME here would be a
     // lie about why, so the format check is left to do it.
+    // ST7796 rides the ST7789 constructor below. The two are both Sitronix
+    // parts and share the init this backend depends on - MADCTL, COLMOD, the
+    // display-on sequence - and everything after the panel handle exists is
+    // identical anyway. It is admitted here rather than assumed: the default
+    // branch would have taken it silently, and a panel that works by falling
+    // through a default is a panel nobody has decided about.
     if (b->panel.panel != EOS_PANEL_ST7789 &&
+        b->panel.panel != EOS_PANEL_ST7796 &&
         b->panel.panel != EOS_PANEL_ILI9341) return EOS_ERR_UNSUPPORTED;
     if (b->panel.bus   != EOS_BUS_SPI)      return EOS_ERR_UNSUPPORTED;
     if (b->panel.color_depth != 16 || b->panel.wire_bytes != 2) return EOS_ERR_UNSUPPORTED;

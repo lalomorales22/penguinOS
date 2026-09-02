@@ -162,6 +162,11 @@ typedef enum {
     EOS_PANEL_ILI9488,   // wavvy 4.0in and 3.5in, 320x480, NO 16-bit mode: 3 bytes/pixel
     EOS_PANEL_ST7735,
     EOS_PANEL_SSD1306,   // wavvy OLED, 128x64 I2C, 1bpp
+    // Appended rather than slotted in beside its ILI9488 twin: these values are
+    // baked into generated board headers, so inserting in the middle would
+    // silently renumber every profile built before the change.
+    EOS_PANEL_ST7796,    // CYD 4.0in, 320x480, and unlike the ILI9488 it HAS a
+                         // 16-bit mode, so it is two bytes per pixel not three
 } eos_panel_t;
 
 static inline const char *eos_panel_name(uint8_t p)
@@ -173,6 +178,7 @@ static inline const char *eos_panel_name(uint8_t p)
     case EOS_PANEL_ILI9488: return "ili9488";
     case EOS_PANEL_ST7735:  return "st7735";
     case EOS_PANEL_SSD1306: return "ssd1306";
+    case EOS_PANEL_ST7796:  return "st7796";
     }
     return "?";
 }

@@ -1,0 +1,244 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "cyd-4832s040",
+  "name": "ESP32-4832S040 (Cheap Yellow Display, 4.0in, resistive touch)",
+  "summary": "The big CYD: 320x480 ST7796 on a 4MB no-PSRAM ESP32, with resistive touch, microSD, an RGB LED and a speaker on board.",
+  "chip": {
+    "target": "esp32",
+    "variant": "ESP32-WROOM-32E",
+    "cores": 2,
+    "flash_size_mb": 4,
+    "psram": {
+      "present": false,
+      "type": "none",
+      "size_mb": 0
+    }
+  },
+  "render": {
+    "tier": 0,
+    "compositor": "indexed8",
+    "lvgl": false,
+    "palette_entries": 256,
+    "full_framebuffer": false,
+    "band_height": 16,
+    "min_tile_w": 80,
+    "min_tile_h": 40,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 148188,
+    "reason": "MEASURED BY penguinOS ITSELF, not by a probe, and then measured again against what the RADIO needs. A bare probe reports free=281612; the OS at app_main reports 148188. Sizing the display from the probe figure asked for 281,280 contiguous DMA bytes out of a 110,592-byte largest block and the board booted blind. band_height is 16, not the 40 that first fit, because fitting is not the test - what matters is what is left afterwards. At 40 rows the two strips take 38,400 bytes and boot ends with 7,168 free; esp_http_server starts, but the AP's DHCP server can no longer allocate a reply, so clients associate and are dropped without ever getting an address. The browser then has nowhere to send a request and the failure looks like a dead web server rather than a starved one. At 16 rows the strips take 15,360 and that memory goes back to the radio. The cost is more SPI transactions per frame - 20 bands instead of 8 - which this board can afford far more easily than it can afford a captive portal that never hands out an IP."
+  },
+  "display": {
+    "controller": "ST7796",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
+    "native_width": 320,
+    "native_height": 480,
+    "rotation": 1,
+    "color_depth": 16,
+    "bytes_per_pixel": 2,
+    "color_order": "bgr",
+    "supports_16bit_pixels": true,
+    "pixel_format_reason": "The ST7796 DOES have a 16-bit SPI pixel mode, which is the one real advantage it has over the ILI9488 it is otherwise pin-compatible with: two bytes per pixel on the wire instead of three. That is a third off every blit before any other tuning.",
+    "bus": "spi",
+    "spi_host": "HSPI",
+    "clock_hz": 40000000,
+    "clock_reason": "VERIFIED at 40MHz by the panel prober, which drew a readable label, clean colour bars, a smooth grey ramp and an unbroken stripe field. Higher has not been tried; 40 is where this was proven and there is no measurement yet to justify moving it.",
+    "pins": {
+      "sck": 14,
+      "mosi": 13,
+      "miso": 12,
+      "dc": 2,
+      "cs": 15,
+      "rst": -1,
+      "sda": -1,
+      "scl": -1
+    },
+    "i2c_address": null,
+    "backlight": {
+      "present": true,
+      "pin": 27,
+      "active_low": false,
+      "pwm": false,
+      "pwm_channel": -1,
+      "pwm_freq_hz": 0
+    },
+    "col_offset": 0,
+    "row_offset": 0,
+    "invert": false,
+    "byte_swap": false,
+    "byte_swap_reason": "PROBED, NOT YET CONFIRMED UNDER penguinOS. The prober drew red, green, blue, white and the panel returned BLUE, GREEN, RED, white - green and white unmoved, so a channel swap rather than any kind of flip. On the four-way table that is no-swap + BGR. The caveat that applies to mirror_x applies here too: the prober drives this panel through Arduino_GFX, whose init sets its own MADCTL, so this must be re-checked with the three-primary test once penguinOS owns the panel.",
+    "mirror_x": false,
+    "mirror_y": false,
+    "mirror_reason": "UNVERIFIED, and expected to need changing on first light. The prober cannot settle handedness on this board: Arduino_GFX offers only the four rotations and never calls a mirror, so every pass came out wrong in a way no rotation can fix - rotation 0 gave an F upside down AND backwards (a 180 turn), rotation 1 gave it backwards (mirrored in X) and rotation 3 gave it upside down (mirrored in Y). rot1 and rot3 being 180 apart makes those two results consistent with each other and with a panel whose scan direction is flipped from what the library assumes. This is the same trap cyd-2432s024n documents: a probe that omits a call is not testing the configuration an OS makes with default arguments. Set from a QR code or an F drawn by penguinOS itself, not from the prober.",
+    "invert_reason": "VERIFIED false. Inversion never had to be guessed at here: the three-primary test returned saturated primaries in a recognisable permutation, and an inverting panel would have returned their complements - cyan, yellow, magenta - which is not a result anyone can mistake for red, blue and green.",
+    "offset_reason": "VERIFIED zero. A 240-wide fill reached both edges with no shear and no black column, and the row-count test placed row 0 at the top of the glass."
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "NimBLE is 19KB of heap; Bluedroid is 83KB, which is instant OOM on a board with 20KB free. Release classic-BT memory and bring BLE up BEFORE WiFi, then WiFi.setSleep(true). The K809 keyboard bonds to whichever board it paired with last."
+    },
+    "web_input": true,
+    "touch": {
+      "present": false,
+      "controller": null,
+      "bus": null,
+      "shares_display_bus": false,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": -1,
+        "sda": -1,
+        "scl": -1
+      },
+      "i2c_address": null,
+      "absent_reason": "The glass IS resistive touch - the silkscreen says so - but the controller wiring is not established. The CYD family usually puts an XPT2046 on 25/32/39/33/36, and on this board 32 and 25 are ALSO broken out as an I2C header and 35/39 as a spare header, so the community pinout and the silkscreen disagree about who owns those pins. Probe before believing either."
+    },
+    "buttons": [
+      {
+        "name": "boot",
+        "gpio": 0,
+        "active_low": true,
+        "pull": "up"
+      }
+    ]
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": false,
+      "kind": "none",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": -1,
+      "count": 0,
+      "active_low": true,
+      "absent_reason": "Present on the board, wiring not yet established."
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1,
+      "absent_reason": "Present on the board (2-pin header), wiring not yet established."
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1,
+      "absent_reason": "Not seen on this board."
+    },
+    "sdcard": {
+      "present": false,
+      "bus": null,
+      "spi_host": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1
+      },
+      "max_clock_hz": 0,
+      "shares_display_bus": false,
+      "mount_point": null,
+      "absent_reason": "Slot present; the SPI header silkscreen shows the bus at 18/23/19 but the card CS is not confirmed."
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": "/dev/cu.usbserial-10",
+    "usb_bridge": "CH340",
+    "upload_baud": 230400,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [
+      {
+        "baud": 460800,
+        "reason": "Fails within a second of 'Configuring flash size...' with \"A fatal error occurred: Invalid head of packet (0xFD): Possible serial noise or corruption.\" - the byte differs run to run (0xFD, 0x7D seen). Reproduced on a 64 KB read, so it is not a length effect: 460800 simply does not work on this CH340. 230400 passes the same read every time."
+      }
+    ],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "huge_app",
+    "app_partition_kb": 3072,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-D0WD-V3",
+      "flash_size_mb": 4,
+      "psram": false
+    },
+    "usb_bridge": "CH340",
+    "mac_allowlist": [
+      "8c:94:df:50:02:94"
+    ],
+    "distinguishing_notes": [
+      "Do NOT confuse with wavvy-ili9488-40. That entry is a bare 4.0in panel hand-wired to a devkit - no touch, no microSD, no RGB LED, no speaker - and it drives the panel on 18/23/5, which on THIS board is the SPI header and the microSD. Flashing it here drives the SD lines and leaves the glass dark.",
+      "Separable from cyd-2432s024n by MAC, and by the glass: 4.0in against 2.4in."
+    ],
+    "confirm_prompt": "Is this the 4.0in board with resistive touch, a microSD slot and a speaker header?",
+    "panel_id_register": {
+      "supported": false,
+      "register": null,
+      "reads_back": null,
+      "note": "Not attempted. The ILI9488 boards settled that a controller ID read is not something to build on, and this panel was identified the way they were - by drawing a labelled test card under each candidate driver and looking."
+    },
+    "usb_serial": "8C:94:DF:50:02:94"
+  },
+  "unverified": [
+    "display.mirror_x",
+    "display.mirror_y",
+    "display.byte_swap",
+    "display.color_order",
+    "display.clock_hz",
+    "inputs.touch.present",
+    "peripherals.sdcard.present",
+    "peripherals.rgb_led.present",
+    "peripherals.speaker.present",
+    "flashing.flash_mode",
+    "flashing.flash_freq_mhz",
+    "render.min_tile_w",
+    "render.min_tile_h"
+  ],
+  "gotchas": [
+    {
+      "id": "not-the-wavvy-ili9488-40",
+      "severity": "critical",
+      "field": "display.pins",
+      "text": "Do NOT reach for wavvy-ili9488-40 because the glass is also 4.0in and also 320x480. That profile is a bare panel hand-wired to a devkit and drives the panel on sck 18 / mosi 23 / cs 5 - which on THIS board is the SPI header and the microSD. Flashing it here drives the card lines and leaves the glass dark. This board is on the CYD set: 14/13/12/2/15 with the backlight on 27."
+    },
+    {
+      "id": "handedness-unproven",
+      "severity": "critical",
+      "field": "display.mirror_x",
+      "text": "Expect the first boot to come up mirrored. The panel prober could not settle this: Arduino_GFX offers four rotations and never calls a mirror, so its passes came out backwards or upside down in ways no rotation can fix. Set mirror_x/mirror_y from something asymmetric drawn by penguinOS - the setup QR code is the honest test, because a QR nobody can scan is the failure mode."
+    },
+    {
+      "id": "colour-probed-through-another-library",
+      "severity": "high",
+      "field": "display.byte_swap",
+      "text": "color_order and byte_swap came from the prober, which drives the panel through Arduino_GFX and its own MADCTL. The bars returned BLUE, GREEN, RED against RED, GREEN, BLUE drawn, which is no-swap + BGR on the four-way table. Re-run the three-primary test under penguinOS before trusting it: byte order and channel order are not separable with one colour."
+    },
+    {
+      "id": "touch-pins-contested",
+      "severity": "high",
+      "field": "inputs.touch.present",
+      "text": "The glass is resistive but the controller wiring is unestablished, and the usual CYD XPT2046 pins (25/32/39/33/36) collide with headers this board brings out for the user: 32 and 25 as I2C, 35 and 39 as spares. Probe before wiring anything to those headers."
+    }
+  ]
+}
