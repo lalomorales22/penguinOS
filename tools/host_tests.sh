@@ -39,6 +39,13 @@ run avatar  -Ikernel/avatar/include kernel/avatar/eos_vox.c kernel/avatar/eos_bu
 run stroll  -Ikernel/avatar/include kernel/avatar/eos_vox.c kernel/avatar/eos_buddy.c \
             kernel/avatar/eos_stroll.c kernel/avatar/test/test_stroll.c -lm
 run brain   -Ikernel/svc/include kernel/svc/eos_brain.c kernel/svc/test/test_brain.c
+# The bridge is unity-included by its test, not linked: the channel state and
+# the sweeper that guards it are static, and those are the things under test.
+# firmware/main/test/shim supplies the FreeRTOS and IDF headers it expects.
+run bridge  -Ikernel/svc/include -Ikernel/avatar/include -Ikernel/hal/include \
+            -Ikernel/wm/include -Ikernel/theme/include -Ikernel/font/include \
+            -Iboards/generated -Ifirmware/main -Ifirmware/main/test/shim \
+            firmware/main/test/test_brain_bridge.c kernel/svc/eos_brain.c
 run shell   -Ikernel/wm/include -Ikernel/hal/include -Ikernel/shell/include \
             kernel/wm/eos_wm.c kernel/shell/eos_keys.c kernel/shell/eos_bar.c \
             kernel/shell/test/test_shell.c

@@ -549,8 +549,45 @@ static void brain_task(void *arg)
         {
             bool sweep = false;
             lock();
+            // THE CLOCK HERE IS READ FRESH, AND THE COMPARE IS SIGNED.
+            //
+            // `now` was sampled once at the top of this pass. settle() stamps
+            // ch_settled_ms from ms_now() LATER IN THE SAME PASS, so the stamp
+            // is routinely NEWER than `now`. In uint32_t, now - ch_settled_ms
+            // then underflows to about 4.29 billion, which clears a 5,000 ms
+            // threshold every single time - and this sweeper reclaimed the
+            // channel in the very pass the reply completed, doing the exact
+            // opposite of what it is for.
+            //
+            // Downstream that is fatal but silent: p_read() only reports
+            // EOS_HTTPD_STREAM_END from CH_DONE, so once the sweep has moved
+            // the channel to CH_IDLE the reader can never be told the reply
+            // finished. It polls WAIT until the relay's idle deadline fires
+            // and bangs "the brain went quiet" - AFTER the answer text has
+            // already been delivered, which is what made this look like a
+            // network fault rather than an arithmetic one.
+            //
+            // MEASURED on a host reproduction that compiles this file and the
+            // real eos_brain.c against a scripted socket carrying exactly what
+            // the bridge sends: sweeping the server's token-to-done latency
+            // across 0-80 ms, 71 of 81 runs ended in the bang and 5 lost the
+            // answer text entirely. With this line fixed, 0 of 81.
+            //
+            // Reading the clock INSIDE the lock we already hold matters as
+            // much as the cast: p_read() re-stamps ch_settled_ms at line 359
+            // from an HTTP worker at higher priority than this task, so a
+            // clock sampled before lock() would leave that race open too.
+            //
+            // The cast makes a stamp in the future read as a small negative
+            // age instead of an enormous positive one. CH_ABANDON_MS is 5,000,
+            // far inside int32_t, and the stamp is refreshed on every read, so
+            // the signed form has no overflow of its own.
+            //
+            // Deliberately NOT applied to last_probe below: that one is only
+            // ever assigned from this same `now`, so both operands share one
+            // clock domain and it cannot underflow.
             if ((B.ch == CH_DONE || B.ch == CH_FAIL) && B.ch_settled_ms &&
-                (now - B.ch_settled_ms) >= CH_ABANDON_MS) {
+                (int32_t)(ms_now() - B.ch_settled_ms) >= (int32_t)CH_ABANDON_MS) {
                 B.ch = CH_IDLE;
                 B.ch_settled_ms = 0;
                 ring_reset();

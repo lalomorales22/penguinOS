@@ -79,6 +79,8 @@ to continue if they differ - the one guard that catches a wrong-board build.
 | `main/test/test_shell_draw.c` | host test: renders the desktop, writes it as a PPM, and reads the close boxes back out of the composited panel |
 | `main/test/test_apps_ui.c` | host test: every app body, at every size, with no clip, twice |
 | `main/test/test_dispatch.c` | host test: the input ladder, end to end, nothing mocked |
+| `main/test/test_brain_bridge.c` | host test: the real bridge task on a virtual clock, with a reader draining between passes |
+| `main/test/shim/` | FreeRTOS and IDF headers so the bridge compiles off the board |
 | `components/eos_kernel/` | the kernel as an IDF component |
 | `components/eos_kernel/eos_board_active.c` | `eos_board_get()` and `eos_board_probe()` |
 
