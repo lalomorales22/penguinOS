@@ -89,6 +89,27 @@ idf_component_register(
 target_compile_definitions(${COMPONENT_LIB} PUBLIC
     EOS_BOARD_HEADER="${EOS_BOARD_ID}.h")
 
+# The HTTP body buffer, which is ALSO the upload chunk - EOS_APPS_CHUNK_MAX is
+# defined as it, because a chunk larger than the buffer is refused by the
+# transport before a handler sees it. 4096 makes a 115 KB picture 29 requests
+# instead of 226 and is what every roomy board gets.
+#
+# The ESP32 cannot have it. That family links with almost nothing spare - the
+# 4.0in CYD reports 99.17% of dram0_0_seg used with 1,040 bytes remaining - and
+# the buffer is spent twice over: once in on_request()'s frame and again in the
+# httpd task stack that has to grow with it. MEASURED on that board at 4096:
+# boot ends with 10,448 bytes free, against the 7,168 at which its own profile
+# records the AP's DHCP server failing to allocate a reply. 3,280 bytes is not a
+# margin, it is a coincidence waiting to be spent.
+#
+# 1024 there: still twice the old 512, still halves the request count, and gives
+# the radio back 3,072 bytes it demonstrably needs. This is the per-board
+# override eos_httpd.h says to reach for, applied per FAMILY because it is the
+# family that is short.
+if(IDF_TARGET STREQUAL "esp32")
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC EOS_HTTPD_BODY_MAX=1024)
+endif()
+
 # eos_net's radio lock needs no gate any more. It used to: the lock lived at
 # the tail of eos_ble.h and eos_net had to be told with a compile definition to
 # bind to it, which meant an image built without eos_ble.c was silently

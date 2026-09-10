@@ -24,6 +24,7 @@
 #include "eos_shell_draw.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "eos_font.h"
@@ -58,15 +59,22 @@
 #define IMG_MAGIC1 '5'
 #define IMG_HDR    8      // magic(2) version(1) flags(1) w(2) h(2)
 
-// Rows held at once. 4 rows of the widest panel in the fleet (480) is 3,840
-// bytes of BSS - the whole cost of this feature in RAM. More rows would mean
-// fewer reads and a bigger floor on every board including the ones that cannot
-// spare it; flash reads are cheap here in a way sockets were not.
+// Rows held at once, and the buffer is TAKEN WHEN A PICTURE IS OPENED rather
+// than reserved for the life of the image.
+//
+// It was static: uint8_t s_rowbuf[EOS_LCD_W * 2 * IMG_ROWS], which on the
+// 480-wide 4.0in CYD is 3,840 bytes of BSS. That board is an ESP32 and it links
+// with almost nothing to spare - it had already overflowed dram0_0_seg once
+// before, by 56 bytes, and this pushed it over by 2,800. The link fails; there
+// is no runtime symptom to debug, and the cost was being paid on every board
+// whether or not anyone ever opened a picture.
+//
+// Now it is sized for THIS image and freed on close, so a board that never
+// opens one spends nothing at all. malloc rather than a fixed pool because the
+// size depends on the picture's width, which is not knowable at build time -
+// and this is app code, not the kernel, which is where the no-allocation rule
+// lives.
 #define IMG_ROWS   4
-
-#ifndef EOS_LCD_W
-#define EOS_LCD_W 480
-#endif
 
 static struct {
     char     path[96];
@@ -75,7 +83,8 @@ static struct {
     bool     bad;           // it was opened and is not one
 } V;
 
-static uint8_t s_rowbuf[EOS_LCD_W * 2 * IMG_ROWS];
+static uint8_t *s_rowbuf;      // NULL unless a picture is open
+static int      s_rowbuf_cap;  // bytes actually held
 
 // Case-insensitive, because a file that came off a desktop may well be .565 or
 // .565 with whatever case a file manager felt like.
@@ -119,10 +128,29 @@ static void view_open(const char *dir, const char *name)
         V.bad = true;
     }
     eos_storage_close(f);
+
+    // One row is the floor - a picture cannot be drawn in less - and IMG_ROWS
+    // of them is the ceiling. A board that cannot spare even one row's worth
+    // reports the image as unreadable rather than drawing something wrong.
+    if (!V.bad) {
+        s_rowbuf_cap = (int)V.w * 2 * IMG_ROWS;
+        s_rowbuf = (uint8_t *)malloc((size_t)s_rowbuf_cap);
+        if (!s_rowbuf) {
+            s_rowbuf_cap = (int)V.w * 2;
+            s_rowbuf = (uint8_t *)malloc((size_t)s_rowbuf_cap);
+        }
+        if (!s_rowbuf) { s_rowbuf_cap = 0; V.bad = true; }
+    }
     V.open = true;
 }
 
-static void view_close(void) { memset(&V, 0, sizeof V); }
+static void view_close(void)
+{
+    free(s_rowbuf);
+    s_rowbuf = NULL;
+    s_rowbuf_cap = 0;
+    memset(&V, 0, sizeof V);
+}
 
 // Twenty entries at forty-eight bytes each. A LittleFS partition on this board
 // holds the web app, a theme or two and a buddy; twenty is more than any
@@ -398,12 +426,17 @@ static void draw_image(const eos_app_ctx_t *c, eos_rect_t r)
     f = eos_storage_open(V.path, EOS_O_READ);
     if (!f) return;
 
-    for (y = y0; y < y1; y += IMG_ROWS) {
-        int n = (y + IMG_ROWS <= y1) ? IMG_ROWS : (y1 - y);
+    if (!s_rowbuf || s_rowbuf_cap <= 0) return;
+    {
+    const int rows_at_once = s_rowbuf_cap / ((int)V.w * 2);
+    if (rows_at_once < 1) return;
+
+    for (y = y0; y < y1; y += rows_at_once) {
+        int n = (y + rows_at_once <= y1) ? rows_at_once : (y1 - y);
         int want = n * (int)V.w * 2;
         eos_bitmap_t b;
 
-        if (want > (int)sizeof s_rowbuf) break;
+        if (want > s_rowbuf_cap) break;
         if (eos_storage_seek(f, (int64_t)IMG_HDR + (int64_t)y * V.w * 2,
                              EOS_SEEK_SET) < 0) break;
         if (eos_storage_read(f, s_rowbuf, want) != want) break;
@@ -416,6 +449,7 @@ static void draw_image(const eos_app_ctx_t *c, eos_rect_t r)
         b.fmt    = EOS_PIXFMT_RGB565;
         b.key    = EOS_COLOR_NONE;
         eos_display_blit(ox, (int16_t)(oy + y), &b);
+    }
     }
     eos_storage_close(f);
 }

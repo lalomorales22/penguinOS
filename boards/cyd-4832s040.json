@@ -216,6 +216,18 @@
   ],
   "gotchas": [
     {
+      "id": "dram-is-full-1040-bytes-remain",
+      "severity": "high",
+      "field": "chip.target",
+      "text": "THIS BOARD LINKS AT 99.17% OF dram0_0_seg WITH 1,040 BYTES REMAINING. Not free heap - the static segment, measured with idf.py size. Anything added to .data or .bss on the esp32 target fails the LINK, with no runtime symptom to debug and a message about binary size that points at flash rather than at RAM. It has happened twice: once by 56 bytes, fixed with CONFIG_LWIP_IPV6=n, and once by 2,800 when the image viewer reserved a static row buffer sized from the panel width - 480 x 2 x 4 rows - which this 480-wide board made the largest in the fleet. That buffer is now taken from the heap when a picture is opened and freed when it closes, so a board that never opens one spends nothing. Prefer that shape over a static array for anything new here."
+    },
+    {
+      "id": "http-body-1024-on-esp32",
+      "severity": "high",
+      "field": "flashing.partition_scheme",
+      "text": "EOS_HTTPD_BODY_MAX is 1024 on the esp32 family and 4096 everywhere else, set in firmware/components/eos_kernel/CMakeLists.txt. The buffer is spent twice - once in on_request()'s frame and again in the httpd task stack that grows with it - and it is ALSO the upload chunk, since EOS_APPS_CHUNK_MAX is defined as it. MEASURED HERE at 4096: boot ended with 10,448 bytes free against the 7,168 at which this board's own AP cannot allocate a DHCP reply. At 1024: 17,128 free. The 3,280-byte margin was not a margin. 1024 still halves the request count against the old 512, so uploads are twice as fast and the radio keeps what it needs."
+    },
+    {
       "id": "not-the-wavvy-ili9488-40",
       "severity": "critical",
       "field": "display.pins",
