@@ -68,6 +68,26 @@ if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig"
     set(IDF_TARGET "${EOS_BOARD_TARGET}")
 endif()
 
+# A per-BOARD sdkconfig layer, on top of the per-target one.
+#
+# IDF gives two layers for free: each entry in SDKCONFIG_DEFAULTS, then
+# "<entry>.<target>" if it exists. That was enough while every target had
+# exactly one board in it. The two ESP32-C5 boards ended that: the Waveshare
+# C5-LCD-1.47 is 4 MB with no usable PSRAM, and the LILYGO T-Display C5 is
+# 16 MB - so "the C5 file" cannot describe both, and flash size is not a
+# preference. It selects the partition table, and a 4 MB table on a 16 MB part
+# silently strands three quarters of the chip.
+#
+# So a third layer, applied last and therefore winning: sdkconfig.board.<id>.
+# Optional, and most boards neither have one nor want one - a board that fits
+# its target's assumptions should say nothing here rather than restate them.
+set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.board.${EOS_BOARD_ID}")
+    list(APPEND SDKCONFIG_DEFAULTS
+         "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.board.${EOS_BOARD_ID}")
+    message(STATUS "penguinOS board sdkconfig: sdkconfig.board.${EOS_BOARD_ID}")
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(penguinos)
 
