@@ -1153,6 +1153,26 @@ eos_err_t eos_ble_init(const eos_ble_cfg_t *cfg)
         return EOS_ERR_IO;
     }
 
+    // How full is the partition that holds the Wi-Fi credentials? Nothing has
+    // ever asked, and it is the single most consequential number on the board:
+    // this is 24 KB shared by the Wi-Fi config, NimBLE's bond keys, penguinOS's
+    // own namespaces and the flasher's board id, and the ONLY recovery from
+    // filling it is the erase above - which takes the network with it. "Paired
+    // a keyboard, now it cannot find my Wi-Fi after a reboot" is what that
+    // looks like from the outside, and it is indistinguishable from a radio
+    // fault until someone counts the entries.
+    {
+        nvs_stats_t st;
+        if (nvs_get_stats(NULL, &st) == ESP_OK) {
+            unsigned used = (unsigned)st.used_entries, tot = (unsigned)st.total_entries;
+            ESP_LOGI(TAG, "nvs    %u of %u entries used (%u%%), %u free, %u namespaces",
+                     used, tot, tot ? (unsigned)((used * 100u) / tot) : 0u,
+                     (unsigned)st.free_entries, (unsigned)st.namespace_count);
+            if (tot && (used * 100u) / tot >= 75u)
+                ESP_LOGW(TAG, "nvs    over 75%% full - an erase here costs the Wi-Fi credentials");
+        }
+    }
+
 #if CONFIG_IDF_TARGET_ESP32
     // Classic Bluetooth is never coming up in this image. Handing its
     // controller memory back is tens of KB on the tier-0 board and it can only
