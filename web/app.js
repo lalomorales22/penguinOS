@@ -246,7 +246,18 @@ var S = {
   themes: [],
   apps: [],
   models: [],
-  limits: { chunk_max: 4096, path_max: 96, name_max: 40, list_max: 128 },
+  // 512, NOT the largest a board might allow. This is what uploadRow() uses
+  // until /api/system lands, and pollSystem() is a five-second poller - so a
+  // file dropped in the first moments after the page opens is sent at whatever
+  // is written here. Guessing high is not a slow upload, it is a FAILED one:
+  // a body over EOS_HTTPD_BODY_MAX is refused by esp_http_server before any
+  // handler runs, and the board resets the connection rather than answering
+  // 413, so the browser reports a network error with nothing to explain it.
+  //
+  // 512 is the smallest EOS_HTTPD_BODY_MAX any board has ever shipped with and
+  // is therefore safe everywhere. The real value replaces it within five
+  // seconds and is 1024 on the esp32 family and 4096 elsewhere.
+  limits: { chunk_max: 512, path_max: 96, name_max: 40, list_max: 128 },
   tab: 'files'
 };
 

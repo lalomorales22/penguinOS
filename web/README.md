@@ -1058,7 +1058,7 @@ where the board's real behaviour is narrower than what this document allows.
 
 | Where | What the board does |
 |---|---|
-| `limits.chunk_max` | **512**, not 4,096. It is `EOS_HTTPD_BODY_MAX`, the body lands in a worker's stack frame before the dispatch lock is taken, and four workers times any increase comes straight out of the heap. `/api/system` reports it by calling `eos_apps_chunk_max()` rather than restating it. The web app gzipped is about 100 chunks; the biggest `.vox` this board stages is 12 |
+| `limits.chunk_max` | **1024 on the esp32 family, 4096 elsewhere** - it was 512 everywhere until uploads proved unusably slow at that size. It is `EOS_HTTPD_BODY_MAX`, the body lands in a worker's stack frame before the dispatch lock is taken, and four workers times any increase comes straight out of the heap. `/api/system` reports it by calling `eos_apps_chunk_max()` rather than restating it. The web app gzipped is about 100 chunks; the biggest `.vox` this board stages is 12 |
 | `limits.list_max` | 32 |
 | `fs` | `/int` is a 960 KB LittleFS and is mounted. `/sd` is declared and reports `mounted: false` — the slot exists on the C6 board but its pins are not known, so `EOS_FS_FAT` is not implemented and `/sd` answers `no_such_device` without touching a bus |
 | `GET /api/buddy` | 404s on a board that has a buddy on its panel. It reports `/int/buddy/buddy.json`, and the avatar the panel is drawing is compiled into the image. This document already calls a 404 normal on a fresh card, and that is exactly what this is |
