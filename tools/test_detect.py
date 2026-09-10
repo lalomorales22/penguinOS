@@ -73,5 +73,46 @@ ck(_m is not None,
 ck(_m is not None and _m.group(1).lower() == "c6",
    "and it captures just the variant, not the package code")
 
+# ---------------------------------------------------------------- MAC parsing
+# The EUI-64 regression. On the 802.15.4 parts esptool prints an eight-octet
+# EUI-64 on the "MAC:" line and the real six-octet MAC on a "BASE MAC:" line
+# below it. The old regex took the first six octets of the EUI-64, which is
+# three real bytes, the ff:fe padding, and one real byte - an identifier that
+# is in no profile's mac_allowlist and belongs to no board.
+C5_OUTPUT = """Detecting chip type... ESP32-C5
+Chip is ESP32-C5 (revision v1.0)
+Features: Wi-Fi 6 (dual-band), BT 5 (LE), IEEE802.15.4, Single Core + LP Core, 240MHz
+Crystal is 48MHz
+MAC: 38:44:be:ff:fe:0e:9c:38
+BASE MAC: 38:44:be:0e:9c:38
+MAC_EXT: ff:fe
+"""
+
+_f = detect.parse_esptool(C5_OUTPUT)
+ck(_f.get("mac") == "38:44:be:0e:9c:38",
+   "the C5's BASE MAC is taken, not the first six octets of its EUI-64")
+ck(_f.get("mac") != "38:44:be:ff:fe:0e",
+   "the ff:fe EUI-64 padding never reaches the MAC field")
+
+# The plain single-line form must still work, and must not be affected by the
+# lookahead added to defend against the EUI-64.
+ESP32_OUTPUT = """Chip is ESP32-D0WD-V3 (revision v3.1)
+Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+Crystal is 40MHz
+MAC: e0:8c:fe:2e:d6:2c
+"""
+ck(detect.parse_esptool(ESP32_OUTPUT).get("mac") == "e0:8c:fe:2e:d6:2c",
+   "a six-octet-only MAC line still parses")
+
+# The S3 prints its MAC twice, after a warning. Both are the same value.
+S3_OUTPUT = """Chip is ESP32-S3 (QFN56) (revision v0.2)
+Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)
+MAC: ac:27:6e:a7:a6:dc
+Warning: ESP32-S3 has no Chip ID. Reading MAC instead.
+MAC: ac:27:6e:a7:a6:dc
+"""
+ck(detect.parse_esptool(S3_OUTPUT).get("mac") == "ac:27:6e:a7:a6:dc",
+   "a repeated MAC line parses to that MAC")
+
 print("\n=== %d checks, %d failed ===" % (checks, fails))
 sys.exit(1 if fails else 0)

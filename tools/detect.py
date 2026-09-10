@@ -76,7 +76,27 @@ CHIP_RE = re.compile(r"(?:Chip is|Chip type:)\s+([A-Za-z0-9][A-Za-z0-9\-]*)"
                      r"(?:\s*\(revision\s*([^)]+)\))?")
 DETECTING_RE = re.compile(r"Detecting chip type\.\.\.\s*([A-Za-z0-9\-]+)")
 FEATURES_RE = re.compile(r"Features:\s*(.+)")
-MAC_RE = re.compile(r"\bMAC:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})")
+# Two regexes, because esptool prints the MAC differently on the 802.15.4 parts.
+# Most chips print one line:
+#     MAC: e0:8c:fe:2e:d6:2c
+# The C5, C6 and H2 print the EUI-64 FIRST and the real six-byte MAC under it:
+#     MAC: 38:44:be:ff:fe:0e:9c:38
+#     BASE MAC: 38:44:be:0e:9c:38
+#     MAC_EXT: ff:fe
+# An EUI-64 is the MAC with ff:fe inserted in the MIDDLE, so the first six
+# octets are 38:44:be:ff:fe:0e - three real bytes, the padding, one real byte.
+# That is not a MAC the board will ever report and not a MAC any human would
+# write into a profile, so the old six-octet regex silently produced an
+# identifier that matched nothing. Same failure mode as VARIANT_RE above: the
+# allowlist is not consulted, decide() falls through to "ambiguous", and the
+# operator is asked to name a board the registry already knew. It also went
+# into NVS as board_mac, so the board's own record of itself was wrong too.
+#
+# BASE MAC wins when present. The negative lookahead stops the plain pattern
+# from biting off the first six octets of an EUI-64 when it does not.
+BASE_MAC_RE = re.compile(r"\bBASE MAC:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})")
+MAC_RE = re.compile(r"\bMAC:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})"
+                    r"(?!:[0-9A-Fa-f]{2})")
 FLASH_RE = re.compile(r"(?:Detected flash size|Flash size):\s*(\d+)\s*(MB|KB)", re.I)
 CRYSTAL_RE = re.compile(r"Crystal (?:is|frequency:)\s*(\d+)\s*MHz", re.I)
 # ESP32-C5 / -S3 / -H2 / -P4 style part numbers. ESP32-D0WD and ESP32-PICO are
@@ -442,7 +462,7 @@ def parse_esptool(text):
         size = int(m.group(1))
         facts["flash_size_mb"] = size if m.group(2).upper() == "MB" else max(1, size // 1024)
 
-    m = MAC_RE.search(text)
+    m = BASE_MAC_RE.search(text) or MAC_RE.search(text)
     if m:
         facts["mac"] = m.group(1).lower()
 
