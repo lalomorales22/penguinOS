@@ -496,7 +496,7 @@ effect until reboot; an empty array means everything applied live.
 | `ui.theme` | string | a `name` from `/api/themes` | live |
 | `ui.bright` | number | 0–255 backlight | live, applied on change |
 | `sys.tz` | string | POSIX TZ, e.g. `PST8PDT,M3.2.0,M11.1.0` | live |
-| `sys.autostart` | string | an `id` from `/api/apps`, or `""` | reboot-ish |
+| `sys.autostart` | string | an `id` from `/api/apps`, or `""`. Defaults to `board` | reboot-ish |
 
 Every key is ≤ 15 bytes. **Do not add a longer one** — it will not fit an NVS
 key and the failure appears at write time, not at compile time.

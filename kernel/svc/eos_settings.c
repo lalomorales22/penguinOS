@@ -154,8 +154,13 @@ void eos_settings_defaults(eos_settings_t *s)
     s->brain_model[0]   = '\0';
     s->brain_system[0]  = '\0';
     s->sys_tz[0]        = '\0';
-    s->sys_autostart[0] = '\0';
     snprintf(s->ui_theme, sizeof s->ui_theme, "%s", EOS_SETTINGS_THEME_DEFAULT);
+    // NOT empty, unlike the strings above. A board whose address you cannot
+    // read is a board you cannot open, and on a fresh unit there is no web app
+    // to go and set this from - which is the circular problem that made it a
+    // default instead of a preference.
+    snprintf(s->sys_autostart, sizeof s->sys_autostart, "%s",
+             EOS_SETTINGS_AUTOSTART_DEFAULT);
 
     s->brain_port = EOS_SETTINGS_PORT_DEFAULT;
     s->brain_max  = EOS_SETTINGS_MAXTOK_DEFAULT;

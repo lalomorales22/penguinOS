@@ -89,6 +89,19 @@
 #define EOS_SETTINGS_THEME_DEFAULT "cyd-amber"
 #endif
 
+// The window a board wakes up looking at. "board", not empty, and not the
+// buddy: the first thing anyone needs from a board they just plugged in is its
+// ADDRESS, and that window is the only place the full story lives - what this
+// board is, and where it went on the network. Pip is charm and charm can wait
+// one keystroke.
+//
+// Empty is still meaningful and still supported: it means "leave the window
+// manager's own focus alone". This is the DEFAULT, not a floor, so anyone who
+// clears the setting gets that behaviour back.
+#ifndef EOS_SETTINGS_AUTOSTART_DEFAULT
+#define EOS_SETTINGS_AUTOSTART_DEFAULT "board"
+#endif
+
 #define EOS_SETTINGS_PORT_DEFAULT   80
 #define EOS_SETTINGS_MAXTOK_DEFAULT 256
 #define EOS_SETTINGS_BRIGHT_DEFAULT 255

@@ -269,7 +269,10 @@ static void t_defaults(void)
     CKS(d.net_host,      "", "net.host empty means derive it from the MAC");
     CKS(d.brain_host,    "", "brain.host empty means discover it");
     CKS(d.sys_tz,        "", "sys.tz empty means UTC");
-    CKS(d.sys_autostart, "", "nothing autostarts");
+    // NOT empty, unlike the three above it. A fresh board wakes up looking at
+    // the window that carries its address, because on a board nobody has set
+    // up yet there is no web app to go and choose this from.
+    CKS(d.sys_autostart, "board", "a fresh board wakes up on the board window");
     eos_settings_defaults(NULL);   // must not crash
     checks++;
 }
