@@ -128,13 +128,30 @@ static void decode(void)
     (void)eos_ble_decode_mouse(rep, 3, &m);
     CKI(m.buttons, EOS_BTN_LEFT | EOS_BTN_RIGHT, "byte 0 is the button bitmap");
 
-    // Everything that is not three bytes. The eight-byte case is the keyboard
-    // on the same bond and the four-byte case is its media keys; decoding
-    // either as a pointer is how a volume key becomes a middle click.
+    // Four bytes is a report-protocol pointer: the axes are bytes 0 and 1 and
+    // there are no buttons in it.
+    //
+    // THIS TEST USED TO ASSERT THE OPPOSITE, and it was asserting a bug. It
+    // said four bytes was the keyboard's media keys and that decoding one as a
+    // pointer was "how a volume key becomes a middle click". On the K809 it is
+    // the trackpad, and refusing it is what left the cursor drawn and
+    // motionless: 84 reports captured with a finger on the pad were all four
+    // bytes on one handle, byte 0 ranging across the whole signed range - which
+    // no button mask does - and bytes 2 and 3 zero throughout.
+    memset(&m, 0, sizeof m);
+    rep[0] = 0xE7; rep[1] = 0x01; rep[2] = 0x00; rep[3] = 0x00;
+    CK(eos_ble_decode_mouse(rep, 4, &m), "four bytes is a report-protocol pointer");
+    CKI(m.dx, -25, "byte 0 sign extends");
+    CKI(m.dy, 1,   "byte 1 is the other axis");
+    CKI(m.buttons, 0, "a four-byte report carries no buttons");
+
+    // Everything that is neither three nor four bytes. The eight-byte case is
+    // the keyboard on the same bond, and reading it as a pointer is how a
+    // keystroke becomes a click.
     {
         int len;
         for (len = 0; len <= 8; len++) {
-            if (len == 3) continue;
+            if (len == 3 || len == 4) continue;
             memset(rep, 0x41, sizeof rep);
             checks++;
             if (eos_ble_decode_mouse(rep, len, &m)) {

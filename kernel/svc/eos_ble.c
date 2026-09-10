@@ -149,17 +149,51 @@ bool eos_ble_decode_mouse(const uint8_t *rep, int len, eos_ble_mouse_t *out)
 {
     if (!rep || !out) return false;
 
-    // Exactly three. See eos_ble.h: four bytes is this keyboard's consumer
-    // page, eight is its keyboard, and neither is a pointer.
-    if (len != 3) return false;
-
+    // Three bytes is the HID BOOT mouse: buttons, then the two deltas.
+    //
     // The cast to int8_t IS the sign extension, and it is the only thing
     // standing between the owner and a cursor that can only travel right and
     // down. rep[] is uint8_t, so 0xFF is 255 here and -1 one line later.
-    out->dx      = (int16_t)(int8_t)rep[1];
-    out->dy      = (int16_t)(int8_t)rep[2];
-    out->buttons = rep[0];
-    return true;
+    if (len == 3) {
+        out->dx      = (int16_t)(int8_t)rep[1];
+        out->dy      = (int16_t)(int8_t)rep[2];
+        out->buttons = rep[0];
+        return true;
+    }
+
+    // Four bytes is a REPORT-protocol pointer, and this function used to
+    // refuse it. That refusal is why the cursor rendered and never moved: the
+    // K809's trackpad notifies four bytes on one handle and every one of them
+    // was dropped here, so eos_pointer_feed() was never reached. The comment
+    // that used to sit above this said four bytes was the consumer-control
+    // page. MEASURED, over 84 reports captured while a finger was on the pad:
+    // it is not.
+    //
+    // The layout is NOT the boot layout with a wheel appended. Byte 0 takes
+    // values across the whole signed range - 0xe7, 0xf7, 0x19, 0x11 - and a
+    // HID button mask uses the low two or three bits and nothing else, so byte
+    // 0 cannot be buttons. Bytes 2 and 3 were zero in all 84, which is a wheel
+    // and a pan that nobody turned. That leaves bytes 0 and 1 as the two axes.
+    //
+    // WHICH axis is which, and their signs, is NOT established here. Summing a
+    // rate-limited log could not tell them apart - a rightward pass and a
+    // downward pass produced the same totals, because the diagnostic samples
+    // one report per 150 ms and the sample is effectively random. It is a
+    // ten-second question in front of the glass and a long one from a log, so
+    // it is answered there: move right, look, and swap these two lines if the
+    // cursor goes down.
+    if (len == 4) {
+        out->dx      = (int16_t)(int8_t)rep[0];
+        out->dy      = (int16_t)(int8_t)rep[1];
+        // Buttons are not in this report. The pad sends its clicks somewhere
+        // else - three-byte reports carrying a nonzero first byte turned up in
+        // the same capture - so reporting 0 here is the honest answer rather
+        // than reading a wheel as a click.
+        out->buttons = 0;
+        return true;
+    }
+
+    return false;
 }
 
 // Higher is better. A HID advertiser outranks anything else whatever the

@@ -282,11 +282,12 @@ typedef struct {
     uint8_t buttons;    // EOS_BTN_* in eos_input.h, which is HID's own bitmap
 } eos_ble_mouse_t;
 
-// Decodes one HID boot-mouse input report. Returns false - and writes nothing
-// - for anything that is not one, which includes the eight-byte keyboard
-// report and the four-byte consumer-control report the same keyboard sends on
-// two other handles. Reports arrive from an untrusted peripheral, so every
-// length from 0 to 255 and every byte value is safe to hand to this.
+// Decodes one HID pointer input report, in either shape a trackpad sends:
+// THREE bytes is the boot mouse, buttons first; FOUR is a report-protocol
+// pointer whose first two bytes are the axes. Returns false - and writes
+// nothing - for any other length, which is what keeps the eight-byte keyboard
+// report out. Reports arrive from an untrusted peripheral, so every length
+// from 0 to 255 and every byte value is safe to hand to this.
 bool eos_ble_decode_mouse(const uint8_t *rep, int len, eos_ble_mouse_t *out);
 
 // Merges one advertisement into a scan table, in place. Returns the index it
