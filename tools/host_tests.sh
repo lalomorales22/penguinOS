@@ -103,6 +103,7 @@ run draw    -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c firmware/main/eos_app_camera.c \
             firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
             firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
+            firmware/main/eos_app_tetris.c \
             firmware/main/eos_led.c \
             kernel/hal/backend/storage/eos_storage_idf.c \
             kernel/hal/backend/esp_lcd/eos_display_st7789.c kernel/wm/eos_wm.c \
@@ -117,6 +118,7 @@ run appsui  -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c firmware/main/eos_app_camera.c \
             firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
             firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
+            firmware/main/eos_app_tetris.c \
             firmware/main/eos_led.c firmware/main/eos_shell_draw.c \
             kernel/hal/backend/esp_lcd/eos_display_st7789.c \
             kernel/hal/backend/storage/eos_storage_idf.c \
@@ -134,6 +136,7 @@ run dispatch -Ikernel/hal/include -Ikernel/wm/include -Ikernel/theme/include \
             firmware/main/eos_app_registry.c firmware/main/eos_app_basic.c firmware/main/eos_app_camera.c \
             firmware/main/eos_app_chat.c firmware/main/eos_app_files.c \
             firmware/main/eos_app_media.c firmware/main/eos_app_party.c \
+            firmware/main/eos_app_tetris.c \
             firmware/main/eos_led.c \
             kernel/hal/backend/esp_lcd/eos_display_st7789.c \
             kernel/hal/backend/storage/eos_storage_idf.c \

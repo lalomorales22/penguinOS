@@ -59,6 +59,7 @@ typedef enum {
     EOS_APP_MEDIA,       // the WS2812 on GPIO8. Light, not sound.
     EOS_APP_PARTY,       // the ten-second demo
     EOS_APP_CAMERA,      // a viewfinder onto a penguinOS camera node
+    EOS_APP_TETRIS,      // the first game window
     EOS_APP_COUNT
 } eos_app_id_t;
 
@@ -229,6 +230,16 @@ bool eos_app_party_key(const eos_event_t *e);
 // what every moving thing in that window is a pure function of — the draw
 // reads it and never advances it.
 void     eos_app_party_tick(bool visible, uint32_t now_ms, eos_buddy_t *buddy);
+
+// The game. tick() runs the clock and reads the held soft drop; key() takes
+// the presses that should fire once. take_dirty() is how a falling piece
+// reaches the panel without the loop knowing what Tetris is, and active() is
+// true only while a round is in play - a finished board asks for no frames.
+void     eos_app_draw_tetris(const eos_app_ctx_t *c, eos_rect_t r);
+bool     eos_app_tetris_key(const eos_event_t *e);
+void     eos_app_tetris_tick(bool visible, uint32_t now_ms);
+bool     eos_app_tetris_take_dirty(void);
+bool     eos_app_tetris_active(void);
 uint32_t eos_app_party_phase(void);
 bool     eos_app_party_active(void);
 

@@ -59,6 +59,11 @@ static const eos_app_t APPS[EOS_APP_COUNT] = {
 
     { "camera", "camera", "a viewfinder onto a penguinOS camera node",
       0, eos_app_draw_camera,   NULL },
+
+    // A game, and the first window that is one. "arcade" rather than "tetris"
+    // because the tab cell is fourteen pixels and the name has to survive it.
+    { "arcade", "arcade", "tetris. arrows move and rotate, space drops, enter starts.",
+      0, eos_app_draw_tetris,   eos_app_tetris_key },
 };
 
 // ============================================================ the lookups
@@ -182,6 +187,11 @@ void eos_app_tick(const eos_shell_view_t *v, uint32_t now_ms)
     // asked for.
     eos_app_files_tick(vis[EOS_APP_FILES], now_ms);
 
+    // The game's clock. Visibility-gated for the same reason Files is, but the
+    // stake is higher: a well that kept falling behind a tab would be lost by
+    // the time it came back, and nobody put it down mid-piece to lose it.
+    eos_app_tetris_tick(vis[EOS_APP_TETRIS], now_ms);
+
     // Party takes the LED and the buddy's mood while it is on screen and hands
     // both back when it is not, which is why it is told rather than asked.
     eos_app_party_tick(vis[EOS_APP_PARTY], now_ms, s_buddy);
@@ -212,6 +222,7 @@ bool eos_app_damage(const eos_shell_view_t *v)
     if (eos_app_media_take_dirty() && eos_shell_damage_app(v, EOS_APP_MEDIA)) any = true;
     if (eos_app_party_active()     && eos_shell_damage_app(v, EOS_APP_PARTY)) any = true;
     if (eos_app_camera_take_dirty() && eos_shell_damage_app(v, EOS_APP_CAMERA)) any = true;
+    if (eos_app_tetris_take_dirty() && eos_shell_damage_app(v, EOS_APP_TETRIS)) any = true;
     return any;
 }
 
@@ -232,6 +243,9 @@ bool eos_app_wants_fast(void)
     // times a second is a slideshow. This is what lets those two windows ask
     // for the same rate the buddy already gets, and only while they are up.
     if (s_fast) return true;
+    // A round in play. Gravity bottoms out at 100 ms and the idle loop sleeps
+    // 250, so without this a piece would fall in visible jumps.
+    if (eos_app_tetris_active()) return true;
     eos_led_get(&st);
     return s_led_shown && eos_led_fx_animated(st.fx);
 }
