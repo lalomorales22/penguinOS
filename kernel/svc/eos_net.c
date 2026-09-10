@@ -1228,7 +1228,7 @@ static int idf_sta_join(void *ud, const char *ssid, const char *psk, uint32_t bu
                 // MEASURED: two refused attempts burned 7.3 s of the 15 s
                 // budget, the third associated at -47 dBm with 655 ms left,
                 // and the loop fell out and called esp_wifi_disconnect() on a
-                // link that was working. From the outside that is "ExampleNet
+                // link that was working. From the outside that is "that network
                 // is out of reach" about an access point one metre away.
                 //
                 // Once, and only when associated: a link that never comes up
