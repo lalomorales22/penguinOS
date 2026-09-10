@@ -880,6 +880,9 @@ int eos_net_dns_reply(const uint8_t *query, size_t qlen,
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_log.h"
+// For the free-heap figures reported alongside each SoftAP client event.
+#include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "mdns.h"
@@ -947,6 +950,39 @@ static void net_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
         if (s_joining) xEventGroupSetBits(s_events, NET_BIT_ASSOC);
+
+    // The SoftAP's own clients. These are NOT decoration and they are not
+    // temporary: until they existed, nothing in penguinOS logged what happened
+    // to a phone that joined the setup portal, so "the page spins forever" and
+    // "the phone never got an address" produced identical consoles - which is
+    // to say, silence. The C5 shipped unable to hand out a DHCP lease and it
+    // took instrumenting this path to find out, after two wrong theories.
+    //
+    // They are cheap: an AP client associating or being addressed happens a
+    // handful of times per setup session and never once the board is in STA
+    // mode. The heap figures ride along because heap exhaustion is what breaks
+    // this path - a phone that associates and then leaves with no DHCP line
+    // between the two is the signature of a starved lease.
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
+        const wifi_event_ap_staconnected_t *e =
+            (const wifi_event_ap_staconnected_t *)data;
+        ESP_LOGI(TAG, "portal STA associated aid=%u, heap %u free / %u largest",
+                 (unsigned)e->aid,
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
+        const wifi_event_ap_stadisconnected_t *e =
+            (const wifi_event_ap_stadisconnected_t *)data;
+        ESP_LOGW(TAG, "portal STA left aid=%u reason=%u",
+                 (unsigned)e->aid, (unsigned)e->reason);
+    } else if (base == IP_EVENT && id == IP_EVENT_AP_STAIPASSIGNED) {
+        const ip_event_ap_staipassigned_t *e =
+            (const ip_event_ap_staipassigned_t *)data;
+        ESP_LOGI(TAG, "portal DHCP handed out " IPSTR ", heap %u free / %u largest",
+                 IP2STR(&e->ip),
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *e = (const ip_event_got_ip_t *)data;
         s_ip = ntohl(e->ip_info.ip.addr);
@@ -996,6 +1032,9 @@ static esp_err_t net_ensure_init(void)
 
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, net_event, NULL, NULL);
     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, net_event, NULL, NULL);
+    // Paired with the SoftAP client branches in net_event(). Without this the
+    // "DHCP handed out" line never fires and the portal is unobservable again.
+    esp_event_handler_instance_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, net_event, NULL, NULL);
 
     s_inited = true;
     return ESP_OK;
