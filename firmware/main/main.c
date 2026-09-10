@@ -58,6 +58,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_netif_sntp.h"
 
 #include "eos_board.h"
 #include "eos_display.h"
@@ -648,11 +649,34 @@ static void on_passkey(uint32_t passkey, const eos_ble_dev_t *peer, void *user)
 // in the loop, where the display is safe to touch.
 static volatile bool net_dirty = true;
 
+// The wall clock. sys.tz has been applied since boot and eos_settings_bind
+// re-applies it live, but a zone is a rule for converting an instant, not an
+// instant - and until something asks the network what time it is, the RTC
+// reads 1970 and every file on the card is stamped 55 years old.
+//
+// Started on the first IP and never again: esp_netif_sntp_init() refuses a
+// second call, and the flag is what keeps a reconnect from turning into one.
+// Nothing waits on the result. The panel shows the uptime it already has and
+// swaps to the time of day when one arrives, which is the right order for a
+// board that is useful before it is synchronised.
+static bool sntp_up;
+
+static void time_sync_start(void)
+{
+    esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    if (sntp_up) return;
+    if (esp_netif_sntp_init(&cfg) != ESP_OK) return;
+    sntp_up = true;
+    ESP_LOGI(TAG, "clock  sntp started, zone \"%s\"",
+             settings.v.sys_tz[0] ? settings.v.sys_tz : "UTC");
+}
+
 static void on_net_event(eos_net_event_t ev, const eos_net_t *n, void *ud)
 {
     (void)ud;
     ESP_LOGI(TAG, "net    %s: mode %s, cred %s", eos_net_event_name(ev),
              eos_net_mode_name(eos_net_mode(n)), eos_net_cred_name(eos_net_cred(n)));
+    if (eos_net_mode(n) == EOS_NET_STA) time_sync_start();
     net_dirty = true;
 }
 
@@ -1278,6 +1302,12 @@ void app_main(void)
             buddy_shown = eos_shell_app_visible(&view, EOS_APP_BUDDY);
             refresh_status(now);
             view.uptime_ms    = now;
+            {
+                // Anything before 2020 is a clock that has never been set, and
+                // eos_settings_bind draws the same line in the same place.
+                time_t t = time(NULL);
+                view.epoch = (t > 1577836800L) ? (uint32_t)t : 0u;
+            }
             board_lines(b, &view, &net);
             view.heap_free    = bar.free_heap;
             view.heap_largest = heap_largest();

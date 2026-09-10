@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "eos_font.h"
 #include "eos_input.h"
@@ -31,13 +32,39 @@
 
 void eos_app_draw_clock(const eos_app_ctx_t *c, eos_rect_t r)
 {
-    char buf[16];
+    char big_buf[16], sub_buf[24];
     uint32_t sec = c->view->uptime_ms / 1000u;
     const eos_font_t *f;
+    const char *label;
     int16_t y;
 
-    snprintf(buf, sizeof buf, "%02u:%02u:%02u",
-             (unsigned)(sec / 3600u), (unsigned)((sec / 60u) % 60u), (unsigned)(sec % 60u));
+    // Two clocks, and which one gets the big face depends on whether there is
+    // a time of day to show. Before SNTP lands the epoch is 0 and the uptime
+    // IS the clock; after it lands the time of day is what a person walking
+    // past wants and the uptime moves to the line underneath. Nothing here
+    // calls time(): see the note on eos_shell_view.epoch for why a window
+    // replayed once per band must not.
+    if (c->view->epoch) {
+        time_t     t = (time_t)c->view->epoch;
+        struct tm  lt;
+        localtime_r(&t, &lt);
+        snprintf(big_buf, sizeof big_buf, "%02d:%02d:%02d",
+                 lt.tm_hour, lt.tm_min, lt.tm_sec);
+        // The date under it, and the uptime under that when there is room.
+        // Reduced before printing rather than trusted: -Werror=format-truncation
+        // is right that a struct tm from a bad epoch can carry a year that does
+        // not fit the field, and a clamped date is a better answer than a
+        // truncated one that silently loses its day.
+        snprintf(sub_buf, sizeof sub_buf, "%04d-%02d-%02d",
+                 (lt.tm_year + 1900) % 10000, (lt.tm_mon + 1) % 100,
+                 lt.tm_mday % 100);
+        label = sub_buf;
+    } else {
+        snprintf(big_buf, sizeof big_buf, "%02u:%02u:%02u",
+                 (unsigned)(sec / 3600u), (unsigned)((sec / 60u) % 60u),
+                 (unsigned)(sec % 60u));
+        label = "uptime";
+    }
 
     // The largest face the tile can actually hold, not the largest face there
     // is. The 12x20 digits are twenty rows tall and a tile body can be twelve;
@@ -48,13 +75,36 @@ void eos_app_draw_clock(const eos_app_ctx_t *c, eos_rect_t r)
     if ((int16_t)f->h > r.h) f = c->ui;
     if ((int16_t)f->h > r.h) return;
 
-    y = (int16_t)(r.y + (r.h - (int16_t)f->h) / 2);
-    if (y < r.y) y = r.y;
-    eos_display_text_center(r, y, f, c->accent, buf);
+    // Three lines when the time of day is showing and the tile is tall enough
+    // for all of them; the block is centred on what will actually be drawn so
+    // a two-line clock does not sit high in a tall tile.
+    {
+        int16_t lines_h = (int16_t)(f->h + 3 + c->ui->h);
+        bool    want_up = (c->view->epoch != 0) &&
+                          (lines_h + 1 + (int16_t)c->ui->h <= r.h);
+        if (want_up) lines_h = (int16_t)(lines_h + 1 + c->ui->h);
 
-    y = (int16_t)(y + (int16_t)f->h + 3);
-    if (y + (int16_t)c->ui->h <= r.y + r.h)
-        eos_display_text_center(r, y, c->ui, c->muted, "uptime");
+        y = (int16_t)(r.y + (r.h - lines_h) / 2);
+        if (y < r.y) y = r.y;
+
+        eos_display_text_center(r, y, f, c->accent, big_buf);
+        y = (int16_t)(y + (int16_t)f->h + 3);
+
+        if (y + (int16_t)c->ui->h <= r.y + r.h)
+            eos_display_text_center(r, y, c->ui, c->muted, label);
+
+        if (want_up) {
+            y = (int16_t)(y + (int16_t)c->ui->h + 1);
+            // 49 days of uptime wraps the millisecond counter long before the
+            // hours field overflows, so the modulo is for the compiler rather
+            // than for any board that will ever run this long.
+            snprintf(sub_buf, sizeof sub_buf, "up %u:%02u:%02u",
+                     (unsigned)((sec / 3600u) % 100000u),
+                     (unsigned)((sec / 60u) % 60u), (unsigned)(sec % 60u));
+            if (y + (int16_t)c->ui->h <= r.y + r.h)
+                eos_display_text_center(r, y, c->ui, c->muted, sub_buf);
+        }
+    }
 }
 
 // ------------------------------------------------------------------ board

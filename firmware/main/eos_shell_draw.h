@@ -74,6 +74,15 @@ typedef struct eos_shell_view {
     uint32_t heap_largest;
     uint32_t uptime_ms;
 
+    // Unix time, sampled with the rest of the frame state and for the same
+    // reason. The clock window must NOT call time() itself: draw is replayed
+    // once per band - forty times on the 4.0in panel - and a seconds digit
+    // that ticked over between band one and band forty would tear the frame in
+    // half, showing two different times in one picture. 0 means the clock has
+    // never been set, which is a state the window has to show rather than a
+    // number it can print.
+    uint32_t epoch;
+
     // The app launcher overlay. NULL, or a launcher that is not open, draws
     // nothing at all and costs the scene one branch. When it IS open it is the
     // last thing painted, over every tile and over the bar, because that is
