@@ -9,6 +9,18 @@ around a panel: every profile carries `display.controller`, `display.pins`,
 for it would have to lie in a dozen fields, and the whole point of that registry
 is that its fields are measured facts.
 
+## Flashing it
+
+```bash
+tools/flash.sh --camera
+```
+
+The universal flasher grew that flag when the second C5 bring-up noticed it had
+none: plugged in without it, this node matches no profile, and the script's only
+advice was "adding one is the fix" — the exact thing the rest of this file tells
+you not to do. `--camera` identifies nothing, generates no board header, writes
+no `board_id` into NVS, and builds `firmware-cam/` instead of `firmware/`.
+
 It is a **camera node** instead. `firmware-cam/` is a separate ESP-IDF project
 that runs the parts of penguinOS which do not need a display — `eos_net.c` for
 Wi-Fi and provisioning, `eos_httpd.c` for the server — and serves frames on

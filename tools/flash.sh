@@ -43,6 +43,7 @@ OPT_NO_NVS=0
 OPT_BAUD=""
 OPT_BUILD_DIR=""
 OPT_PROJECT=""
+OPT_CAMERA=0
 OPT_SD_PORT=8765
 
 usage() {
@@ -65,6 +66,11 @@ usage: tools/flash.sh [options]
   --baud N             override the upload baud from the profile
   --build-dir DIR      where the built image is (default: <repo>/build/<profile>)
   --project DIR        ESP-IDF project to build (default: autodetected)
+  --camera             flash the CAMERA NODE from firmware-cam/ instead of a
+                       board. It has no board profile on purpose (see
+                       boards/xiao-esp32s3-sense/README.md), so nothing is
+                       identified, no board header is generated and no
+                       profile is stamped into NVS.
   --no-build           do not build; flash whatever is already in the build dir
   --no-nvs             do not stamp the chosen profile into the board's NVS
   --sd-port N          port for --provision-sd (default: 8765)
@@ -95,6 +101,7 @@ while [ $# -gt 0 ]; do
         --baud=*)      OPT_BAUD="${1#*=}"; shift ;;
         --build-dir)   OPT_BUILD_DIR="${2:-}"; shift 2 ;;
         --build-dir=*) OPT_BUILD_DIR="${1#*=}"; shift ;;
+        --camera)      OPT_CAMERA=1; shift ;;
         --project)     OPT_PROJECT="${2:-}"; shift 2 ;;
         --project=*)   OPT_PROJECT="${1#*=}"; shift ;;
         --sd-port)     OPT_SD_PORT="${2:-}"; shift 2 ;;
@@ -898,7 +905,31 @@ CHOSEN=""
 # just asked, so asking it a second time is noise.
 CHOSEN_BY_HUMAN=0
 
-if [ -n "$OPT_PROFILE" ]; then
+if [ "$OPT_CAMERA" -eq 1 ]; then
+    # The camera node is not a board and deliberately has no profile: the
+    # registry is built around a panel and every profile must carry a display
+    # controller, pins, a render tier and a band height. A screenless device
+    # would have to lie in a dozen fields. boards/xiao-esp32s3-sense/README.md
+    # is the long version.
+    #
+    # So nothing here is looked up. The three facts the write needs are stated,
+    # and everything downstream that is about a PROFILE - the generated board
+    # header, the NVS stamp - is skipped rather than faked.
+    CHOSEN="camera"
+    EOS_PROFILE_NAME="penguinOS camera node"
+    EOS_PROFILE_TARGET="esp32s3"
+    EOS_PROFILE_TIER="-"
+    EOS_UPLOAD_BAUD=460800
+    EOS_MONITOR_BAUD=115200
+    EOS_NEEDS_CONFIRM=0
+    [ -n "$OPT_PROJECT" ] || OPT_PROJECT="$REPO/firmware-cam"
+    [ -d "$OPT_PROJECT" ] || die "no camera project at $OPT_PROJECT"
+    say "  profile   none - camera node from $OPT_PROJECT"
+    if [ -n "$EOS_CHIP_TARGET" ] && [ "$EOS_CHIP_TARGET" != "esp32s3" ]; then
+        warn "the camera node is an ESP32-S3 project and this is $EOS_CHIP_TARGET."
+        ask "flash it anyway?" || exit 1
+    fi
+elif [ -n "$OPT_PROFILE" ]; then
     list_contains "$EOS_PROFILE_IDS" "$OPT_PROFILE" \
         || die "no profile called $OPT_PROFILE. Known: $EOS_PROFILE_IDS"
     CHOSEN="$OPT_PROFILE"
@@ -917,8 +948,25 @@ elif [ "$EOS_DECISION" = "unique" ]; then
     say "  profile   $CHOSEN"
 elif [ "$EOS_DECISION" = "none" ]; then
     say ""
-    say "This chip matches no profile in the registry. Adding one is the fix -"
-    say "boards/README.md has the checklist. Nothing was written."
+    say "This chip matches no profile in the registry."
+    # Not every ESP in this fleet is a board. The camera node is an ESP32-S3
+    # with no screen and no profile BY DESIGN, so telling its owner to go and
+    # write one is the wrong answer to the right question - and it was the only
+    # answer this script gave until the second C5 bring-up went looking.
+    if [ -d "$REPO/firmware-cam" ]; then
+        say ""
+        say "If this is the CAMERA NODE - an ESP32-S3 with a camera module and no"
+        say "screen - it has no profile on purpose. Flash it with:"
+        say ""
+        say "    tools/flash.sh --camera --port $EOS_PORT"
+        say ""
+        say "Otherwise adding a profile is the fix - boards/README.md has the"
+        say "checklist."
+    else
+        say "Adding one is the fix - boards/README.md has the checklist."
+    fi
+    say ""
+    say "Nothing was written."
     exit 1
 else
     choose_profile
@@ -926,7 +974,10 @@ fi
 
 [ -n "$CHOSEN" ] || die "no board profile chosen; nothing written"
 
-load_profile_vars "$CHOSEN"
+# The camera node set its own vars above; there is no profile to load.
+if [ "$OPT_CAMERA" -eq 0 ]; then
+    load_profile_vars "$CHOSEN"
+fi
 
 # The one-time human confirmation the registry asks for. It is folded into the
 # normal pre-write prompt rather than being a second question, but it is not
@@ -959,7 +1010,11 @@ fi
 
 # Remember the answer before writing anything: if the flash fails halfway, the
 # identification was still work the human did and should not have to redo.
-if [ -n "$EOS_MAC" ] && [ "$EOS_DECISION" != "pinned" ]; then
+# Not for the camera node. This cache maps a MAC to a BOARD PROFILE ID, and
+# "camera" is not one - detect.py would read it back, fail to find it in the
+# registry and report the entry as stale, which is a confusing way to say
+# something that was never true. A device with no profile gets no cache line.
+if [ -n "$EOS_MAC" ] && [ "$EOS_DECISION" != "pinned" ] && [ "$OPT_CAMERA" -eq 0 ]; then
     if [ "$OPT_DRY_RUN" -eq 1 ]; then
         say "  cache     would remember $EOS_MAC as $CHOSEN"
     else
@@ -980,7 +1035,9 @@ fi
 BUILD_DIR="$(build_dir_for "$CHOSEN")"
 
 head1 "Build"
-generate_header "$CHOSEN"
+# No board header for the camera node: it does not compile eos_kernel and has
+# no profile to generate one from.
+[ "$OPT_CAMERA" -eq 1 ] || generate_header "$CHOSEN"
 if ! build_image "$CHOSEN" "$BUILD_DIR"; then
     say ""
     say "Nothing was written to the board."
@@ -988,7 +1045,10 @@ if ! build_image "$CHOSEN" "$BUILD_DIR"; then
 fi
 
 write_image "$CHOSEN" "$BUILD_DIR" "$BAUD"
-stamp_nvs "$CHOSEN" "$BUILD_DIR" "$BAUD"
+# board_id in NVS is what a board reads back to know which profile it is. The
+# camera node has none, so stamping one would be writing a lie it might later
+# believe.
+[ "$OPT_CAMERA" -eq 1 ] || stamp_nvs "$CHOSEN" "$BUILD_DIR" "$BAUD"
 
 head1 "Done"
 note "$CHOSEN is on $EOS_PORT"

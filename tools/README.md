@@ -31,6 +31,11 @@ So the registry contains **two pairs of boards that esptool cannot separate**:
 | `wavvy-ili9488-40` / `wavvy-ili9488-35` | chip, flash, controller, wiring, CP2102 bridge reporting USB serial `0001` | the SPI clock the panel survives — 80MHz vs 40MHz |
 | `waveshare-c5-lcd-147` / `wavvy-oled-c5` | ESP32-C5, 4MB, native USB | what is soldered on — a 320x172 SPI LCD vs a 128x64 I2C OLED |
 
+**Not every ESP in the fleet is a board.** The camera node is an ESP32-S3 with a
+camera module and no screen, and it has no profile deliberately — see
+`boards/xiao-esp32s3-sense/README.md`. Detection reports `decision none` for it,
+which is correct and not a gap in the registry. Flash it with `--camera`.
+
 Getting the first pair wrong does not fail. It renders structured block
 corruption that looks like a dead panel. That is the reason this is a flasher
 with an identification phase rather than a one-liner, and the reason `--yes`
@@ -98,12 +103,14 @@ tools/flash.sh --probe              # decide the panel by eye, then flash
 tools/flash.sh --profile cyd-2432s024n --yes
 tools/flash.sh --dry-run            # print every write instead of doing it
 tools/flash.sh --provision-sd       # serve microSD contents over HTTP
+tools/flash.sh --camera             # the camera node, not a board
 ```
 
 | Flag | Effect |
 |---|---|
 | `--port PORT` | which serial device; required when more than one board is attached |
 | `--profile ID` | skip identification entirely |
+| `--camera` | flash the camera node from `firmware-cam/`. No profile, no board header, no NVS stamp |
 | `--list` | boards, registry and toolchain, then stop |
 | `--identify` | identify and stop |
 | `--probe` | build and upload the panel prober, then ask which pass rendered |
