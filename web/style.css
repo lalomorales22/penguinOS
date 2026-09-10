@@ -46,9 +46,19 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 13px/1.45 var(--mono);
-  min-height: 100vh;
   overscroll-behavior-y: none;
   padding-bottom: env(safe-area-inset-bottom);
+
+  /* The page is exactly one screen tall and the SCROLLING HAPPENS INSIDE it.
+     It used to be min-height, which grows: .card.grow says flex:1 and .out
+     says max-height:46vh, and neither means anything when no ancestor has a
+     definite height - so the Console tab stacked a 46vh terminal on top of a
+     46vh chat and ran off the bottom of the window. dvh first so a phone's
+     address bar does not cut the last row off; vh is the fallback. */
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
 .defs { position: absolute; width: 0; height: 0; }
@@ -116,9 +126,23 @@ body {
 }
 .tab.on { color: var(--tab-active); border-bottom-color: var(--tab-active); }
 
-main { padding: var(--gap); max-width: 1180px; margin: 0 auto; }
+/* min-height:0 is the load-bearing half: without it a flex child refuses to
+   shrink below its content and the overflow lands on the body again. */
+main {
+  padding: var(--gap); max-width: 1180px; margin: 0 auto; width: 100%;
+  box-sizing: border-box;
+  flex: 1; min-height: 0; overflow-y: auto;
+}
 
 .panel { display: flex; flex-direction: column; gap: var(--gap); }
+
+/* Console is the one tab that should never scroll the page: its two boxes are
+   logs, and a log that grows the document instead of scrolling itself pushes
+   the input line off the bottom exactly when there is most to read. The other
+   panels are documents and still scroll normally inside main. */
+#p-console { height: 100%; min-height: 0; }
+#p-console .out  { min-height: 0; max-height: none; }
+#p-console .chat { min-height: 0; max-height: none; }
 
 /* ---------------------------------------------------------------- atoms */
 
