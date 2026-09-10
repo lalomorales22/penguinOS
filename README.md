@@ -175,6 +175,40 @@ a browser and you have the web app. It also advertises itself over mDNS, so
 Credentials are saved, so it rejoins on its own after that — and reflashing
 won't wipe them.
 
+### 4. Updating a board you already flashed
+
+Plug it in and run the same command. **You do not need to know which board it
+is.**
+
+```bash
+tools/flash.sh --yes
+```
+
+Every board that has ever been flashed had its MAC written into its profile's
+`identification.mac_allowlist`, so the flasher recognises it on sight and says
+so before it writes anything:
+
+```
+decision  pinned - MAC 38:44:be:0e:9c:38 is in waveshare-c5-lcd-147 ...
+```
+
+If it cannot tell — two profiles that differ only in what is soldered on, and a
+board it has never seen — it stops and asks rather than guessing. `--yes`
+authorises *writing*, never *guessing*.
+
+**A reflash keeps everything the board has learned.** It writes three regions —
+the bootloader, the partition table and the app — and neither of the two that
+hold state is among them:
+
+| Region | Holds | Touched by a reflash? |
+|---|---|---|
+| `nvs` | Wi-Fi credentials, BLE keyboard bonds, which profile this board is | **no** |
+| `int` | themes, buddies, `settings.json`, anything uploaded from the web app | **no** |
+
+So an older board picks up every new app and fix, rejoins your network on its
+own, and still has its buddy and its theme. Use `--erase` only when you
+deliberately want a board back to nothing; it is never implied.
+
 ---
 
 ## Connecting your own AI

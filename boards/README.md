@@ -16,9 +16,9 @@ fills in once, after which that physical board is pinned to that profile.
 Everything that cost debugging time lives here as a field with a reason attached,
 because a value with no reason gets "cleaned up" by the next person.
 
-## The eight boards
+## The ten boards
 
-Four have been run on real hardware and four are documentation only. The
+Seven have been run on real hardware and three are documentation only. The
 difference matters more than anything else in this table: a VERIFIED row has had
 every pin, the wire format and the heap checked against silicon, and an
 UNVERIFIED row is a careful reading of a datasheet that nobody has held. Treat
@@ -27,16 +27,21 @@ the second kind as a starting point for bring-up, not as a working target.
 | Profile | Verified | Tier | Chip | Panel | Active | What will bite you |
 |---|---|---|---|---|---|---|
 | `cyd-2432s024n` | **yes** | 0 | ESP32-D0WD-V3, 4MB, no PSRAM | ILI9341 SPI, HSPI @ 40MHz | 240x320 | **Touch IS fitted** - XPT2046 on the PANEL'S OWN bus (14/13/12, CS 33, IRQ 36), which is why probes looking at the documented separate buses find nothing. Also the tightest board here: 148KB, and the display bands had to shrink to 16 rows or the AP's DHCP server cannot answer. |
+| `cyd-4832s040` | **yes** | 0 | ESP32-D0WD-V3, 4MB, no PSRAM | ST7796 SPI @ 40MHz | 480x320 | **`band_height` must be 8, not the 2.4in board's 16.** The strips cost 2 x band x WIDTH x 2 and this panel is twice as wide, so an inherited 16 starves the radio - the web server accepts connections and drops them. Resistive touch on the panel's own bus, and a microSD on its OWN SPI host, so a card read cannot stall a frame. |
 | `lafvin-c6-lcd-147` | **yes** | 1 | ESP32-C6FH4, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **Identical to the Waveshare C6 on every pin**, differing only in the panel and the MAC. esptool cannot tell them apart. Needs `col_offset` 34; without it the picture looks fine and sits 34px sideways. |
 | `waveshare-c6-lcd-13` | **yes** | 1 | ESP32-C6FH4, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 240x240 | Square panel, so it needs NO column offset - the one thing separating it from the LAFVIN in software. |
 | `waveshare-s3-touch-lcd-147` | **yes** | 1 | ESP32-S3R8, **16MB**, **8MB octal PSRAM** | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **The only board that breaks the 4MB assumption**, and it needs its own partition table. PSRAM is OCTAL - quad mode does not merely run slower, it fails to initialise. Capacitive touch (AXS5106L @ 0x63) and a microSD slot that mounts. |
-| `waveshare-c5-lcd-147` | no | 1 | ESP32-C5, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **The vendor BSP owns panel init**, including the ST7789 RAM offsets: it calls `esp_lcd_panel_set_gap(panel, 34, 0)` and `esp_lcd_panel_invert_color(panel, true)`, and the profile mirrors both. It pins LVGL to `>=8,<10`, so the LVGL version is not a free choice on this board. |
+| `waveshare-c5-lcd-147` | **yes** | 0 | ESP32-C5, 4MB, no PSRAM | ST7789 SPI, SPI2 @ 40MHz | 320x172 | **An ESP32-class memory budget wearing a Wi-Fi 6 radio.** 143KB at app_main, within 4% of the 4.0in CYD - and the C5's stock Wi-Fi buffer pools are sized for four times that, so it shipped unable to complete a DHCP handshake: phones associated, waited six seconds without an address and left. Cut to 4/8/8 with IPv6 off in `sdkconfig.defaults.esp32c5`. Needs `col_offset` 34. Wants `invert` true where the S3 carrying the SAME panel wants false. |
+| `lilygo-t-display-c5` | **yes** | 0 | ESP32-C5, **16MB**, 8MB PSRAM (unused) | ST7789 SPI, SPI2 @ 40MHz | 320x170 | **The board that forced a per-board sdkconfig.** Its target file is shared with the 4MB Waveshare C5, so 16MB and `partitions-16mb.csv` live in `firmware/sdkconfig.board.<id>` instead - without it the board boots fine and strands 12MB. `col_offset` is **35**, not the Waveshare's 34: 170 columns centred in 240, not 172. PSRAM is declared ABSENT on purpose; see the gotcha. |
 | `wavvy-ili9488-40` | no | 0 | ESP32-WROOM, 4MB, no PSRAM | ILI9488 SPI, VSPI @ 80MHz | 320x480 | **Upload baud must be 230400.** 921600 and 460800 both fail with `Invalid head of packet (0xFF)` on this CP2102 cable, esptool reads included. |
 | `wavvy-ili9488-35` | no | 0 | ESP32-WROOM, 4MB, no PSRAM | ILI9488 SPI, VSPI @ **40MHz** | 320x480 | **Not stable at 80MHz.** It renders structured block corruption, not a failure. Identical to the 4.0in board in every other respect. |
 | `wavvy-oled-c5` | no | 0 | ESP32-C5, 4MB, no PSRAM | SSD1306 I2C @ 400kHz, addr 0x3C | 128x64 | **A tier 1 chip running the tier 0 renderer, deliberately.** A 1024-byte 1bpp page does not want LVGL. Also: SH1106 modules look identical and answer at the same address. |
 
-Three silicon families now build: `esp32`, `esp32c6` and `esp32s3`. Each has its
-own `firmware/sdkconfig.defaults.<target>`, and each board gets its own build
+Four silicon families now build: `esp32`, `esp32c5`, `esp32c6` and `esp32s3`.
+Each has its own `firmware/sdkconfig.defaults.<target>` — and where two boards
+share a target but not its assumptions, the one that differs gets a
+`firmware/sdkconfig.board.<id>` applied on top. The two C5 boards are why that
+layer exists: 4MB and 16MB cannot both be "the C5 file". Each board gets its own build
 directory with its OWN sdkconfig - a shared one at the project root breaks the
 moment two targets are in play, because `set-target` rewrites it and the next
 board's build stops on a target mismatch against its own CMakeCache.
@@ -154,7 +159,7 @@ The header carries three things:
 - **One `static const eos_board_t`**, for the code that wants to pass the board
   around. Fixed-size arrays, string literals, no allocation anywhere. It is
   named `eos_board_<id with underscores>` and the macro `EOS_BOARD` points at
-  it, so the board component says `&EOS_BOARD` and a test can hold all six
+  it, so the board component says `&EOS_BOARD` and a test can hold several
   registry entries in one translation unit. Define `EOS_BOARD_NO_INSTANCE` to
   get only the initialiser, which is named `EOS_BOARD_INIT_<ID>`.
 
@@ -227,7 +232,7 @@ TOTAL is not what constrains you, the largest BLOCK is.
 conservative defaults rather than bench measurements. Everything *not* in that
 list was proven on hardware. When a board misbehaves, check `unverified` first.
 
-## Adding a sixth board
+## Adding a board
 
 1. Copy the closest existing profile to `boards/<new-id>.json`. The id must be a
    lowercase slug and must match the filename stem.
