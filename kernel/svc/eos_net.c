@@ -890,6 +890,15 @@ static const char *TAG = "eos_net";
 
 #define NET_BIT_GOT_IP  BIT0
 #define NET_BIT_FAILED  BIT1
+// Associated, but not yet addressed. The join needs to tell those apart: an
+// association is most of the work and DHCP is the short tail, so a budget that
+// runs out between them should buy the tail rather than throw the work away.
+#define NET_BIT_ASSOC   BIT2
+
+// How long an association is given to turn into an address once the join
+// budget is spent. A DHCP exchange on a quiet network is under a second;
+// this is four, which covers a busy one without making a dead server wait.
+#define DHCP_GRACE_MS   4000u
 
 static esp_netif_t     *s_sta_if;
 static esp_netif_t     *s_ap_if;
@@ -936,6 +945,8 @@ static void net_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             s_last_reason = reason;
             xEventGroupSetBits(s_events, NET_BIT_FAILED);
         }
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        if (s_joining) xEventGroupSetBits(s_events, NET_BIT_ASSOC);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *e = (const ip_event_got_ip_t *)data;
         s_ip = ntohl(e->ip_info.ip.addr);
@@ -1164,7 +1175,7 @@ static int idf_sta_join(void *ud, const char *ssid, const char *psk, uint32_t bu
     // the disconnect we asked for is not read as this attempt failing.
     esp_wifi_disconnect();
     vTaskDelay(pdMS_TO_TICKS(50));
-    xEventGroupClearBits(s_events, NET_BIT_GOT_IP | NET_BIT_FAILED);
+    xEventGroupClearBits(s_events, NET_BIT_GOT_IP | NET_BIT_FAILED | NET_BIT_ASSOC);
     s_have_ip = false;
     s_ip = 0;
     s_joining = true;
@@ -1187,6 +1198,7 @@ static int idf_sta_join(void *ud, const char *ssid, const char *psk, uint32_t bu
         // loop turned that into no_ap at rssi -50. Only a real disconnect
         // re-arms the attempt; otherwise keep waiting out the budget.
         bool armed = false;
+        bool dhcp_grace = false;
         for (;;) {
             uint32_t slice = left > 6000u ? 6000u : left;
             if (!armed) {
@@ -1205,10 +1217,30 @@ static int idf_sta_join(void *ud, const char *ssid, const char *psk, uint32_t bu
                     r == WIFI_REASON_HANDSHAKE_TIMEOUT ||
                     r == WIFI_REASON_MIC_FAILURE       ||
                     r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) break;
-                xEventGroupClearBits(s_events, NET_BIT_FAILED);
+                xEventGroupClearBits(s_events, NET_BIT_FAILED | NET_BIT_ASSOC);
                 armed = false;   // that attempt really ended; start a new one
             }
-            if (left <= slice) break;
+            if (left <= slice) {
+                // Out of budget - but if the link is ASSOCIATED and merely
+                // waiting on an address, buy the tail once rather than throw
+                // the association away.
+                //
+                // MEASURED: two refused attempts burned 7.3 s of the 15 s
+                // budget, the third associated at -47 dBm with 655 ms left,
+                // and the loop fell out and called esp_wifi_disconnect() on a
+                // link that was working. From the outside that is "ExampleNet
+                // is out of reach" about an access point one metre away.
+                //
+                // Once, and only when associated: a link that never comes up
+                // still fails on the original budget, and a DHCP server that
+                // is genuinely absent costs one extra grace and no more.
+                if ((xEventGroupGetBits(s_events) & NET_BIT_ASSOC) && !dhcp_grace) {
+                    dhcp_grace = true;
+                    left = DHCP_GRACE_MS;
+                    continue;
+                }
+                break;
+            }
             left -= slice;
         }
     }
