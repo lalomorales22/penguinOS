@@ -170,6 +170,7 @@
     },
     "usb_serial": null,
     "mac_allowlist": [
+      "38:44:be:0e:9c:18",
       "38:44:be:0e:9c:38"
     ],
     "distinguishing_notes": [
