@@ -20,11 +20,11 @@ window manager stops splitting and turns that region into a **tab group**
 instead — so the layout degrades into something usable rather than into slivers.
 On a 240×320 panel that happens quickly, which is exactly why it exists.
 
-**Ten apps**, opened from the launcher with `super+space`:
+**Twelve apps**, opened from the launcher with `super+space`:
 
 | | |
 |---|---|
-| `clock` | uptime in a large face |
+| `clock` | the time of day in a large face, with the date and uptime under it |
 | `board` | what this board is, and its address once it has joined |
 | `heap` | free heap and largest block, live — which matters more than you'd expect on these parts |
 | `keys` | the compiled-in keymap, on the glass |
@@ -34,15 +34,28 @@ On a 240×320 panel that happens quickly, which is exactly why it exists.
 | `files` | browse the internal filesystem |
 | `media` | the RGB LED: colour, brightness and effects |
 | `party` | the demo — the buddy dancing, the LED cycling, the colours moving |
+| `camera` | a viewfinder onto a penguinOS camera node on the same network |
+| `arcade` | Tetris. Arrows move and rotate, space drops, enter starts |
 
-There is deliberately **no terminal** — there's no shell to run in one.
+There is deliberately **no terminal on the glass** — there's no shell to run in
+one. The web app has a small command console (`help`, `status`, `heap`,
+`reboot`, `theme`, `wifi`, `brain`) and a live log, which is where that job
+belongs on a board with no keyboard of its own.
 
 **A status bar and themes.** Seven themes ship, switchable from the board with
 `super+t` or from the web app.
 
 **A voxel buddy.** A little penguin called Pip lives on the desktop and wanders
-about. Four ship — a penguin, a cat, an owl and a robot — and you can upload
-your own MagicaVoxel `.vox` file from the web app.
+the whole window — picking a spot, turning, waddling over, looking about and
+occasionally hopping or flapping. He stands in a **scene** (a room, grass or a
+pool) and you can **give him something** — a bowl of fish, water, a ball — from
+the web app or the keyboard, and he walks over to look at it. Four buddies ship
+— a penguin, a cat, an owl and a robot — and you can upload your own
+MagicaVoxel `.vox` file from the web app.
+
+**A wall clock.** The board asks the network what time it is on its first join
+and converts with the POSIX zone in `sys.tz`, so the clock reads local time and
+files carry real timestamps instead of 1970.
 
 **A web app.** Once the board joins your network it serves a page for browsing
 its filesystem, changing themes, swapping the buddy, editing settings and
@@ -55,12 +68,13 @@ network. See [Connecting your own AI](#connecting-your-own-ai).
 
 ## Supported boards
 
-Four boards are **verified on real hardware** — every pin, the colour format,
+Five boards are **verified on real hardware** — every pin, the colour format,
 the orientation and the memory budget measured rather than read off a datasheet:
 
 | Board | Chip | Screen | Notes |
 |---|---|---|---|
 | **ESP32-2432S024N** ("Cheap Yellow Display", also sold as HW-950) | ESP32 | 2.4" 240×320 | The tightest board that runs it. Resistive touch is fitted. |
+| **ESP32-4832S040** (the 4.0" Cheap Yellow Display) | ESP32 | 4.0" 480×320 | ST7796. Resistive touch (XPT2046 on the panel's own bus), and a **working microSD** on its own SPI host, so a card read cannot stall a frame. |
 | **Waveshare ESP32-C6-LCD-1.3** | ESP32-C6 | 1.3" 240×240 | Square panel, native USB. |
 | **LAFVIN ESP32-C6 1.47"** | ESP32-C6 | 1.47" 320×172 | Same pinout as the Waveshare C6; only the panel differs. |
 | **Waveshare ESP32-S3-Touch-LCD-1.47** | ESP32-S3 | 1.47" 320×172 | 16 MB flash, 8 MB PSRAM, capacitive touch, working microSD. The roomiest. |
@@ -69,8 +83,14 @@ Four more profiles exist in `boards/` — a Waveshare C5, two ILI9488 panels and
 an OLED — written from documentation but **never run on hardware**. Treat those
 as a starting point for bring-up, not as working targets.
 
-Touch hardware is detected on two boards but **there is no touch driver yet**;
-input today is a Bluetooth keyboard, the web app, or a BLE mouse.
+Touch hardware is fitted to three of these and its wiring is recorded, but
+**there is no touch driver yet** — the injection path is complete and nothing
+calls it. Input today is a Bluetooth keyboard, a BLE trackpad, or the web app.
+
+**A camera node.** A second, much smaller program in `firmware-cam/` turns a
+Seeed XIAO ESP32-S3 Sense into a camera that serves frames over HTTP, which the
+`camera` window points at. It has no board profile on purpose: it is a different
+program rather than a board with the display switched off.
 
 **Your board isn't listed?** See [Adding a board](#adding-a-board). The registry
 is designed for exactly that, and bringing up a new one takes minutes when the
@@ -269,10 +289,15 @@ i3/Omarchy muscle memory, where `super` is the GUI/Windows key:
 | `super+1`…`super+9` | switch workspace |
 | `super+shift+1`…`9` | move the window to a workspace |
 | `super+tab` | next window, or next tab within a tab group |
-| `super+minus` / `super+equal` | shrink / grow the focused tile |
+| `super+ctrl+←` `↓` `→` `↑` | shrink / grow the focused tile |
+| `super+minus` / `super+equal` | the same, on a full keyboard |
 | `super+b` | toggle the status bar |
 | `super+t` | cycle theme |
 | `super+escape` | lock |
+
+Windows also take keys of their own while focused. `arcade` is arrows, space
+and enter; `buddy` takes `space` to change the scene, `f` `w` `b` to give him
+something and `n` to clear the floor.
 
 `super+h` is **focus-left, not split-horizontal** — it's the key you press a
 hundred times an hour, so focus wins. Both spellings collide and this is the
