@@ -54,6 +54,10 @@
 #include "esp_littlefs.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_vfs_fat.h"
+#include "sdmmc_cmd.h"
+#include "driver/sdspi_host.h"
+#include "driver/spi_common.h"
 #else
 #include <stdlib.h>   /* getenv, for the host root */
 #endif
@@ -138,6 +142,7 @@ typedef struct {
     const char *label;    // partition label, LittleFS only
     bool        present;  // the board says the hardware is there
     uint8_t     held;     // open files + open dirs; unmount is BUSY while nonzero
+    void       *card;     // sdmmc_card_t* while a FAT mount is up, NULL otherwise
 } mnt_t;
 
 static mnt_t s_mnt[EOS_MOUNT_MAX];
@@ -340,10 +345,75 @@ static eos_err_t mount_one(mnt_t *m)
         m->pub.writable = true;
         return EOS_OK;
     }
-    // EOS_FS_FAT. No board in the registry declares working card pins, so
-    // there is no SDSPI mount here to be wrong about. present is false on all
-    // of them and this line is unreachable today; it is the honest answer for
-    // a profile that turns the slot on before this file grows a FAT mount.
+    if (m->pub.fs == EOS_FS_FAT) {
+        const eos_board_t    *b    = eos_board_get();
+        sdmmc_host_t          host = SDSPI_HOST_DEFAULT();
+        sdspi_device_config_t slot = SDSPI_DEVICE_CONFIG_DEFAULT();
+        sdmmc_card_t         *card = NULL;
+        esp_err_t             err;
+
+        if (!b) return EOS_ERR_STATE;
+
+        // The descriptor says 1 = SPI2/HSPI, 2 = SPI3/VSPI. Spelled out rather
+        // than cast: the two enumerations agreeing is luck, not a contract.
+        host.slot = (b->storage.sd_spi_host == 2) ? SPI3_HOST : SPI2_HOST;
+        if (b->storage.sd_hz) host.max_freq_khz = (int)(b->storage.sd_hz / 1000u);
+
+        // Who owns the bus decides who initialises it. On a board where the
+        // card has its own host this is the only place it happens; where it
+        // shares the panel's, the display backend got there first and the
+        // second call answers INVALID_STATE, which is agreement, not failure.
+        if (!b->storage.sd_shares_bus) {
+            spi_bus_config_t bus = {
+                .mosi_io_num     = b->storage.sd_mosi,
+                .miso_io_num     = b->storage.sd_miso,
+                .sclk_io_num     = b->storage.sd_sck,
+                .quadwp_io_num   = -1,
+                .quadhd_io_num   = -1,
+                .max_transfer_sz = 4096,
+            };
+            err = spi_bus_initialize(host.slot, &bus, SPI_DMA_CH_AUTO);
+            if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+                ESP_LOGE(TAG, "%s: spi host %d failed: %s", m->pub.point,
+                         (int)host.slot, esp_err_to_name(err));
+                return EOS_ERR_IO;
+            }
+        }
+
+        slot.gpio_cs = (gpio_num_t)b->storage.sd_cs;
+        slot.host_id = host.slot;
+
+        {
+            // format_if_mount_failed is FALSE here and must stay false. "/int"
+            // sets it true because a blank partition there is a first boot;
+            // this is somebody's card, and one that will not mount is a card
+            // to hand back, not a card to erase.
+            esp_vfs_fat_sdmmc_mount_config_t cfg = {
+                .format_if_mount_failed = false,
+                .max_files              = 4,
+                .allocation_unit_size   = 16 * 1024,
+            };
+            err = esp_vfs_fat_sdspi_mount(m->pub.point, &host, &slot, &cfg, &card);
+        }
+        if (err != ESP_OK) {
+            // An empty slot is the ordinary case on a board that has one, and
+            // it is not worth a red line on every boot. Anything else is.
+            if (err == ESP_ERR_TIMEOUT || err == ESP_ERR_NOT_FOUND)
+                ESP_LOGI(TAG, "%s: slot empty", m->pub.point);
+            else
+                ESP_LOGW(TAG, "%s: fat mount failed: %s", m->pub.point,
+                         esp_err_to_name(err));
+            return EOS_ERR_NODEV;
+        }
+
+        m->card         = card;
+        m->pub.mounted  = true;
+        m->pub.writable = true;
+        ESP_LOGI(TAG, "%s: fat mounted, %llu MB at %d kHz", m->pub.point,
+                 ((uint64_t)card->csd.capacity * card->csd.sector_size) >> 20,
+                 (int)card->max_freq_khz);
+        return EOS_OK;
+    }
     return EOS_ERR_UNSUPPORTED;
 #else
     if (m->pub.fs != EOS_FS_LITTLEFS) return EOS_ERR_UNSUPPORTED;
@@ -363,6 +433,12 @@ static eos_err_t unmount_one(mnt_t *m)
     if (m->pub.fs == EOS_FS_LITTLEFS) {
         esp_err_t err = esp_vfs_littlefs_unregister(m->label);
         if (err != ESP_OK) return EOS_ERR_IO;
+    }
+    if (m->pub.fs == EOS_FS_FAT && m->card) {
+        esp_err_t err = esp_vfs_fat_sdcard_unmount(m->pub.point,
+                                                   (sdmmc_card_t *)m->card);
+        if (err != ESP_OK) return EOS_ERR_IO;
+        m->card = NULL;
     }
 #endif
     m->pub.mounted  = false;
@@ -521,6 +597,18 @@ eos_err_t eos_storage_usage(const char *point, uint64_t *total, uint64_t *used)
         if (esp_littlefs_info(s_mnt[i].label, &t, &u) != ESP_OK) return fail(EOS_ERR_IO);
         s_mnt[i].pub.total = (uint64_t)t;
         s_mnt[i].pub.used  = (uint64_t)u;
+    }
+    if (s_mnt[i].pub.fs == EOS_FS_FAT) {
+        uint64_t t = 0, f = 0;
+        // Also not free, and rather less free than LittleFS's: this ends in
+        // f_getfree, which walks the allocation table of a card that can be
+        // tens of gigabytes. Same reason it is not folded into
+        // eos_storage_mounts() - a mount listing must stay cheap enough to
+        // answer on every /api/system.
+        if (esp_vfs_fat_info(s_mnt[i].pub.point, &t, &f) != ESP_OK)
+            return fail(EOS_ERR_IO);
+        s_mnt[i].pub.total = t;
+        s_mnt[i].pub.used  = (f <= t) ? t - f : 0;
     }
 #else
     // The host mount is a directory on somebody else's filesystem. Its size is

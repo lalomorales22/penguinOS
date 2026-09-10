@@ -69,3 +69,88 @@ CONFIG_ESP_WIFI_NVS_ENABLED=n
 # lwIP's socket table is per-socket state, and 10 is more than this board will
 # ever have open: four httpd workers, the brain's one client, DNS.
 CONFIG_LWIP_MAX_SOCKETS=8
+
+# FATFS, cut to what a microSD mount on this board actually needs. Adding the
+# "/sd" mount overflowed static DRAM by 56 bytes on the first build:
+#
+#   ld: penguinos.elf section `.dram0.bss' will not fit in region `dram0_0_seg'
+#   ld: region `dram0_0_seg' overflowed by 56 bytes
+#
+# One volume, not two. IDF reserves per-volume state for VOLUME_COUNT whether
+# or not the volumes exist, and penguinOS mounts exactly one FAT filesystem:
+# "/int" is LittleFS and "/sd" is the only card. The second volume was pure
+# static cost for a mount that cannot happen.
+CONFIG_FATFS_VOLUME_COUNT=1
+
+# The sector cache moves off the file and onto the volume. With SECTOR_4096
+# set, a per-file cache is FOUR KILOBYTES for every open file - four open files
+# is 16 KB of heap on a board that ends boot with 26 KB free, which is the
+# whole budget for one directory listing. A shared per-volume window costs 4 KB
+# once. The trade is that concurrent reads of different files re-fill the same
+# window instead of keeping one each, so interleaved access to several files is
+# slower; a card here holds pictures and recordings that are read one at a
+# time, so that case is rare and the 12 KB is not.
+CONFIG_FATFS_PER_FILE_CACHE=n
+
+# The VFS registration table is static and every unused slot is DRAM, so it is
+# tempting to cut. DO NOT CUT IT TO 4. That was tried and it bricked the boot:
+#
+#   ESP_ERROR_CHECK failed in esp_vfs_lwip_sockets_register (vfs_lwip.c:112)
+#   <- esp_netif_init <- net_ensure_init <- abort() <- reboot loop
+#
+# The count is not "how many filesystems are mounted". LWIP'S SOCKETS ARE A VFS,
+# and so is the UART console, so the real list is sockets + console + LittleFS
+# on "/int" + FAT on "/sd" - four before anything optional. At MAX_COUNT=4 the
+# FAT mount lost the race and returned ESP_ERR_NO_MEM ("mount_to_vfs failed
+# (0x101)"), and then lwIP's own registration failed an ESP_ERROR_CHECK and
+# aborted. Two unrelated-looking faults, one bad constant.
+#
+# Left at the IDF default of 8. IPv6 off below pays for the slack many times.
+CONFIG_VFS_SUPPORT_TERMIOS=n
+
+# mDNS keeps per-interface state for MAX_INTERFACES whether the interfaces
+# exist or not. This board has exactly two netifs - the station and the setup
+# SoftAP - and the third slot was static DRAM bought for an interface that
+# cannot be created.
+CONFIG_MDNS_MAX_INTERFACES=2
+
+# IPv6 off. penguinOS is IPv4-only by construction - every socket it opens is
+# AF_INET, the camera client included - and lwIP's v6 state is static DRAM
+# whether or not an address is ever configured: destination_cache is 1,152
+# bytes, neighbor_cache 544 and prefix_list 320, before the per-netif address
+# arrays.
+#
+# This is what paid for the "/sd" FAT mount, which overflowed dram0_0_seg by 56
+# bytes. Worth recording how the first six attempts went, because the method was
+# wrong rather than the guesses:
+#
+#   FATFS_VOLUME_COUNT=1 + PER_FILE_CACHE=n   56 -> 40   (real, and worth having)
+#   VFS_MAX_COUNT=4 + TERMIOS=n               40 -> 24   (and BROKE THE BOOT:
+#                                             see the VFS note above)
+#   MDNS_MAX_INTERFACES=2                     24 -> 24   (a limit, not an array)
+#   ESP_GDBSTUB_ENABLED=n                     ignored - hidden Kconfig symbol
+#   ESP_GDBSTUB_SUPPORT_TASKS=n               does not compile on xtensa
+#   ESP_GDBSTUB_MAX_TASKS=4                   24 -> 24
+#
+# The gdbstub attempts were chasing the largest .bss symbol in the LIBRARIES -
+# s_scratch, 2,368 bytes - and it shrank to 1,540 with no effect at all on the
+# link, because nothing references the stub and --gc-sections drops it from the
+# image entirely. Sizing symbols in an .a shows what is AVAILABLE, not what is
+# LINKED. lwIP's v6 caches are in the image because lwIP is.
+CONFIG_LWIP_IPV6=n
+
+# Long filenames on FAT, and this is not a nicety - without it the card is
+# WRITE-ONLY-IN-THEORY. IDF defaults to CONFIG_FATFS_LFN_NONE, which accepts
+# 8.3 DOS names and nothing else, and eos_apps stages every upload as
+# "<path>.part" before renaming it into place. "HELLO.TXT.part" has two dots
+# and a four-character extension, so FATFS rejects it and the upload fails at
+# the staging file, before a single byte is written. MEASURED: POST
+# /api/fs/write?path=/sd/HELLO.TXT returned "that file could not be created"
+# with a card mounted, healthy and 15 GB free.
+#
+# On the heap rather than the stack: the buffer is transient, taken for the
+# duration of a name operation and given back, which suits a board that ends
+# boot with 18 KB free far better than adding 256 bytes to every task stack
+# that might touch a file.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=128

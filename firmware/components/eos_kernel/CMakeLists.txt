@@ -72,6 +72,9 @@ idf_component_register(
         esp_driver_gpio  # the panel's CS/DC/RST pins, and eos_input's buttons
         bt               # NimBLE for eos_ble. Never Bluedroid: 83KB vs 19KB is an OOM.
         joltwallet__littlefs   # eos_storage's "/int" mount. Third party, see idf_component.yml.
+        fatfs            # eos_storage's "/sd" mount: esp_vfs_fat_sdspi_mount
+        sdmmc            # sdmmc_card_t and the card's CSD, for the size it reports
+        esp_driver_sdspi # driver/sdspi_host.h: the card as an SPI device
         vfs              # eos_storage_idf.c is POSIX: open/read/opendir go through esp_vfs
         # Only the ESP32-S3-Touch-LCD-1.47 has PSRAM, and eos_board_active.c guards
         # its include with #if CONFIG_SPIRAM - but REQUIRES is what puts the header
