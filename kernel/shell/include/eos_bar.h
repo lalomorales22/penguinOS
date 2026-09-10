@@ -82,6 +82,12 @@ typedef struct {
     const char    *title;         // NULL or "" drops the title segment
     eos_bar_wifi_t wifi;
     int8_t         wifi_rssi;     // dBm, meaningful only when wifi is UP
+    // Dotted-quad, or NULL/"" when there is no address yet. Borrowed, like
+    // title and brain_model. When it is set it becomes the WIDEST form of the
+    // wifi segment, in front of the signal strength: on a board with no
+    // keyboard and no second screen, the address is the one fact you cannot
+    // work out by looking at it, and dBm is the one you never needed.
+    const char    *ip;
     bool           brain_up;
     const char    *brain_model;
     uint32_t       free_heap;     // bytes

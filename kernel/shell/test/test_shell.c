@@ -510,6 +510,68 @@ static void bar(void)
     CK(eos_bar_build(&st, &m, 1, seg, EOS_BAR_SEGS) == 0, "one pixel of bar shows nothing");
     CK(eos_bar_build(&st, &m, 0, seg, EOS_BAR_SEGS) == 0, "a zero-width bar shows nothing");
 
+    // ---- the address in the wifi segment ----
+    // On a board with no keyboard and no second screen the IP is the one fact
+    // that cannot be read off the glass, so it is the WIDEST form of the wifi
+    // segment and the signal strength is only the fallback.
+    printf("\n=== status bar, the address ===\n");
+    {
+        eos_bar_status_t a;
+        eos_bar_seg_t    s3[EOS_BAR_SEGS];
+        const char      *IP = "192.168.1.150";
+        int              n, i, found;
+
+        // Its own metrics, at the pad the FIRMWARE actually uses. The shared
+        // `m` above runs pad 6, which is deliberately harsher than anything
+        // that ships - eos_shell_draw.c's BAR_PAD is 3. Six gaps at 6px
+        // instead of 3px costs 18 pixels, and an assertion about what fits on
+        // the narrowest real panel has to be made against the real spacing or
+        // it is a claim about a board nobody owns.
+        eos_bar_metrics_t am;
+        eos_bar_metrics_init(&am, 6, 3);
+
+        eos_bar_status_init(&a);
+        a.ws_occupied = 0x3; a.ws_active = 0; a.title = "board";
+        a.wifi = EOS_WIFI_UP; a.wifi_rssi = -43;
+        a.brain_up = false; a.brain_model = "";
+        a.free_heap = 36000; a.heap_warn = 16384;
+        a.hour = 14; a.minute = 32; a.clock_valid = true;
+
+        // No address yet: the segment must still say something about the radio.
+        a.ip = NULL;
+        n = eos_bar_build(&a, &am, 480, s3, EOS_BAR_SEGS);
+        for (i = 0, found = 0; i < n; i++)
+            if (s3[i].id == EOS_SEG_WIFI && strcmp(s3[i].text, "wifi -43") == 0) found = 1;
+        CK(found, "with no address the wide wifi form is the signal strength");
+
+        // Addressed: the wide form is the address itself.
+        a.ip = IP;
+        n = eos_bar_build(&a, &am, 480, s3, EOS_BAR_SEGS);
+        for (i = 0, found = 0; i < n; i++)
+            if (s3[i].id == EOS_SEG_WIFI && strcmp(s3[i].text, IP) == 0) found = 1;
+        CK(found, "a joined board shows its address in the wifi segment");
+
+        // An empty string is not an address. This is the shape main.c hands in
+        // before DHCP lands, and it must not blank the segment out.
+        a.ip = "";
+        n = eos_bar_build(&a, &am, 480, s3, EOS_BAR_SEGS);
+        for (i = 0, found = 0; i < n; i++)
+            if (s3[i].id == EOS_SEG_WIFI && strcmp(s3[i].text, "wifi -43") == 0) found = 1;
+        CK(found, "an empty address falls back to the signal strength");
+
+        // The point of putting it at priority 80: on the NARROWEST panel in the
+        // fleet the address must still outrank heap, brain and the buddy's mood.
+        a.ip = IP;
+        n = eos_bar_build(&a, &am, 236, s3, EOS_BAR_SEGS);
+        for (i = 0, found = 0; i < n; i++)
+            if (s3[i].id == EOS_SEG_WIFI && strcmp(s3[i].text, IP) == 0) found = 1;
+        CK(found, "the address survives a 240px panel, where heap and mood shrink");
+        verify_bar(&a, &am, 236);
+
+        // And it must never push the bar past its own edge.
+        for (int16_t w = 320; w >= 60; w = (int16_t)(w - 20)) verify_bar(&a, &am, w);
+    }
+
     // The proportional-font path: a measurer that is not char_w * strlen.
     printf("\n=== status bar, proportional metrics (LVGL-style font) ===\n");
     m.measure = prop_measure;

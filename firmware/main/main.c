@@ -430,6 +430,25 @@ static void refresh_status(uint32_t now_ms)
     bar.clock_valid = true;
     bar.wifi       = (uint8_t)eos_net_bar_wifi(&net);
 
+    // wifi_rssi WAS NEVER ASSIGNED. eos_bar_status_init() leaves it at -127 and
+    // nothing in the firmware moved it, so every board has been drawing
+    // "wifi -127" in the WARN colour since the segment was written - a value
+    // that is not merely stale but below the floor of the ramp, so the glyph
+    // form rendered '_' and the long form rendered a number no radio reports.
+    // It looked like a signal problem and was a plumbing problem.
+    bar.wifi_rssi = eos_net_rssi(&net);
+
+    // The address, formatted once per refresh into a static buffer because the
+    // bar borrows the pointer rather than copying it. Empty until DHCP lands,
+    // which is exactly when the segment should fall back to signal strength.
+    {
+        static char ip_buf[16];
+        uint32_t    ip = eos_net_ip(&net);
+        if (ip) eos_net_ip_str(ip, ip_buf, sizeof ip_buf);
+        else    ip_buf[0] = '\0';
+        bar.ip = ip_buf[0] ? ip_buf : NULL;
+    }
+
     // The two segments that were hardcoded false and IDLE until megabrain was
     // wired up. brain_model is a copy rather than a borrow: the bar holds the
     // pointer for the length of a build and the brain task can rewrite its

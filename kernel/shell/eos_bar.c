@@ -166,7 +166,14 @@ static void build_wifi(cand_t *c, const eos_bar_status_t *st)
         cput(c, 0, s1);
         snprintf(s2, sizeof(s2), "%d", r);
         cput(c, 1, s2);
-        snprintf(s2, sizeof(s2), "wifi %d", r);
+        // The widest form is the ADDRESS when the board has one, and the
+        // signal only when it does not. The three forms stay a ladder - glyph,
+        // number, sentence - but the top rung says something you cannot
+        // otherwise learn. A joined board whose address you cannot read is a
+        // board you cannot open, and the bar is the only place every window
+        // agrees to leave room for.
+        if (st->ip && st->ip[0]) snprintf(s2, sizeof(s2), "%s", st->ip);
+        else                     snprintf(s2, sizeof(s2), "wifi %d", r);
         cput(c, 2, s2);
         c->nv   = 3;
         c->role = (r >= -78) ? EOS_BAR_ROLE_OK : EOS_BAR_ROLE_WARN;
