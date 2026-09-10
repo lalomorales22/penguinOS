@@ -354,7 +354,12 @@ static const regrow_t registry[] = {
          only backend in the tree is the indexed-8 compositor. band 40 is unchanged:
          it was called an LVGL draw-buffer height and is the indexed-8 band height. */
       EOS_COMP_INDEXED8, false, 256, false, 40, 80, 40, 425648u,
-      false, EOS_BUS_NONE, NULL, "int", "/int", 0u, false,
+      /* The slot was present:false for a long time and it was never absent -
+         only unmeasured. An output-only JTAG scan cannot see MISO, so the pins
+         were found by asking the CARD: tools/probe/sd_pins sweeps every ordered
+         pair of free GPIOs as MISO x CS and sends CMD0, and exactly one of 132
+         answered 0x01. MISO 5, CS 4, on the panel's own SCK and MOSI. */
+      true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, true,
       EOS_LED_WS2812, -1, -1, -1, 8, 1, false,
       EOS_AUDIO_NONE, -1, -1, 0, -1,
       EOS_TOUCH_NONE, EOS_BUS_NONE, true, true, 0 },

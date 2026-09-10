@@ -258,7 +258,12 @@ static void t_routing(void)
     eqs(m[1].point, "/sd", "mount 1 is the card");
     ok(!m[1].mounted, "  which is not mounted");
     ok(m[1].removable, "  and is removable");
-    eq(m[1].fs, EOS_FS_NONE, "  and has no filesystem: the board declares no pins");
+    // FAT, not NONE. This suite compiles against waveshare-c6-lcd-13.h, and that
+    // board's slot was present:false for a long time - not because it has no
+    // slot but because nobody had measured MISO, which an output-only JTAG scan
+    // cannot see. tools/probe/sd_pins settled it by asking the card, so the
+    // profile now declares pins and the descriptor names a filesystem for them.
+    eq(m[1].fs, EOS_FS_FAT, "  and declares FAT: the board now has measured pins");
 
     n = eos_storage_mounts(m, 1);
     eq(n, 2, "mounts() reports the real count even when it cannot copy them all");
@@ -299,7 +304,13 @@ static void t_card_absent(void)
 
     // The card-insert path. It answers, it does not hang, and it does not
     // pretend a slot with no known pins is a slot it can talk to.
-    eq(eos_storage_mount("/sd"), EOS_ERR_NODEV, "mounting the absent card is NODEV");
+    // UNSUPPORTED, not NODEV, and the difference is the point. NODEV means "the
+    // board does not have this at all", which stopped being true of this board
+    // when its pins were measured. UNSUPPORTED means "valid call, this backend
+    // cannot do it" - which is exactly a host build being asked to mount a real
+    // card. The slot is declared; there is simply no silicon under this test.
+    eq(eos_storage_mount("/sd"), EOS_ERR_UNSUPPORTED,
+       "mounting a declared slot with no hardware under it is UNSUPPORTED");
     eq(eos_storage_unmount("/sd"), EOS_OK, "unmounting what was never mounted is fine");
     eq(eos_storage_mount("/nope"), EOS_ERR_NOTFOUND, "mounting an undeclared point is NOTFOUND");
     eq(eos_storage_unmount("/nope"), EOS_ERR_NOTFOUND, "unmounting one is too");

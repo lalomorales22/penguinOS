@@ -124,19 +124,18 @@
       "adc_channel": -1
     },
     "sdcard": {
-      "present": false,
-      "bus": null,
-      "spi_host": null,
+      "present": true,
+      "bus": "spi",
+      "spi_host": "SPI2",
       "pins": {
-        "sck": -1,
-        "mosi": -1,
-        "miso": -1,
-        "cs": -1
+        "sck": 7,
+        "mosi": 6,
+        "miso": 5,
+        "cs": 4
       },
-      "max_clock_hz": 0,
-      "shares_display_bus": false,
-      "mount_point": null,
-      "absent_reason": "The slot is physically there - the vendor listing and the board photo both show it - but its wiring is NOT established, and present:false is the honest encoding of that. The JTAG scan can only see outputs, so MISO is invisible to it by construction, and CS is no better than an inference from GPIO4 idling high. Declaring the slot present with a guessed MISO is precisely the failure this registry exists to prevent. Flip this back to present once the pins are read - see the sd-pins-unknown gotcha for how."
+      "max_clock_hz": 20000000,
+      "shares_display_bus": true,
+      "mount_point": "/sd"
     },
     "internal_fs": {
       "present": true,
@@ -187,7 +186,8 @@
     "peripherals.internal_fs.partition_label",
     "render.min_tile_w",
     "render.min_tile_h",
-    "inputs.buttons"
+    "inputs.buttons",
+    "peripherals.sdcard.max_clock_hz"
   ],
   "gotchas": [
     {
@@ -212,12 +212,6 @@
       "verified": true
     },
     {
-      "id": "sd-pins-unknown",
-      "severity": "high",
-      "field": "peripherals.sdcard.pins",
-      "text": "There is a TF slot but its pins are NOT established. CS is a guess from GPIO4 having been an output sitting high during the JTAG scan, which is what an idle chip select looks like - but it is only that. MISO is worse: it is an input, so it never appears in GPIO_ENABLE and the scan is blind to it. Do not mount the card from this profile as written. To settle it properly, restore backup/factory-4MB.bin, halt over JTAG again and read GPIO_FUNCn_IN_SEL_CFG at 0x60091154 instead of the OUT_SEL block."
-    },
-    {
       "id": "no-vendor-bsp",
       "severity": "note",
       "field": "display.driver_source",
@@ -228,6 +222,18 @@
       "severity": "note",
       "field": "chip",
       "text": "GPIO 1, 2, 3, 12, 13, 16, 17, 20 and 23 are broken out to the 2.54mm headers and are free for use. They showed up as output-enabled but idle in the JTAG scan, which is what confirmed they are not wired to anything onboard."
+    },
+    {
+      "id": "sd-pins-found-by-asking-the-card",
+      "severity": "note",
+      "field": "peripherals.sdcard.pins",
+      "text": "MISO 5 and CS 4 were MEASURED, and not by reading the silicon. This profile carried the slot as present:false for a long time because an output-only JTAG scan cannot see MISO - it is an input, so it never appears in GPIO_ENABLE - and the recorded plan was to restore the factory image and read GPIO_FUNCn_IN_SEL_CFG. That was never necessary. tools/probe/sd_pins asks the CARD instead: it sweeps every ordered pair of the free GPIOs as MISO x CS and sends CMD0, and exactly one pair out of 132 answered 0x01. A wrong pair reads 0xFF because MISO idles pulled up and a shorted one reads 0x00, so there is no ambiguous case and no human has to watch anything. CS 4 is what the JTAG scan had already guessed from GPIO4 idling high as an output, which is a pleasing confirmation and was never the hard half."
+    },
+    {
+      "id": "sd-shares-the-panel-bus",
+      "severity": "high",
+      "field": "peripherals.sdcard.shares_display_bus",
+      "text": "SCK 7 and MOSI 6 are the PANEL'S. Every card access has to take the display's bus lock, and card traffic during a flush will tear the frame. 20MHz is a starting figure carried from the other shared-bus boards and is not measured on this one."
     }
   ]
 }

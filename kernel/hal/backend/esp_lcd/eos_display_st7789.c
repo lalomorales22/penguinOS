@@ -572,10 +572,27 @@ static spi_host_device_t spi_host_of(const eos_board_t *b)
 // which is the only sequence known to light this glass. Do not reorder it.
 static eos_err_t panel_start(const eos_board_t *b, uint32_t max_xfer)
 {
+    // MISO IS NOT ALWAYS THE PANEL'S TO DECIDE. Every panel in this registry is
+    // write-only - panel.miso is -1 on all of them, because nothing reads a
+    // register back - but on the boards where the microSD SHARES this bus, the
+    // card most certainly needs a data-in line, and this call is the only place
+    // the bus is created. Initialising it at -1 and leaving the card to find
+    // out means sdmmc_card_init() times out with 0x107 and eos_storage reports
+    // "slot empty" with a card sitting in the slot, which is a symptom that
+    // points at the card, the wiring and the profile before it points here.
+    //
+    // So: the panel's MISO when it has one, the CARD'S when it does not and the
+    // card is on this bus. eos_storage_idf.c's own spi_bus_initialize() is
+    // skipped in exactly that case - it checks sd_shares_bus and defers to
+    // whoever got there first, which is always this function.
+    int miso = b->panel.miso;
+    if (miso < 0 && b->storage.sd && b->storage.sd_shares_bus)
+        miso = b->storage.sd_miso;
+
     spi_bus_config_t bus = {
         .sclk_io_num     = b->panel.sck,
         .mosi_io_num     = b->panel.mosi,
-        .miso_io_num     = b->panel.miso,
+        .miso_io_num     = miso,
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
         .max_transfer_sz = (int)max_xfer,
