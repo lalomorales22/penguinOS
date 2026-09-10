@@ -522,6 +522,14 @@ static bool brain_tick(uint32_t now)
         // frame's mood is a lean applied to the wrong animation on exactly
         // the frame a mood changes.
         eos_stroll_tick(&stroll, dt);
+
+        // Something was put on the floor: go and have a look. After the tick,
+        // so the goto lands on a walker whose phase is already this frame's.
+        {
+            int32_t px_q8, py_q8;
+            if (eos_shell_buddy_prop_taken(&px_q8, &py_q8))
+                eos_stroll_goto(&stroll, px_q8, py_q8);
+        }
     }
     brain_last_tick = now;
 

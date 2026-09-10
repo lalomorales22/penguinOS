@@ -536,3 +536,45 @@ void eos_stroll_tick(eos_stroll_t *s, uint32_t dt_ms)
         break;
     }
 }
+
+// Send him somewhere on purpose.
+//
+// Everything above picks its own spots; this is the one way in from outside,
+// and it exists so that giving him something can mean more than drawing it.
+// The target is clamped into the stage rather than refused, because a caller
+// that knows where a bowl is should not also have to know how the stage was
+// divided - and a bowl half a pixel outside it would otherwise leave him
+// walking into the edge until the stall timer gave up.
+//
+// It declines while HELD or SETTLED, which is the same rule the wander obeys:
+// HELD means the owner is mid-conversation and a penguin who wanders off
+// during an answer is a bug, and SETTLED means asleep.
+void eos_stroll_goto(eos_stroll_t *s, int32_t x_q8, int32_t y_q8)
+{
+    const preset_t *p;
+    int32_t hx, hy, x, y;
+
+    if (!s || !s->b) return;
+    if (s->phase == EOS_STROLL_HELD || s->phase == EOS_STROLL_SETTLED) return;
+
+    p = &PRESET[s->preset];
+
+    eos_buddy_stage(s->b, &hx, &hy);
+    if (x_q8 >  hx) x_q8 =  hx;
+    if (x_q8 < -hx) x_q8 = -hx;
+    if (y_q8 >  hy) y_q8 =  hy;
+    if (y_q8 < -hy) y_q8 = -hy;
+    s->tx_q8 = x_q8;
+    s->ty_q8 = y_q8;
+
+    // The same heading maths pick_target() uses: the vertical is doubled
+    // because the floor is foreshortened, so a step up-screen covers more
+    // ground than a step across and the facing has to agree with the walk.
+    eos_buddy_pos(s->b, &x, &y);
+    s->face = heading(s->tx_q8 - x, (s->ty_q8 - y) * 2);
+    aim(s, s->face);
+
+    s->gait_ms  = p->gait_ms;
+    s->stall_ms = 0;
+    enter(s, EOS_STROLL_TURN, TURN_CAP_MS);
+}

@@ -139,6 +139,11 @@ uint8_t eos_stroll_roam_q8(eos_stroll_preset_t preset);
 // per tile knows this frame is worth repainting. It stays inside the buddy's
 // own box either way — see the motion notes in eos_buddy.h — so this is a
 // hint about whether to bother, never about how much to dirty.
+// Sends him to a spot on the stage, in Q8 pixels from its centre - the same
+// coordinates eos_buddy_pos() reports. Clamped into the stage, and ignored
+// while he is HELD by a conversation or SETTLED asleep.
+void eos_stroll_goto(eos_stroll_t *s, int32_t x_q8, int32_t y_q8);
+
 bool eos_stroll_moved(const eos_stroll_t *s);
 
 // The lean the gait is asking for right now, Q8 voxel units, signed: negative

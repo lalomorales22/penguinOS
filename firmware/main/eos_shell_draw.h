@@ -151,6 +151,19 @@ void eos_shell_buddy_shade(const eos_vox_pal_t *pal, eos_buddy_cfg_t *cfg);
 // the window that took it.
 uint32_t eos_shell_buddy_bytes(void);
 
+// The buddy's surroundings. The scene is the backdrop he stands on; the prop
+// is the one thing on the floor with him. Both live here because this is what
+// paints them, and both are addressed by index so the web app and the keyboard
+// can name the same thing.
+uint8_t eos_shell_buddy_scene(void);
+void    eos_shell_buddy_scene_set(uint8_t scene);
+void    eos_shell_buddy_prop(uint8_t kind);          // 0 clears the floor
+
+// True exactly once after something is put down, handing back where it landed
+// in stage coordinates. The walker lives in main.c, so this is how "he should
+// go and look at it" crosses the gap without this file learning about strolls.
+bool eos_shell_buddy_prop_taken(int32_t *x_q8, int32_t *y_q8);
+
 // The launcher's panel geometry for THIS panel and this theme's UI face. The
 // launcher model cannot work it out alone — it knows nothing about fonts or
 // about how big the glass is — so the scene, which knows both, hands it over.

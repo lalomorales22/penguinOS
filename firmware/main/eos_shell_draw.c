@@ -321,6 +321,69 @@ typedef enum {
 
 static uint8_t buddy_scene = SCENE_ROOM;
 
+// ------------------------------------------------------------------- props
+//
+// One thing at a time on the stage, because two would need a reason to choose
+// between them and he has no appetite model to choose with. Placement is in
+// STAGE coordinates - Q8 pixels from the middle, the same numbers
+// eos_buddy_pos() speaks - so the prop and the penguin agree about where the
+// floor is without either of them knowing the tile's size.
+
+typedef enum {
+    PROP_NONE = 0,
+    PROP_FOOD,     // a bowl of fish
+    PROP_WATER,    // a bowl of water
+    PROP_BALL,     // something to nudge
+    PROP_COUNT
+} prop_t;
+
+static uint8_t buddy_prop;
+static int32_t prop_x_q8, prop_y_q8;
+static bool    prop_is_new;        // a goto is owed; main.c takes it
+
+static const char *prop_name(uint8_t p)
+{
+    switch (p) {
+    case PROP_FOOD:  return "fish";
+    case PROP_WATER: return "water";
+    case PROP_BALL:  return "ball";
+    default:         return "";
+    }
+}
+
+// Put something down. Placed toward the front of the stage and to one side,
+// alternating sides so a second helping does not land on the first.
+void eos_shell_buddy_prop(uint8_t kind)
+{
+    static bool right;
+
+    if (kind >= PROP_COUNT) return;
+    buddy_prop = kind;
+    if (kind == PROP_NONE) { prop_is_new = false; return; }
+
+    right = !right;
+    prop_x_q8 = right ? (56 << 8) : -(56 << 8);
+    prop_y_q8 = (18 << 8);        // a little forward: nearer the viewer
+    prop_is_new = true;
+}
+
+uint8_t eos_shell_buddy_scene(void) { return buddy_scene; }
+void    eos_shell_buddy_scene_set(uint8_t sc)
+{
+    if (sc < SCENE_COUNT) buddy_scene = sc;
+}
+
+// True once per placement, handing back where it went. main.c owns the walker,
+// so it is the one that can send him - this file only knows where the bowl is.
+bool eos_shell_buddy_prop_taken(int32_t *x_q8, int32_t *y_q8)
+{
+    if (!prop_is_new) return false;
+    prop_is_new = false;
+    if (x_q8) *x_q8 = prop_x_q8;
+    if (y_q8) *y_q8 = prop_y_q8;
+    return true;
+}
+
 static const char *scene_name(uint8_t sc)
 {
     switch (sc) {
@@ -395,15 +458,51 @@ static void scene_paint(const eos_app_ctx_t *s, eos_rect_t r, uint8_t sc)
     (void)s;
 }
 
+// The prop, in the same projection the sprite uses: vertical travel squashed
+// by the camera's elevation so a bowl further up the stage sits further back
+// rather than higher up. Drawn BEFORE the penguin, so he can stand in front
+// of it - which is the whole reason the sprite stopped being opaque.
+static void prop_paint(eos_rect_t r, uint8_t kind)
+{
+    int16_t cx, cy, w, h;
+    uint8_t body, rim;
+
+    if (kind == PROP_NONE || kind >= PROP_COUNT || eos_rect_empty(r)) return;
+
+    cx = (int16_t)(r.x + r.w / 2 + (prop_x_q8 >> 8));
+    cy = (int16_t)(r.y + r.h / 2 +
+                   (int16_t)((((int64_t)prop_y_q8 * EOS_BUDDY_SIN_PHI) / 4096) >> 8));
+
+    w = 11; h = 5;
+    switch (kind) {
+    case PROP_FOOD:  body = ci(150, 96, 48);  rim = ci(196, 140, 84); break;
+    case PROP_WATER: body = ci(48, 120, 190); rim = ci(150, 200, 235); break;
+    default:         body = ci(200, 54, 54);  rim = ci(240, 150, 150);
+                     w = 7; h = 7;            break;
+    }
+
+    eos_display_fill(eos_rect((int16_t)(cx - w / 2), (int16_t)(cy - h / 2),
+                              w, h), body);
+    eos_display_hline((int16_t)(cx - w / 2), (int16_t)(cy - h / 2), w, rim);
+}
+
 // Cycles the scene. Bound on the buddy window rather than globally: it is the
 // only window a scene means anything to, and a global bind would spend a key
 // everywhere to change something visible in one place.
 bool eos_app_buddy_key(const eos_event_t *e)
 {
     if (!e || e->type != EOS_EV_KEY_DOWN) return false;
-    if (e->key != EOS_KEY_SPACE) return false;
-    buddy_scene = (uint8_t)((buddy_scene + 1) % SCENE_COUNT);
-    return true;
+
+    switch (e->key) {
+    case EOS_KEY_SPACE:
+        buddy_scene = (uint8_t)((buddy_scene + 1) % SCENE_COUNT);
+        return true;
+    case EOS_KEY_F: eos_shell_buddy_prop(PROP_FOOD);  return true;
+    case EOS_KEY_W: eos_shell_buddy_prop(PROP_WATER); return true;
+    case EOS_KEY_B: eos_shell_buddy_prop(PROP_BALL);  return true;
+    case EOS_KEY_N: eos_shell_buddy_prop(PROP_NONE);  return true;
+    default:        return false;
+    }
 }
 
 void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
@@ -415,6 +514,7 @@ void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
     int i;
 
     scene_paint(s, r, buddy_scene);
+    prop_paint(r, buddy_prop);
 
     if (buddy_ready) {
         eos_display_blit(buddy_at_x, buddy_at_y, &buddy_bm);
@@ -455,8 +555,16 @@ void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
         const char *sn = scene_name(buddy_scene);
         int16_t need = (int16_t)((int)strlen(sn) * (int)s->ui->cell_w);
         int16_t half = (int16_t)((r.w - (int16_t)((int)strlen(mood) * (int)s->ui->cell_w)) / 2);
-        if (need < half - 2)
+        if (need < half - 2) {
             eos_app_text(r.x, y, s->ui, s->muted, sn, need);
+            if (buddy_prop != PROP_NONE) {
+                const char *pn = prop_name(buddy_prop);
+                int16_t pw = (int16_t)((int)strlen(pn) * (int)s->ui->cell_w);
+                if (pw < half - 2)
+                    eos_app_text((int16_t)(r.x + r.w - pw), y, s->ui, s->accent,
+                                 pn, pw);
+            }
+        }
     }
 }
 
