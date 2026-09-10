@@ -314,22 +314,33 @@ void eos_app_tetris_tick(bool visible, uint32_t now_ms)
 bool eos_app_tetris_take_dirty(void) { bool d = T.dirty; T.dirty = false; return d; }
 bool eos_app_tetris_active(void)     { return T.started && !T.over; }
 
+// Right aligned against `right`. The column sits against the edge of the tile,
+// so every line in it has to be measured rather than placed.
+static void right_text(int16_t right, int16_t y, const eos_font_t *f,
+                       eos_color_t col, const char *str)
+{
+    int16_t w = (int16_t)((int)strlen(str) * (int)f->cell_w);
+    eos_app_text((int16_t)(right - w), y, f, col, str, w);
+}
+
 // -------------------------------------------------------------------- draw
 
 void eos_app_draw_tetris(const eos_app_ctx_t *c, eos_rect_t r)
 {
-    int16_t line_h, cell, bw, bh, bx, by, sx;
+    int16_t line_h, cell, bw, bh, bx, by, side;
     int rr, cc, i;
     char buf[24];
 
     if (!c->ui || eos_rect_empty(r)) return;
     line_h = (int16_t)(c->ui->h + 1);
 
-    // A well is twenty cells tall and ten wide, so the smallest honest board
-    // is 20 px by 10 px plus somewhere to put the score. Below that, say so
-    // rather than draw a smear: the tile can be 110x76 in a five-up layout.
+    // HEIGHT FIRST. The well is twenty cells tall and that is what decides how
+    // big a cell can be; the width only ever shrinks it further. Sizing it the
+    // other way - reserving five columns for the numbers before measuring
+    // anything - is what made a narrow tile draw a thin well AND a column too
+    // narrow to read: the panel was paid for whether or not it could be used.
     cell = (int16_t)(r.h / ROWS);
-    if (cell > (int16_t)(r.w / (COLS + 5))) cell = (int16_t)(r.w / (COLS + 5));
+    if (cell > (int16_t)(r.w / COLS)) cell = (int16_t)(r.w / COLS);
     if (cell < 2 || r.h < 4 * line_h) {
         eos_app_text(r.x, r.y, c->ui, c->accent, "tetris", r.w);
         if (r.h >= 2 * line_h)
@@ -340,9 +351,16 @@ void eos_app_draw_tetris(const eos_app_ctx_t *c, eos_rect_t r)
 
     bw = (int16_t)(cell * COLS);
     bh = (int16_t)(cell * ROWS);
-    bx = r.x;
+
+    // The column gets what the well does not want, and only when that is
+    // enough to read: six columns of the small face, which is "score" and a
+    // four-digit number. Below that there is no column at all and the well
+    // takes the tile and centres in it.
+    side = (int16_t)(r.w - bw - cell);
+    if (side < 6 * (int16_t)c->ui->cell_w) side = 0;
+
+    bx = side ? r.x : (int16_t)(r.x + (r.w - bw) / 2);
     by = (int16_t)(r.y + (r.h - bh) / 2);
-    sx = (int16_t)(bx + bw + cell);
 
     eos_display_fill(eos_rect(bx, by, bw, bh), c->surface);
 
@@ -372,32 +390,36 @@ void eos_app_draw_tetris(const eos_app_ctx_t *c, eos_rect_t r)
 
     eos_display_border(eos_rect(bx, by, bw, bh), 1, c->bunf);
 
-    // The side column, only when there is room for it to be read.
-    if (r.w - bw < 6 * (int16_t)c->ui->cell_w) return;
+    // The column, RIGHT ALIGNED against the edge of the tile. Left aligned it
+    // floated in the middle of whatever space was left over and read as part
+    // of the well rather than as a margin beside it.
+    if (!side) return;
     {
-        int16_t y = by;
-        int16_t sw = (int16_t)(r.x + r.w - sx);
+        int16_t y     = by;
+        int16_t right = (int16_t)(r.x + r.w);
 
         snprintf(buf, sizeof buf, "%lu", (unsigned long)T.score);
-        eos_app_text(sx, y, c->ui, c->muted, "score", sw); y = (int16_t)(y + line_h);
-        eos_app_text(sx, y, c->ui, c->text,  buf,     sw); y = (int16_t)(y + line_h + 2);
+        right_text(right, y, c->ui, c->muted, "score"); y = (int16_t)(y + line_h);
+        right_text(right, y, c->ui, c->text,  buf);     y = (int16_t)(y + line_h + 2);
 
         snprintf(buf, sizeof buf, "%lu", (unsigned long)T.hiscore);
-        eos_app_text(sx, y, c->ui, c->muted, "best",  sw); y = (int16_t)(y + line_h);
-        eos_app_text(sx, y, c->ui, c->text,  buf,     sw); y = (int16_t)(y + line_h + 2);
+        right_text(right, y, c->ui, c->muted, "best");  y = (int16_t)(y + line_h);
+        right_text(right, y, c->ui, c->text,  buf);     y = (int16_t)(y + line_h + 2);
 
         snprintf(buf, sizeof buf, "%u/%u", (unsigned)T.lines, (unsigned)T.level);
-        eos_app_text(sx, y, c->ui, c->muted, "lines", sw); y = (int16_t)(y + line_h);
-        eos_app_text(sx, y, c->ui, c->text,  buf,     sw); y = (int16_t)(y + line_h + 2);
+        right_text(right, y, c->ui, c->muted, "lines"); y = (int16_t)(y + line_h);
+        right_text(right, y, c->ui, c->text,  buf);     y = (int16_t)(y + line_h + 2);
 
-        // The next piece, if the column is wide enough to show one.
-        if (sw >= 4 * cell && y + 4 * cell < r.y + r.h) {
+        // The next piece, hung off the same right edge so its box lines up
+        // with the numbers above it rather than starting where they start.
+        if (side >= 4 * cell && y + 4 * cell < r.y + r.h) {
             uint16_t bits = PIECE[T.next][0];
-            eos_app_text(sx, y, c->ui, c->muted, "next", sw);
+            int16_t  nx   = (int16_t)(right - 4 * cell);
+            right_text(right, y, c->ui, c->muted, "next");
             y = (int16_t)(y + line_h);
             for (i = 0; i < 16; i++) {
                 if (!occupied(bits, i)) continue;
-                eos_display_fill(eos_rect((int16_t)(sx + (i & 3) * cell),
+                eos_display_fill(eos_rect((int16_t)(nx + (i & 3) * cell),
                                           (int16_t)(y + (i >> 2) * cell),
                                           (int16_t)(cell - 1), (int16_t)(cell - 1)),
                                  eos_theme_cube_index(PIECE_RGB[T.next]));
@@ -406,9 +428,9 @@ void eos_app_draw_tetris(const eos_app_ctx_t *c, eos_rect_t r)
     }
 
     if (!T.started)
-        eos_app_text(sx, (int16_t)(by + bh - line_h), c->ui, c->accent, "enter", 
-                     (int16_t)(r.x + r.w - sx));
+        right_text((int16_t)(r.x + r.w), (int16_t)(by + bh - line_h),
+                   c->ui, c->accent, "enter");
     else if (T.over)
-        eos_app_text(sx, (int16_t)(by + bh - line_h), c->ui, c->warn, "over", 
-                     (int16_t)(r.x + r.w - sx));
+        right_text((int16_t)(r.x + r.w), (int16_t)(by + bh - line_h),
+                   c->ui, c->warn, "over");
 }
