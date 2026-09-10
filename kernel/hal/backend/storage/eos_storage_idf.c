@@ -356,7 +356,19 @@ static eos_err_t mount_one(mnt_t *m)
 
         // The descriptor says 1 = SPI2/HSPI, 2 = SPI3/VSPI. Spelled out rather
         // than cast: the two enumerations agreeing is luck, not a contract.
+        //
+        // SPI3_HOST is compiled out, not tested at runtime, because single-host
+        // parts do not define the symbol AT ALL - naming it is a compile error,
+        // not a value that is merely wrong. This file was written against the
+        // CYD, a classic ESP32 with both hosts, so the bare reference built
+        // fine and stayed wrong until the first C5 build. eos_display_st7789.c
+        // already had this guard in spi_host_of(); this is the same fix, and
+        // the next backend that reaches for SPI3 needs it too.
+#if SOC_SPI_PERIPH_NUM > 2
         host.slot = (b->storage.sd_spi_host == 2) ? SPI3_HOST : SPI2_HOST;
+#else
+        host.slot = SPI2_HOST;
+#endif
         if (b->storage.sd_hz) host.max_freq_khz = (int)(b->storage.sd_hz / 1000u);
 
         // Who owns the bus decides who initialises it. On a board where the
