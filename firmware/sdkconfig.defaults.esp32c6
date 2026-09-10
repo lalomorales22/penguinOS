@@ -12,3 +12,31 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 
 # The C6 is single core (chip.cores 1 in the profile). Nothing to pin here; the
 # line exists so a future dual-core board's file is an obvious place to differ.
+
+# ---------------------------------------------------------------------- lwIP
+# IPv6 off. It saves 1,616 bytes of heap (254,992 -> 256,608 free at app_main,
+# measured on this board) and matches esp32 and esp32c5, which both set it.
+#
+# IT WAS ADDED FOR A DIFFERENT REASON AND DID NOT FIX THAT REASON. Opening the
+# board's own name from a Mac takes five seconds:
+#
+#   curl -4  0.054 s   (dns 0.005 s)      the page itself is 50 ms
+#   curl -6  5.18  s
+#   default  5.06  s   (dns 5.007 s, every time, never varying)
+#
+# A client resolving penguin-four.local asks for A and AAAA together, gets the
+# A immediately, and then waits out the full five-second mDNS timeout on the
+# AAAA that never arrives. The theory was that a board with no IPv6 at all
+# would say so - mDNS has an NSEC record meaning "I have no address of that
+# type" - and that the AAAA question would stop hanging.
+#
+# MEASURED AFTER THIS LINE WENT IN, on a confirmed-new image: still 5.010 s.
+# IDF's mDNS responder does not send the NSEC either way, so the question hangs
+# regardless and the client's timeout is the client's to spend. Turning IPv6
+# off does not shorten it.
+#
+# So: the delay is real, it is not fixed here, and the workaround is the IP
+# address, which resolves instantly. Anyone tempted to try this again for the
+# latency should read this paragraph first and go and look at the mDNS
+# component's NSEC handling instead.
+CONFIG_LWIP_IPV6=n
