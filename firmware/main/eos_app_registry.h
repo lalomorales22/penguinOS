@@ -200,6 +200,9 @@ void eos_app_draw_settings(const eos_app_ctx_t *c, eos_rect_t r);
 // eos_buddy_render() reorders the model in place and the scene is replayed once
 // per band; that machinery and this body have to see the same box.
 void eos_app_draw_buddy(const eos_app_ctx_t *c, eos_rect_t r);
+// Space cycles the scene he stands in. On this window rather than a global
+// bind: it is the only window a scene means anything to.
+bool eos_app_buddy_key(const eos_event_t *e);
 
 void eos_app_draw_chat(const eos_app_ctx_t *c, eos_rect_t r);
 bool eos_app_chat_key(const eos_event_t *e);

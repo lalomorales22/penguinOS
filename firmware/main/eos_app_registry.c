@@ -35,8 +35,8 @@ static const eos_app_t APPS[EOS_APP_COUNT] = {
     { "keys",  "keys",  "the compiled-in keymap",
       0, eos_app_draw_keys,     NULL },
 
-    { "buddy", "buddy", "Pip, and the mood the brain has put him in",
-      0, eos_app_draw_buddy,    NULL },
+    { "buddy", "buddy", "Pip, roaming a scene. space changes where he is.",
+      0, eos_app_draw_buddy,    eos_app_buddy_key },
 
     { "chat",  "chat",  "ask the brain, and watch the reply arrive",
       0, eos_app_draw_chat,     eos_app_chat_key },

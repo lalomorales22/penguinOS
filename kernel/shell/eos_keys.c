@@ -234,6 +234,22 @@ void eos_keys_defaults(eos_keymap_t *km)
     eos_keys_bind(km, SC, EOS_KEY_H, EOS_ACT_SPLIT_COLS, 0);
     eos_keys_bind(km, SC, EOS_KEY_V, EOS_ACT_SPLIT_ROWS, 0);
 
+    // Resize on super+ctrl+arrows, completing the set: super moves the FOCUS,
+    // super+shift moves the WINDOW, super+ctrl changes its SIZE. Both axes are
+    // bound to the same pair of deltas because eos_wm_resize() acts on the
+    // focused tile within whatever its parent split happens to be - there is
+    // no second axis to aim at - so this is "bigger" and "smaller" reachable
+    // from either hand rather than two different operations.
+    //
+    // super+minus and super+equal already did this and stay bound. They are
+    // the better keys on a full keyboard and the worse ones on a compact
+    // trackpad keyboard, where the arrows are their own cluster and the
+    // number row is a chord.
+    eos_keys_bind(km, SC, EOS_KEY_LEFT,  EOS_ACT_RESIZE, -50);
+    eos_keys_bind(km, SC, EOS_KEY_DOWN,  EOS_ACT_RESIZE, -50);
+    eos_keys_bind(km, SC, EOS_KEY_RIGHT, EOS_ACT_RESIZE,  50);
+    eos_keys_bind(km, SC, EOS_KEY_UP,    EOS_ACT_RESIZE,  50);
+
     for (int i = 0; i < 4; i++) {
         eos_keys_bind(km, S,  HJKL[i],  (eos_action_t)FOCUS[i], 0);
         eos_keys_bind(km, S,  ARROW[i], (eos_action_t)FOCUS[i], 0);

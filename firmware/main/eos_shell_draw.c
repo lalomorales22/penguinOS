@@ -298,6 +298,114 @@ static void buddy_prepare(const eos_shell_view_t *v, const skin_t *s)
     buddy_ready = true;
 }
 
+// ------------------------------------------------------------------ scenes
+//
+// Somewhere for him to be. A scene is painted into the tile body before the
+// sprite goes down, and it is a PURE FUNCTION OF POSITION - every pixel is
+// decided by its own x and y and the scene id, and nothing accumulates. That
+// is not a style rule: draw is replayed once per band, forty times a frame on
+// this panel, so a blade of grass placed from a running counter would land
+// somewhere different in every strip and the tile would shear into bands.
+//
+// The same constraint is why the detail is hashed rather than random. hash2()
+// is deterministic in (x, y), so band nineteen draws exactly the grass band
+// nineteen drew last frame, and a scene costs no state at all.
+
+typedef enum {
+    SCENE_NONE = 0,   // the flat tile this window has always had
+    SCENE_ROOM,       // a floor and a wall, with a skirting line
+    SCENE_GRASS,      // turf under a pale sky
+    SCENE_POOL,       // water with a deck behind it
+    SCENE_COUNT
+} scene_t;
+
+static uint8_t buddy_scene = SCENE_ROOM;
+
+static const char *scene_name(uint8_t sc)
+{
+    switch (sc) {
+    case SCENE_ROOM:  return "room";
+    case SCENE_GRASS: return "grass";
+    case SCENE_POOL:  return "pool";
+    default:          return "plain";
+    }
+}
+
+// Cheap spatial hash. Not random and does not need to be: it needs to be the
+// same answer for the same pixel on every band of every frame.
+static uint32_t hash2(int32_t x, int32_t y)
+{
+    uint32_t h = (uint32_t)(x * 374761393) + (uint32_t)(y * 668265263);
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return h ^ (h >> 16);
+}
+
+static uint8_t ci(uint8_t r8, uint8_t g8, uint8_t b8)
+{
+    eos_rgb_t c; c.r = r8; c.g = g8; c.b = b8;
+    return eos_theme_cube_index(c);
+}
+
+// The horizon: where the floor starts. Two thirds down, so he has room to walk
+// "into" the picture without the far edge crowding the top of the tile.
+static int16_t scene_horizon(eos_rect_t r) { return (int16_t)(r.y + (r.h * 2) / 3); }
+
+static void scene_paint(const eos_app_ctx_t *s, eos_rect_t r, uint8_t sc)
+{
+    int16_t hz = scene_horizon(r);
+    int16_t x, y;
+
+    if (sc == SCENE_NONE || eos_rect_empty(r)) return;
+
+    switch (sc) {
+    case SCENE_ROOM:
+        eos_display_fill(eos_rect(r.x, r.y, r.w, (int16_t)(hz - r.y)), ci(58, 58, 72));
+        eos_display_fill(eos_rect(r.x, hz, r.w, (int16_t)(r.y + r.h - hz)), ci(96, 84, 74));
+        eos_display_hline(r.x, hz, r.w, ci(140, 126, 112));   // the skirting
+        break;
+
+    case SCENE_GRASS:
+        eos_display_fill(eos_rect(r.x, r.y, r.w, (int16_t)(hz - r.y)), ci(150, 196, 226));
+        eos_display_fill(eos_rect(r.x, hz, r.w, (int16_t)(r.y + r.h - hz)), ci(58, 132, 54));
+        // Blades: one pixel in six, two greens, taller nearer the front so the
+        // turf reads as ground going away rather than as noise.
+        for (y = hz; y < (int16_t)(r.y + r.h); y++) {
+            uint8_t g = (uint8_t)(70 + ((y - hz) * 90) / (r.h ? r.h : 1));
+            for (x = r.x; x < (int16_t)(r.x + r.w); x++)
+                if ((hash2(x, y) & 7u) == 0)
+                    eos_display_pixel(x, y, ci(40, g, 40));
+        }
+        break;
+
+    case SCENE_POOL:
+        eos_display_fill(eos_rect(r.x, r.y, r.w, (int16_t)(hz - r.y)), ci(206, 190, 160));
+        eos_display_fill(eos_rect(r.x, hz, r.w, (int16_t)(r.y + r.h - hz)), ci(40, 120, 190));
+        eos_display_hline(r.x, hz, r.w, ci(232, 224, 200));    // the pool edge
+        // Ripples: short horizontal dashes on every third row, placed by hash
+        // so they do not line up into stripes.
+        for (y = (int16_t)(hz + 2); y < (int16_t)(r.y + r.h); y += 3)
+            for (x = r.x; x < (int16_t)(r.x + r.w - 3); x++)
+                if ((hash2(x, y) & 15u) == 0)
+                    eos_display_hline(x, y, 3, ci(120, 190, 235));
+        break;
+
+    default:
+        break;
+    }
+    (void)s;
+}
+
+// Cycles the scene. Bound on the buddy window rather than globally: it is the
+// only window a scene means anything to, and a global bind would spend a key
+// everywhere to change something visible in one place.
+bool eos_app_buddy_key(const eos_event_t *e)
+{
+    if (!e || e->type != EOS_EV_KEY_DOWN) return false;
+    if (e->key != EOS_KEY_SPACE) return false;
+    buddy_scene = (uint8_t)((buddy_scene + 1) % SCENE_COUNT);
+    return true;
+}
+
 void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
 {
     const eos_shell_view_t *v = s->view;
@@ -305,6 +413,8 @@ void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
     const char *name;
     int16_t y;
     int i;
+
+    scene_paint(s, r, buddy_scene);
 
     if (buddy_ready) {
         eos_display_blit(buddy_at_x, buddy_at_y, &buddy_bm);
@@ -334,6 +444,20 @@ void eos_app_draw_buddy(const eos_app_ctx_t *s, eos_rect_t r)
 
     y = (int16_t)(r.y + r.h - (int16_t)s->ui->h);
     if (y >= r.y) eos_display_text_center(r, y, s->ui, s->accent, mood);
+
+    // Which scene he is standing in, left-aligned on the same line and in the
+    // muted colour so it reads as a caption rather than as a second mood. It
+    // is here because space cycles four of them blind otherwise: the room and
+    // the pool are obvious, but "plain" and a dark room are not, and a person
+    // pressing space wants to know which one they landed on. Only drawn when
+    // the line has room for both.
+    if (buddy_scene != SCENE_NONE && y >= r.y) {
+        const char *sn = scene_name(buddy_scene);
+        int16_t need = (int16_t)((int)strlen(sn) * (int)s->ui->cell_w);
+        int16_t half = (int16_t)((r.w - (int16_t)((int)strlen(mood) * (int)s->ui->cell_w)) / 2);
+        if (need < half - 2)
+            eos_app_text(r.x, y, s->ui, s->muted, sn, need);
+    }
 }
 
 // ---------------------------------------------------------------- one tile
