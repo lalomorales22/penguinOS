@@ -381,13 +381,21 @@ static const regrow_t registry[] = {
          press/release pairs on the PENIRQ line. */
       EOS_TOUCH_XPT2046, EOS_BUS_SPI, true, true, 1 },
     { &eos_board_waveshare_c5_lcd_147, "waveshare-c5-lcd-147",
-      EOS_SOC_ESP32_C5, 1, EOS_TIER_LEAN, 4194304u, 0u,
+      EOS_SOC_ESP32_C5, 1, EOS_TIER_SOFT, 4194304u, 0u,
       EOS_PANEL_ST7789, EOS_BUS_SPI, 172, 320, 1, 320, 172,
       16, 2, false, true, 40000000u, 34, 0,
       7, 6, -1, 24, 23, 26, 1,
       -1, -1, 0x00, false, true,
       10,
-      EOS_COMP_LVGL, true, 0, false, 40, 80, 40, 131072u,
+      /* Was EOS_TIER_LEAN / EOS_COMP_LVGL / palette 0 / band 40, and every one
+         of those was a plan rather than a measurement: no LVGL exists in this
+         tree, EOS_COMPOSITOR_LVGL is read by no translation unit, and the only
+         backend is the banded indexed-8 compositor with a fixed 256-entry LUT.
+         The board was brought up on real hardware and the row now says what it
+         actually runs. band 8, not 40: the strips cost 2 x band x WIDTH x 2 and
+         WIDTH is 320 here, so 40 rows would be 51,200 bytes - the exact class
+         of mistake that starved the 4.0in CYD's radio. */
+      EOS_COMP_INDEXED8, false, 256, false, 8, 80, 40, 143740u,
       true, EOS_BUS_SPI, "/sd", "int", "/int", 20000000u, true,
       EOS_LED_WS2812, -1, -1, -1, 8, 1, false,
       EOS_AUDIO_NONE, -1, -1, 0, -1,

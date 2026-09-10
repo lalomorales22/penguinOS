@@ -3,7 +3,7 @@
   "schema_version": 1,
   "id": "waveshare-c5-lcd-147",
   "name": "Waveshare ESP32-C5-LCD-1.47",
-  "summary": "The tier 1 reference board: enough RAM for LVGL 9 with partial buffers, no PSRAM, and a vendor BSP that owns panel init.",
+  "summary": "The first ESP32-C5 board penguinOS has ever built for: a long thin 320x172 ST7789 strip, no PSRAM, no touch, and a microSD sharing the panel's SPI bus.",
   "chip": {
     "target": "esp32c5",
     "variant": "ESP32-C5",
@@ -16,24 +16,24 @@
     }
   },
   "render": {
-    "tier": 1,
-    "compositor": "lvgl",
-    "lvgl": true,
-    "palette_entries": 0,
+    "tier": 0,
+    "compositor": "indexed8",
+    "lvgl": false,
+    "palette_entries": 256,
     "full_framebuffer": false,
-    "band_height": 40,
+    "band_height": 8,
     "min_tile_w": 80,
     "min_tile_h": 40,
     "double_buffer": false,
     "animations": false,
-    "heap_budget_bytes": 131072,
-    "reason": "The C5 has room for LVGL 9 but not for a whole screen. A 320x172 RGB565 frame is 110KB, which is most of the usable SRAM, so LVGL runs partial: one 320x40 draw buffer of 25.6KB, flushed as it fills. No PSRAM means no second buffer and no animation budget, so this is tier 1, not tier 2."
+    "heap_budget_bytes": 143740,
+    "reason": "REWRITTEN FROM ASPIRATION TO WHAT IS ACTUALLY IMPLEMENTED. This block used to say tier 1 / lvgl, and that was a plan, not a description: there is no LVGL anywhere in the tree, EOS_USE_LVGL and EOS_COMPOSITOR_LVGL are read by no translation unit, and the one display backend that exists (kernel/hal/backend/esp_lcd/eos_display_st7789.c) is the banded indexed-8 software compositor with a hardcoded uint16_t lut[EOS_PALETTE_MAX] of 256 entries. So tier 0 / indexed8 / 256 is not a downgrade of this board, it is the first accurate sentence anyone has written about it. band_height is 8, carried over from cyd-4832s040 rather than from the 1.3in and 2.4in boards' 16, because the strips cost 2 x band_height x WIDTH x 2 bytes and WIDTH here is 320: 8 rows is 10,240 bytes against the 15,360 the tightest verified board runs on. Erring small is deliberate - the CYD lesson was that a band height inherited without re-deriving it for a wider panel starves the radio, and the symptom is not a slow screen but a web server that accepts and then drops. MEASURED ON HARDWARE. penguinOS reports 143740 free / 114688 largest at app_main, and 34972 free / 18432 largest once the whole boot sequence has run, in SETUP mode - the worst case, with the SoftAP and the station interface both up. Those are the figures AFTER the Wi-Fi buffer pools were cut in sdkconfig.defaults.esp32c5. Before that cut the same board ended boot with 19592 free and could not hand a phone a DHCP lease: the client associated, waited six seconds without an address and deauthenticated itself. The display is not the expensive thing here and never was - it takes 11944 bytes against the radio's 49108 even after tuning. Do not buy picture quality out of this budget; there is nothing spare in it."
   },
   "display": {
     "controller": "ST7789",
-    "driver_source": "bsp",
-    "bsp_component": "waveshare/esp32_c5_lcd_1_47",
-    "bsp_version": "1.0.0",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
     "native_width": 172,
     "native_height": 320,
     "rotation": 1,
@@ -45,7 +45,7 @@
     "bus": "spi",
     "spi_host": "SPI2",
     "clock_hz": 40000000,
-    "clock_reason": "40MHz, read off the BSP: BSP_LCD_SPI_CLK_HZ in esp32_c5_lcd_1_47.h is (40 * 1000 * 1000). driver_source is bsp, so the component sets the real pixel clock and this value is a mirror of it, not a control. It must be kept equal to whatever the BSP is configured with; changing it here does not change the hardware.",
+    "clock_reason": "40MHz. This was originally a mirror of the Waveshare BSP's BSP_LCD_SPI_CLK_HZ and explicitly NOT a control. driver_source is now esp_lcd, so it IS a control: eos_display_st7789.c configures the SPI bus at this rate. The value is unchanged because 40MHz is what the vendor clocks this panel at and what the verified S3 board with the same panel runs.",
     "pins": {
       "sck": 7,
       "mosi": 6,
@@ -66,10 +66,10 @@
     "row_offset": 0,
     "invert": true,
     "byte_swap": true,
-    "byte_swap_reason": "INHERITED, NOT MEASURED. Until the ESP32-S3-Touch-LCD-1.47 disagreed, the byte swap was hardcoded in eos_display_st7789.c for every board, so true reproduces exactly the behaviour this profile was written against. This board has never been run, so that is a default and not an observation. Check it the first time the board boots: draw pure red (0xF800). Red means true is correct; CYAN means invert is wrong; YELLOW means BOTH this and invert are wrong, which is the combination that does not look like a wire-format bug and cost real time on the S3.",
+    "byte_swap_reason": "MEASURED. Was inherited-not-measured until this board's first light. The setup screen renders amber-on-dark with the QR scanning cleanly, which is the whole test: a wrong byte_swap turns the theme's amber into a blue-green and a wrong invert turns the dark ground light, and both wrong gives yellow. None of those happened.",
     "mirror_x": false,
     "mirror_y": false,
-    "mirror_reason": "Both false, which XORs to exactly the mirror bits the rotation already implied - so this board renders bit-for-bit as it did before mirror_x and mirror_y existed. Not a measurement: it is the old hardcoded behaviour made explicit. If text or the avatar ever renders backwards on this board, this pair is the first thing to check."
+    "mirror_reason": "MEASURED. Both false. Text reads left-to-right and the setup QR scans, which it cannot do mirrored - a QR is not symmetric and a reflected one fails its own format check. Note this DISAGREES with the verified waveshare-s3-touch-lcd-147, which needs mirror_x true for the same 172x320 panel; see the invert-mirror gotcha."
   },
   "inputs": {
     "bluetooth_keyboard": {
@@ -169,7 +169,9 @@
       "note": "Not attempted, and pointless here anyway: MISO is not wired to the panel, so nothing can be read back from the controller at all."
     },
     "usb_serial": null,
-    "mac_allowlist": [],
+    "mac_allowlist": [
+      "38:44:be:0e:9c:38"
+    ],
     "distinguishing_notes": [
       "Long thin 1.47 inch IPS strip, 320x172 in landscape, on a narrow board.",
       "Native USB, so it enumerates as a usb_serial_jtag device rather than a CH340 or CP2102 bridge.",
@@ -178,28 +180,34 @@
     "confirm_prompt": "Is this the Waveshare ESP32-C5-LCD-1.47 with the long thin colour strip, and not the C5 wired to the 128x64 mono OLED? Both are ESP32-C5 with 4MB and esptool reports them identically."
   },
   "unverified": [
-    "render.band_height",
-    "flashing.flash_mode",
-    "flashing.flash_freq_mhz",
     "peripherals.sdcard.max_clock_hz",
-    "render.heap_budget_bytes",
-    "peripherals.internal_fs.partition_label",
     "render.min_tile_w",
-    "render.min_tile_h",
-    "display.byte_swap"
+    "render.min_tile_h"
   ],
   "gotchas": [
     {
-      "id": "bsp-owns-panel",
+      "id": "first-c5-build",
       "severity": "high",
-      "field": "display.driver_source",
-      "text": "The Waveshare BSP component brings the panel up, not penguinOS. It pulls espressif/esp_lvgl_port ^2 and lvgl >=8,<10, so the LVGL major version is not a free choice on this board: it has to stay inside that range or the component will not resolve."
+      "field": "chip.target",
+      "text": "No board in this registry had ever been BUILT for esp32c5 before this one - the other C5 profile (wavvy-oled-c5) has never been flashed either, and there was no firmware/sdkconfig.defaults.esp32c5 at all until this board was brought up. Anything that fails here on the SoC rather than on the panel is a first, not a regression."
+    },
+    {
+      "id": "esp32-class-ram-behind-a-wifi6-radio",
+      "severity": "high",
+      "field": "render.heap_budget_bytes",
+      "text": "This board looks modern and is not roomy. 143740 bytes free at app_main puts it within 4% of the 4.0in CYD, a 2016 ESP32 - but it carries a dual-band Wi-Fi 6 radio whose driver defaults are sized for a part with four times this SRAM. That mismatch is a trap the registry walked straight into: sdkconfig.defaults.esp32 has carried cut-down Wi-Fi buffer pools since the CYD needed them, under a comment saying the trade is NOT to be copied to the other targets because THEY HAVE THE RAM. That was true of every board in the fleet until this one. The C5 shipped with stock pools, spent 62720 bytes on the radio, ended boot with 19592 free, and could not complete a DHCP handshake with a phone sitting two feet away - a failure that looks like a broken web server and is not one. Any future board should be checked against the CYD's numbers, not against its own datasheet's headline."
+    },
+    {
+      "id": "invert-mirror-disagree-with-sibling",
+      "severity": "note",
+      "field": "display.invert",
+      "text": "RESOLVED BY MEASUREMENT, and the answer is that both profiles are right. This board and the verified waveshare-s3-touch-lcd-147 carry the SAME 172x320 ST7789 panel at the same rotation and the same col_offset 34, and they disagree on two fields: this board wants invert true / mirror_x false, the S3 wants invert false / mirror_x true. Both were confirmed on their own glass. So the panel part number does NOT determine these two - how the module is wired and mounted does, and the vendor's own BSP is the better witness for a given board than a sibling board with the same LCD. The practical rule: never copy invert or mirror across boards on the strength of a matching controller, even when everything else about the panel matches. Check it on first light; it costs one look at the screen."
     },
     {
       "id": "st7789-offsets",
       "severity": "high",
       "field": "display.row_offset",
-      "text": "The panel is 172 columns of a 240-column ST7789 frame memory, so it needs a RAM offset or everything is shifted. The BSP applies esp_lcd_panel_set_gap(panel, 34, 0) and esp_lcd_panel_invert_color(panel, true), and this profile mirrors both. 34 is (240-172)/2, the panel centred in the controller window. If driver_source is ever moved off bsp to esp_lcd, these two calls are what has to be made by hand, and the symptom of dropping the gap is a picture that looks fine but is nudged sideways."
+      "text": "The panel is 172 columns of a 240-column ST7789 frame memory, so it needs a RAM offset or everything is shifted. 34 is (240-172)/2, the panel centred in the controller window. THIS USED TO BE THE BSP'S JOB and is now penguinOS's: with driver_source esp_lcd, eos_display_st7789.c makes the esp_lcd_panel_set_gap(34, 0) and esp_lcd_panel_invert_color(true) calls itself, from col_offset/row_offset and invert in this file. The symptom of dropping the gap is a picture that looks fine but is nudged sideways."
     },
     {
       "id": "sd-shares-panel-bus",

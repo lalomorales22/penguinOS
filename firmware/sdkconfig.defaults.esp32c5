@@ -1,0 +1,56 @@
+# ESP32-C5 overrides. Appended by IDF after sdkconfig.defaults when
+# CONFIG_IDF_TARGET is esp32c5.
+#
+# This file did not exist until the Waveshare ESP32-C5-LCD-1.47 was brought up,
+# which makes that board the first thing penguinOS has ever built for this SoC.
+# Nothing here is inherited from a working build; it is the C6 file re-derived
+# for a different chip, and the C6 is the right template only because both are
+# single-core RISC-V parts with native USB and no PSRAM.
+
+# The board has no USB-to-UART bridge chip. flashing.usb_bridge is
+# "usb_serial_jtag" and /dev/cu.usbmodem* is the SoC's own USB peripheral, so
+# the stock UART0 console would print to GPIO11/GPIO12 - pins broken out to the
+# header and wired to nothing. Without this the board boots correctly and looks
+# dead, which is the single most expensive way for a first flash to fail.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# 240 MHz. This is already the C5's Kconfig default (see
+# components/esp_system/port/soc/esp32c5/Kconfig.cpu), unlike the C6 where 160
+# is the ceiling and the line is load-bearing. It is stated anyway so that the
+# panel's 40 MHz SPI clock has a written-down relationship to the core clock
+# rather than an assumed one.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# ---------------------------------------------------------------- Wi-Fi RAM
+# MEASURED, and this board is the reason the note in sdkconfig.defaults.esp32
+# saying "NOT a trade to copy to the other targets - they have the RAM" needs a
+# footnote: the C5 does not have the RAM either. It reports 142,140 bytes free
+# at app_main against the 4.0in CYD's 148,188. It is an ESP32-class memory
+# budget wearing a Wi-Fi 6 radio.
+#
+# With IDF's stock buffer pools the boot trace reads:
+#   display 11,944   BLE 31,120   Wi-Fi 62,720   brain 5,292   httpd 8,956
+# and boot ends with 19,592 bytes free, largest block 15,360. The SoftAP comes
+# up, the HTTP server starts, a phone ASSOCIATES - and then the DHCP server
+# cannot put a lease together, so the phone sits without an address for six
+# seconds and deauthenticates itself with reason 8. The symptom at the phone is
+# a setup page that spins forever; the symptom on the console was nothing at
+# all, because neither the DHCP server nor the HTTP server logged a thing.
+#
+# Wi-Fi is by far the largest consumer and its defaults (32 dynamic RX, 32
+# dynamic TX, 10 static RX at 1,700 bytes each) are sized for a part with four
+# times this SRAM. The same four lines that fixed the CYD fix this.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
+
+# AMPDU is left ON, deliberately, unlike the first pass at the CYD. That board
+# turned aggregation off to save memory and had to turn RX back on when the
+# camera app made it do bulk receive - a 33 KB frame took 2,200 ms without it.
+# This board has the same camera window. Do not trade it away again.
+
+# lwIP's IPv6 goes, for the same reason it went on the ESP32: nothing here
+# speaks it. The setup portal, the web app, mDNS and the model bridge are all
+# IPv4, and lwIP's v6 caches are in the image purely because lwIP is.
+CONFIG_LWIP_IPV6=n
