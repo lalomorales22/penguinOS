@@ -55,6 +55,13 @@ bool eos_setup_screen_had_qr(void);
 // levels that can survive it.
 //
 // eos_qr_ecl_t as an int, so this header does not drag eos_qr.h in behind it.
+// The boot screen: the penguinOS wordmark in pixel art, a penguin eating his
+// way along a row of cookies, and a line of text under it. done/total is the
+// boot sequence's own position, so the bar reports progress rather than
+// animating on a timer it would have to invent.
+void eos_setup_screen_boot(const eos_theme_t *t, const char *line,
+                           int done, int total);
+
 int eos_setup_screen_qr_ecl(void);
 
 // Modules across the penguin badge, INCLUDING its paper margin, or 0 when no

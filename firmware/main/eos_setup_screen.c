@@ -498,6 +498,128 @@ void eos_setup_screen_passkey(const eos_theme_t *t, uint32_t passkey,
 
 // ======================================================== the message screen
 
+// ------------------------------------------------------- the boot screen
+//
+// The wordmark is drawn, not typed. The four shipped faces are UI faces - they
+// exist so a status bar and a file listing fit, and their glyphs are as small
+// as legibility allows. A boot screen wants the opposite, so these nine letters
+// are pixel art at 5x7 and get scaled up by whole pixels, which is what keeps a
+// blown-up bitmap crisp instead of soft.
+//
+// Only the letters of "penguinOS" are here. A ninth of an alphabet is not a
+// font and is not pretending to be one; when the arcade face lands in
+// kernel/font this block should go and the wordmark should be typed.
+
+#define WM_W 5
+#define WM_H 7
+
+static const char *const WM_P[WM_H] = { "####.","#...#","#...#","####.","#....","#....","#...." };
+static const char *const WM_E[WM_H] = { ".###.","#...#","#...#","#####","#....","#...#",".###." };
+static const char *const WM_N[WM_H] = { "#...#","##..#","#.#.#","#..##","#...#","#...#","#...#" };
+static const char *const WM_G[WM_H] = { ".####","#....","#....","#.###","#...#","#...#",".####" };
+static const char *const WM_U[WM_H] = { "#...#","#...#","#...#","#...#","#...#","#...#",".###." };
+static const char *const WM_I[WM_H] = { "#####","..#..","..#..","..#..","..#..","..#..","#####" };
+static const char *const WM_O[WM_H] = { ".###.","#...#","#...#","#...#","#...#","#...#",".###." };
+static const char *const WM_S[WM_H] = { ".####","#....","#....",".###.","....#","....#","####." };
+
+static const char *const *const WORDMARK[9] = {
+    WM_P, WM_E, WM_N, WM_G, WM_U, WM_I, WM_N, WM_O, WM_S
+};
+#define WM_LETTERS 9
+
+// The cookie the penguin is eating, and the penguin. Both live in the bar.
+// '#' ink, 'o' the white face, '*' the beak.
+#define PB_W 9
+#define PB_H 9
+static const char *const PB_PENGUIN[2][PB_H] = {
+  { /* beak shut  */ "..#####..",".#######.","##ooooo##","#o#ooo#o#","#ooooooo#","#ooo*ooo#","#ooooooo#",".#######.","..#####.." },
+  { /* beak open  */ "..#####..",".#######.","##ooooo##","#o#ooo#o#","#ooooooo#","#oo***oo#","#oo***oo#",".#######.","..#####.." },
+};
+
+static void sprite(int16_t x, int16_t y, int sc, const char *const *rows, int h, int w,
+                   eos_color_t ink, eos_color_t face, eos_color_t beak)
+{
+    int r, c;
+    for (r = 0; r < h; r++) {
+        for (c = 0; c < w; c++) {
+            eos_color_t col;
+            switch (rows[r][c]) {
+            case '#': col = ink;  break;
+            case 'o': col = face; break;
+            case '*': col = beak; break;
+            default:  continue;
+            }
+            eos_display_fill(eos_rect((int16_t)(x + c * sc), (int16_t)(y + r * sc),
+                                      (int16_t)sc, (int16_t)sc), col);
+        }
+    }
+}
+
+// A track of cookies with a penguin working along it. Cookies behind him are
+// eaten; the ones ahead are still there. done/total is the boot sequence's own
+// progress, so the bar is a report and not a decoration that runs on a timer.
+static void chomp_bar(const skin_t *s, int16_t x, int16_t y, int16_t w, int sc,
+                      int done, int total)
+{
+    const int16_t ph   = (int16_t)(PB_H * sc);
+    const int16_t pw   = (int16_t)(PB_W * sc);
+    const int16_t cook = (int16_t)(2 * sc);        // a cookie is 2x2 sprite pixels
+    const int16_t gap  = (int16_t)(5 * sc);
+    int16_t travel, px, cx;
+    int frame;
+
+    if (total <= 0 || w < pw + 2 * gap) return;
+    if (done < 0) done = 0;
+    if (done > total) done = total;
+
+    travel = (int16_t)(w - pw);
+    px = (int16_t)(x + (int16_t)(((int32_t)travel * done) / total));
+
+    // Two frames, alternating per step, so the beak opens on every cookie
+    // rather than on a clock this function does not have. The draw is replayed
+    // once per display band and a clock-driven mouth would differ between the
+    // bands of one frame.
+    frame = done & 1;
+
+    // The cookies still ahead of him.
+    for (cx = (int16_t)(px + pw + gap); cx + cook <= x + w; cx = (int16_t)(cx + gap))
+        eos_display_fill(eos_rect(cx, (int16_t)(y + ph / 2 - cook / 2), cook, cook),
+                         s->muted);
+
+    sprite(px, y, sc, PB_PENGUIN[frame], PB_H, PB_W, s->ink, s->paper, s->accent);
+}
+
+static void boot_scene(const skin_t *s, const char *line, int done, int total)
+{
+    const eos_display_info_t *info = eos_display_info();
+    int sc, i;
+    int16_t wm_w, wm_h, x, y, bar_w;
+
+    eos_display_clear(s->bg);
+
+    // Biggest whole-pixel scale the wordmark fits at, down to 1. A 128x64 OLED
+    // lands on 1 and still gets a wordmark; a 480-wide panel gets 4.
+    for (sc = 4; sc > 1; sc--)
+        if (WM_LETTERS * (WM_W + 1) * sc <= info->w - 8) break;
+
+    wm_w = (int16_t)((WM_LETTERS * (WM_W + 1) - 1) * sc);
+    wm_h = (int16_t)(WM_H * sc);
+    x = (int16_t)((info->w - wm_w) / 2);
+    y = (int16_t)(info->h / 2 - wm_h - 4 * sc);
+    if (y < 2) y = 2;
+
+    for (i = 0; i < WM_LETTERS; i++)
+        sprite((int16_t)(x + i * (WM_W + 1) * sc), y, sc,
+               WORDMARK[i], WM_H, WM_W, s->accent, s->accent, s->accent);
+
+    y = (int16_t)(y + wm_h + 4 * sc);
+    bar_w = (int16_t)(info->w - 12);
+    if (bar_w > 0) chomp_bar(s, 6, y, bar_w, sc >= 2 ? sc - 1 : 1, done, total);
+
+    y = (int16_t)(y + PB_H * (sc >= 2 ? sc - 1 : 1) + 6);
+    if (line) (void)wrap(6, y, (int16_t)(info->w - 12), s->small, s->muted, line, 2);
+}
+
 static void message_scene(const skin_t *s, const char *title, const char *line)
 {
     const eos_display_info_t *info = eos_display_info();
@@ -522,5 +644,20 @@ void eos_setup_screen_message(const eos_theme_t *t, const char *title,
     eos_display_damage_all();
     eos_display_frame_begin();
     while (eos_display_frame_band(&band)) message_scene(&s, title, line);
+    eos_display_frame_end();
+}
+
+void eos_setup_screen_boot(const eos_theme_t *t, const char *line,
+                           int done, int total)
+{
+    skin_t s;
+    eos_rect_t band;
+
+    if (!t) return;
+    skin_build(&s, t);
+
+    eos_display_damage_all();
+    eos_display_frame_begin();
+    while (eos_display_frame_band(&band)) boot_scene(&s, line, done, total);
     eos_display_frame_end();
 }

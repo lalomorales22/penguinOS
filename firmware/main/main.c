@@ -85,6 +85,11 @@
 #include "eos_app_registry.h"
 #include "eos_led.h"
 #include "eos_setup_screen.h"
+
+// Steps the boot screen reports. One per eos_setup_screen_boot() call below,
+// and the last one hands the glass to the shell or to SETUP - so the bar is
+// full exactly when the desktop appears rather than stopping short of it.
+#define BOOT_STEPS 7
 #include "eos_settings.h"
 #include "eos_settings_bind.h"
 #include "eos_web_embed.h"
@@ -1017,7 +1022,13 @@ void app_main(void)
 
     // 5. Something on the panel before anything slow. eos_net_start() below can
     //    block for the whole fifteen second join budget.
-    eos_setup_screen_message(&theme, "penguinOS", "starting the radios");
+    //
+    // The bar is fed the boot sequence's OWN position rather than a timer: on
+    // this board the radios take four seconds and on the 4.0in CYD they take
+    // fourteen, and a bar that guessed would be wrong on both. Every step below
+    // reports as it finishes, so the penguin eats a cookie when something has
+    // actually happened. BOOT_STEPS is the count of those calls.
+    eos_setup_screen_boot(&theme, "starting the radios", 0, BOOT_STEPS);
 
     // 6. Input, which is what brings up the NimBLE HID host. Before WiFi: see
     //    the file header. NULL takes eos_input_defaults().
@@ -1029,6 +1040,7 @@ void app_main(void)
              EOS_INPUT_QUEUE, b->input.ble_keyboard ? "up" : "not on this board",
              (unsigned)b->input.button_count);
     heap_step("ble");
+    eos_setup_screen_boot(&theme, "bluetooth up", 1, BOOT_STEPS);
 
     // 7. The network. eos_net_idf_defaults() fills in the driver, the NVS store
     //    and the timings out of docs/provisioning.md; everything set after it
@@ -1047,7 +1059,9 @@ void app_main(void)
              eos_net_radio_serialised() ? "serialised" : "NOT SERIALISED");
 
     if (net_ok && eos_net_has_credentials(&net))
-        eos_setup_screen_message(&theme, "penguinOS", "joining the stored network");
+        eos_setup_screen_boot(&theme, "joining the stored network", 2, BOOT_STEPS);
+    else
+        eos_setup_screen_boot(&theme, "no network stored yet", 2, BOOT_STEPS);
 
     // The three-state boot. It returns OK for both landing states: reaching
     // SETUP because a join failed is an outcome, not an error.
@@ -1060,6 +1074,7 @@ void app_main(void)
              eos_net_mode_name(eos_net_mode(&net)),
              eos_net_cred_name(eos_net_cred(&net)), eos_net_ap_ssid(&net));
     heap_step("wifi");
+    eos_setup_screen_boot(&theme, "network settled", 3, BOOT_STEPS);
 
     // 8. The server. It binds to eos_net and eos_ble, so it goes up after both.
     //    The three file ports go to eos_web_embed, not to eos_storage. There
@@ -1136,6 +1151,7 @@ void app_main(void)
              eos_app_count(), eos_app_table_ok() ? "" : " - THE TABLE IS BROKEN",
              eos_app_bss_bytes(), eos_led_present() ? "up on GPIO8" : "absent");
     heap_step("brain");
+    eos_setup_screen_boot(&theme, "looking for a brain", 4, BOOT_STEPS);
 
     if (eos_httpd_start(&httpd) == 0) {
         httpd_up = true;
@@ -1145,6 +1161,7 @@ void app_main(void)
         ESP_LOGE(TAG, "httpd  refused to start - the API and the web app are down");
     }
     heap_step("httpd");
+    eos_setup_screen_boot(&theme, "web app serving", 5, BOOT_STEPS);
 
     // 9. The scene the desktop draws when it is the one on screen.
     eos_bar_status_init(&bar);
@@ -1182,6 +1199,7 @@ void app_main(void)
     // another.
     apply_autostart(settings.v.sys_autostart);
     heap_step("buddy");
+    eos_setup_screen_boot(&theme, "waking the buddy", 6, BOOT_STEPS);
 
     ESP_LOGI(TAG, "heap   boot cost %" PRId32 " B of the %" PRIu32 " free at app_main; "
                   "%" PRIu32 " left, largest block %" PRIu32,
