@@ -1175,9 +1175,24 @@ static int idf_sta_join(void *ud, const char *ssid, const char *psk, uint32_t bu
     // recognised and returned immediately instead of being retried pointlessly.
     {
         uint32_t left = budget_ms;
+        // Whether an esp_wifi_connect() is still in flight. A slice that
+        // expires with NO event means the association is merely slow, not
+        // refused, and the one thing that must not happen then is a second
+        // esp_wifi_connect(): the driver treats it as a fresh request, tears
+        // down the association in progress, and the disconnect it raises
+        // carries a reason from the list below, so a slow join is reported as
+        // a final failure - "no such network" for a network that is right
+        // there. MEASURED: a bonded-but-absent BLE keyboard holds the antenna
+        // in 1.2 s windows, association took 7.7 s instead of 1.0 s, and this
+        // loop turned that into no_ap at rssi -50. Only a real disconnect
+        // re-arms the attempt; otherwise keep waiting out the budget.
+        bool armed = false;
         for (;;) {
             uint32_t slice = left > 6000u ? 6000u : left;
-            if (esp_wifi_connect() != ESP_OK) { s_joining = false; return -1; }
+            if (!armed) {
+                if (esp_wifi_connect() != ESP_OK) { s_joining = false; return -1; }
+                armed = true;
+            }
 
             bits = xEventGroupWaitBits(s_events, NET_BIT_GOT_IP | NET_BIT_FAILED,
                                        pdFALSE, pdFALSE, pdMS_TO_TICKS(slice));
@@ -1191,6 +1206,7 @@ static int idf_sta_join(void *ud, const char *ssid, const char *psk, uint32_t bu
                     r == WIFI_REASON_MIC_FAILURE       ||
                     r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) break;
                 xEventGroupClearBits(s_events, NET_BIT_FAILED);
+                armed = false;   // that attempt really ended; start a new one
             }
             if (left <= slice) break;
             left -= slice;
