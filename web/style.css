@@ -874,3 +874,33 @@ ul.plain li { margin-bottom: 7px; }
   color: var(--accent);
   margin: 10px 0 2px;
 }
+
+/* ------------------------------------------------------- surroundings */
+
+#sur .sur-row { align-items: center; gap: 10px; }
+#sur .sur-lab {
+  min-width: 66px;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* A segmented row rather than a <select>: there are four of each and they are
+   the kind of choice you make by looking, not by opening a menu. */
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg-b {
+  font: inherit; font-size: 12px;
+  padding: 5px 12px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border-unfocused);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.seg-b:hover { color: var(--text); border-color: var(--border-focused); }
+.seg-b.on {
+  background: var(--surface);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}

@@ -679,6 +679,34 @@ static void time_sync_start(void)
              settings.v.sys_tz[0] ? settings.v.sys_tz : "UTC");
 }
 
+// The buddy's surroundings, for /api/buddy/scene and /api/buddy/prop. Thin on
+// purpose: eos_shell_draw owns the pixels and eos_apps owns the wire format,
+// and these four exist so neither has to learn the other's job.
+//
+// prop_set also sends him over, which is the whole point of putting something
+// down. It goes through the same "someone placed a thing" path the keyboard
+// uses rather than calling the walker here, so a bowl from a phone and a bowl
+// from the F key are the same event and cannot drift apart.
+static int  apps_scene_get(void *ctx) { (void)ctx; return (int)eos_shell_buddy_scene(); }
+
+static bool apps_scene_set(void *ctx, int scene)
+{
+    (void)ctx;
+    if (scene < 0) return false;
+    eos_shell_buddy_scene_set((uint8_t)scene);
+    return (int)eos_shell_buddy_scene() == scene;
+}
+
+static int  apps_prop_get(void *ctx) { (void)ctx; return (int)eos_shell_buddy_prop_kind(); }
+
+static bool apps_prop_set(void *ctx, int prop)
+{
+    (void)ctx;
+    if (prop < 0) return false;
+    eos_shell_buddy_prop((uint8_t)prop);
+    return true;
+}
+
 static void on_net_event(eos_net_event_t ev, const eos_net_t *n, void *ud)
 {
     (void)ud;
@@ -756,8 +784,12 @@ void app_main(void)
     {
         eos_apps_ports_t aports;
         memset(&aports, 0, sizeof aports);
-        aports.describe = apps_describe;
-        aports.reboot   = apps_reboot;
+        aports.describe  = apps_describe;
+        aports.reboot    = apps_reboot;
+        aports.scene_get = apps_scene_get;
+        aports.scene_set = apps_scene_set;
+        aports.prop_get  = apps_prop_get;
+        aports.prop_set  = apps_prop_set;
         eos_apps_init(&aports, NULL);
         eos_apps_log_install();
     }

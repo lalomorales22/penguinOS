@@ -118,6 +118,27 @@
     <p class="note" id="gal-status"></p>
   </div>
 
+  <!-- Where he lives. The two pickers are built from what the board reports
+       rather than hard-coded here, so a scene added to the panel appears in
+       this list without the page being edited - and a page loaded from an
+       older board offers exactly what that board has. -->
+  <div class="card" id="sur">
+    <h2>Surroundings
+      <span class="right mono" id="sur-status"></span>
+    </h2>
+    <div class="row sur-row">
+      <span class="sur-lab">Scene</span>
+      <span class="seg" id="sur-scenes"></span>
+    </div>
+    <div class="row sur-row">
+      <span class="sur-lab">Give him</span>
+      <span class="seg" id="sur-props"></span>
+    </div>
+    <p class="hint">Putting something down sends him over to look at it.
+      On the board itself: space changes the scene, f / w / b give him
+      something and n clears the floor.</p>
+  </div>
+
   <div class="vx">
 
     <div class="vx-stage" id="vx-stage">

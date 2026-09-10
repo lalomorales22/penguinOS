@@ -683,6 +683,9 @@ static const struct {
     { "/api/console/exec",    "POST", EOS_ROUTE_CONSOLE_EXEC },
     { "/api/buddy",           "GET",  EOS_ROUTE_BUDDY        },
     { "/api/buddy/reload",    "POST", EOS_ROUTE_BUDDY_RELOAD },
+    { "/api/buddy/scene",     "GET",  EOS_ROUTE_BUDDY_SCENE     },
+    { "/api/buddy/scene",     "POST", EOS_ROUTE_BUDDY_SCENE_SET },
+    { "/api/buddy/prop",      "POST", EOS_ROUTE_BUDDY_PROP_SET  },
     // The gallery. Removing is a POST and not a DELETE because this server
     // answers two methods and nothing else - web/README.md's rule, and the
     // reason is that a small HTTP server's method table is one more thing to
@@ -2488,7 +2491,7 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_BRAIN_CANCEL: h->req_api++; return h_brain_cancel(h, r);
 
     // ---- kernel/svc/eos_apps.c: files, console, buddy, apps --------------
-    // All seventeen go to one call. Listing them rather than range-checking
+    // All twenty go to one call. Listing them rather than range-checking
     // the enum is deliberate: three people append to eos_route_t and a range is
     // the thing that silently swallows the next route somebody inserts. The
     // three gallery rows are the proof - they were inserted in the middle of
@@ -2503,6 +2506,12 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_BUDDY_GALLERY:
     case EOS_ROUTE_BUDDY_GALLERY_SELECT:
     case EOS_ROUTE_BUDDY_GALLERY_REMOVE:
+    // And the scene rows, which were inserted in the middle of this block's
+    // range exactly like the gallery rows above and 404'd for exactly the same
+    // reason until they were named here. The comment above is now proof twice.
+    case EOS_ROUTE_BUDDY_SCENE:
+    case EOS_ROUTE_BUDDY_SCENE_SET:
+    case EOS_ROUTE_BUDDY_PROP_SET:
     // The camera routes reach the same hook. A board with no camera never
     // registers a handler for them and they answer 501, which is the honest
     // answer to "send me a frame" from a board that has no sensor.

@@ -368,6 +368,7 @@ void eos_shell_buddy_prop(uint8_t kind)
 }
 
 uint8_t eos_shell_buddy_scene(void) { return buddy_scene; }
+uint8_t eos_shell_buddy_prop_kind(void) { return buddy_prop; }
 void    eos_shell_buddy_scene_set(uint8_t sc)
 {
     if (sc < SCENE_COUNT) buddy_scene = sc;

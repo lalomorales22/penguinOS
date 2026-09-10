@@ -162,6 +162,20 @@ typedef struct {
     // console line saying so. Topics asked for: "board", "heap", "wifi",
     // "theme", "brain". "fs" and "uptime" are answered here and never asked.
     int (*describe)(void *ctx, const char *topic, char *out, int cap);
+
+    // The buddy's surroundings: which backdrop he stands on, and the one thing
+    // on the floor with him. Ports for the same reason as the two above - the
+    // scene is pixels on a panel and this file has never known what a panel
+    // is. NULL leaves the routes answering that this board has nowhere to put
+    // a scene, which is the honest answer for a headless one.
+    //
+    // scene_get returns the current index, or negative when unsupported. Both
+    // setters return false for an index this board does not have, so the web
+    // app finds out from the 400 rather than from the picture not changing.
+    int  (*scene_get)(void *ctx);
+    bool (*scene_set)(void *ctx, int scene);
+    bool (*prop_set)(void *ctx, int prop);      // 0 clears the floor
+    int  (*prop_get)(void *ctx);
 } eos_apps_ports_t;
 
 // One entry in /api/apps. Strings are borrowed and must outlive the image,

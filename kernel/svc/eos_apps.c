@@ -1453,6 +1453,76 @@ void eos_apps_buddy_write_json(eos_json_t *j)
     eos_json_obj_close(j);
 }
 
+
+// ------------------------------------------------ GET/POST /api/buddy/scene
+//
+// The names are served WITH the index rather than being a thing the web app
+// knows, so the two cannot drift: adding a scene to the panel adds it to the
+// picker, and a client written against an older board shows what that board
+// actually has instead of offering a fifth backdrop it will refuse.
+
+static const char *const SCENE_NAMES[] = { "plain", "room", "grass", "pool" };
+static const char *const PROP_NAMES[]  = { "none", "fish", "water", "ball" };
+#define N_SCENES ((int)(sizeof SCENE_NAMES / sizeof SCENE_NAMES[0]))
+#define N_PROPS  ((int)(sizeof PROP_NAMES  / sizeof PROP_NAMES[0]))
+
+static int h_buddy_scene(eos_httpd_t *h, eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    int cur  = s_ports.scene_get ? s_ports.scene_get(s_ctx) : -1;
+    int prop = s_ports.prop_get  ? s_ports.prop_get(s_ctx)  : -1;
+    int i;
+
+    if (cur < 0)
+        return eos_httpd_fail_err(h, r, (int)EOS_ERR_UNSUPPORTED,
+                                  "this board has nowhere to put a scene");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_int(&j, "scene", (long)cur);
+    eos_json_kv_int(&j, "prop",  (long)(prop < 0 ? 0 : prop));
+    eos_json_key(&j, "scenes");
+    eos_json_arr_open(&j);
+    for (i = 0; i < N_SCENES; i++) eos_json_str(&j, SCENE_NAMES[i]);
+    eos_json_arr_close(&j);
+    eos_json_key(&j, "props");
+    eos_json_arr_open(&j);
+    for (i = 0; i < N_PROPS; i++) eos_json_str(&j, PROP_NAMES[i]);
+    eos_json_arr_close(&j);
+    eos_json_obj_close(&j);
+    return eos_httpd_reply_json(h, r, 200, &j);
+}
+
+// Both setters take ?n=, the same shape /api/fs/write takes its offset, rather
+// than a JSON body: one integer does not need a parser and every other
+// one-integer route on this board already spells it this way.
+static int h_buddy_place(eos_httpd_t *h, const eos_httpd_req_t *req,
+                         eos_httpd_resp_t *r, bool is_scene)
+{
+    eos_json_t j;
+    long n = 0;
+    int  lim = is_scene ? N_SCENES : N_PROPS;
+    bool ok;
+
+    if (q_uint(req->uri, "n", -1, (long)(lim - 1), &n) != EOS_OK || n < 0)
+        return eos_httpd_fail_err(h, r, (int)EOS_ERR_ARG,
+                                  is_scene ? "n names a scene, counting from 0"
+                                           : "n names a prop; 0 clears the floor");
+
+    ok = is_scene ? (s_ports.scene_set && s_ports.scene_set(s_ctx, (int)n))
+                  : (s_ports.prop_set  && s_ports.prop_set(s_ctx,  (int)n));
+    if (!ok)
+        return eos_httpd_fail_err(h, r, (int)EOS_ERR_UNSUPPORTED,
+                                  "this board has nowhere to put a scene");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_int(&j, is_scene ? "scene" : "prop", n);
+    eos_json_kv_str(&j, "name", is_scene ? SCENE_NAMES[n] : PROP_NAMES[n]);
+    eos_json_obj_close(&j);
+    return eos_httpd_reply_json(h, r, 200, &j);
+}
+
 static int h_buddy(eos_httpd_t *h, eos_httpd_resp_t *r)
 {
     eos_json_t j;
@@ -1562,6 +1632,10 @@ int eos_apps_dispatch(eos_httpd_t *h, int route,
     case EOS_ROUTE_BUDDY_GALLERY_SELECT:
     case EOS_ROUTE_BUDDY_GALLERY_REMOVE:
         return eos_gallery_dispatch(h, route, req, r);
+
+    case EOS_ROUTE_BUDDY_SCENE:     return h_buddy_scene(h, r);
+    case EOS_ROUTE_BUDDY_SCENE_SET: return h_buddy_place(h, req, r, true);
+    case EOS_ROUTE_BUDDY_PROP_SET:  return h_buddy_place(h, req, r, false);
     case EOS_ROUTE_APPS:         return h_apps(h, r);
     default: break;
     }

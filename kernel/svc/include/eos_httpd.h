@@ -267,6 +267,9 @@ typedef enum {
     EOS_ROUTE_CONSOLE_EXEC,
     EOS_ROUTE_BUDDY,
     EOS_ROUTE_BUDDY_RELOAD,
+    EOS_ROUTE_BUDDY_SCENE,            // the backdrop, and what is on the floor
+    EOS_ROUTE_BUDDY_SCENE_SET,
+    EOS_ROUTE_BUDDY_PROP_SET,
     EOS_ROUTE_BUDDY_GALLERY,          // several buddies; one of them live
     EOS_ROUTE_BUDDY_GALLERY_SELECT,
     EOS_ROUTE_BUDDY_GALLERY_REMOVE,

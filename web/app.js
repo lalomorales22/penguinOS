@@ -2630,6 +2630,64 @@ function setupHost() {
 
 var sysPoller = new Poller(5000, pollSystem);
 
+
+/* ------------------------------------------------------------ surroundings
+ *
+ * The scene he stands on and the one thing on the floor with him. Both lists
+ * come from GET /api/buddy/scene rather than being written out here, so the
+ * page cannot offer a backdrop the board does not have - and a board that
+ * gains one appears in the picker without this file being touched.
+ */
+
+var SUR = { scene: 0, prop: 0, busy: false };
+
+function surButtons(host, names, current, onPick) {
+  host.textContent = '';
+  names.forEach(function (n, i) {
+    var b = el('button', 'seg-b' + (i === current ? ' on' : ''), n);
+    b.type = 'button';
+    b.onclick = function () { if (!SUR.busy) onPick(i); };
+    host.appendChild(b);
+  });
+}
+
+function surSay(msg, cls) {
+  var s = $('sur-status');
+  if (!s) return;
+  s.textContent = msg || '';
+  s.className = 'right mono' + (cls ? ' ' + cls : '');
+}
+
+function surRefresh() {
+  var sc = $('sur-scenes'), pr = $('sur-props');
+  if (!sc || !pr) return;
+  api('/api/buddy/scene').then(function (d) {
+    if (!d) return;
+    SUR.scene = d.scene | 0;
+    SUR.prop  = d.prop | 0;
+    surButtons(sc, d.scenes || [], SUR.scene, surSetScene);
+    surButtons(pr, d.props  || [], SUR.prop,  surSetProp);
+    surSay('');
+  }).catch(function (e) {
+    // A board with no panel answers 501 here, and that is a fact about the
+    // board rather than a failure of the page.
+    surSay(e && /unsupported/i.test(String(e.code || e)) ? 'no panel on this board'
+                                                        : 'no answer', 'muted');
+  });
+}
+
+function surPost(path, n, label) {
+  SUR.busy = true;
+  surSay(label + '\u2026');
+  return api(path + '?n=' + n, { method: 'POST' })
+    .then(function () { surSay(''); surRefresh(); })
+    .catch(function () { surSay('refused', 'warn'); })
+    .then(function () { SUR.busy = false; });
+}
+
+function surSetScene(i) { surPost('/api/buddy/scene', i, 'setting'); }
+function surSetProp(i)  { surPost('/api/buddy/prop',  i, i ? 'giving' : 'clearing'); }
+
 function showTab(name) {
   S.tab = name;
   ['files', 'settings', 'buddy', 'console'].forEach(function (t) {
@@ -2649,6 +2707,7 @@ function showTab(name) {
     if (!B.centred) { B.centred = true; B.ed.recentre(); }
     B.ed.start();
     if (!B.loaded) { B.loaded = true; buddyLoad(); }
+    surRefresh();
   } else if (B.ed) {
     B.ed.stop();
   }

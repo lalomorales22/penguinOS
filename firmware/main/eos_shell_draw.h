@@ -158,6 +158,7 @@ uint32_t eos_shell_buddy_bytes(void);
 uint8_t eos_shell_buddy_scene(void);
 void    eos_shell_buddy_scene_set(uint8_t scene);
 void    eos_shell_buddy_prop(uint8_t kind);          // 0 clears the floor
+uint8_t eos_shell_buddy_prop_kind(void);
 
 // True exactly once after something is put down, handing back where it landed
 // in stage coordinates. The walker lives in main.c, so this is how "he should
