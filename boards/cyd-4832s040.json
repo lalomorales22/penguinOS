@@ -137,19 +137,19 @@
       "absent_reason": "Not seen on this board."
     },
     "sdcard": {
-      "present": false,
-      "bus": null,
-      "spi_host": null,
+      "present": true,
+      "bus": "spi",
+      "spi_host": "VSPI",
       "pins": {
-        "sck": -1,
-        "mosi": -1,
-        "miso": -1,
-        "cs": -1
+        "sck": 18,
+        "mosi": 23,
+        "miso": 19,
+        "cs": 5
       },
-      "max_clock_hz": 0,
+      "max_clock_hz": 20000000,
       "shares_display_bus": false,
-      "mount_point": null,
-      "absent_reason": "Slot present; the SPI header silkscreen shows the bus at 18/23/19 but the card CS is not confirmed."
+      "mount_point": "/sd",
+      "absent_reason": ""
     },
     "internal_fs": {
       "present": true,
@@ -189,7 +189,8 @@
     },
     "usb_bridge": "CH340",
     "mac_allowlist": [
-      "8c:94:df:50:02:94"
+      "8c:94:df:50:02:94",
+      "8c:94:df:4e:3a:cc"
     ],
     "distinguishing_notes": [
       "Do NOT confuse with wavvy-ili9488-40. That entry is a bare 4.0in panel hand-wired to a devkit - no touch, no microSD, no RGB LED, no speaker - and it drives the panel on 18/23/5, which on THIS board is the SPI header and the microSD. Flashing it here drives the SD lines and leaves the glass dark.",
@@ -206,7 +207,6 @@
   },
   "unverified": [
     "display.clock_hz",
-    "peripherals.sdcard.present",
     "peripherals.rgb_led.present",
     "peripherals.speaker.present",
     "flashing.flash_freq_mhz",
@@ -250,6 +250,12 @@
       "severity": "note",
       "field": "inputs.touch.present",
       "text": "Calibration, measured from the four corners in a known order rather than guessed: the controller's axes are SWAPPED relative to the screen and neither is mirrored. Touch X is the screen's VERTICAL axis and rises top-to-bottom, roughly 800 at the top edge to 3400 at the bottom. Touch Y is the screen's HORIZONTAL axis and rises left-to-right, roughly 440 to 3470. So screen_x maps from raw Y and screen_y from raw X, both without inversion. Corner medians were TL(733,464) TR(872,3551) BR(3332,3394) BL(3478,411) - note that along the top edge raw X barely moves while raw Y sweeps its whole range, which is what identifies the swap."
+    },
+    {
+      "id": "sd-is-on-its-own-bus",
+      "severity": "note",
+      "field": "peripherals.sdcard.spi_host",
+      "text": "VERIFIED by asking the card: CMD0 answered 0x01 and CMD8 echoed the 000001AA check pattern, on VSPI at sck 18 / mosi 23 / miso 19 with CS 5, mounted read-write as a 14910 MB SDHC at 20MHz. The card is on VSPI while the PANEL is on HSPI, so unlike the 2.4in CYD - where both share one host - a card read cannot stall a frame and no bus lock is needed. Note this is the same 18/23 the wavvy-ili9488-40 profile drives as a PANEL bus, which is exactly why flashing that profile here writes to the card lines and leaves the glass dark."
     }
   ]
 }
