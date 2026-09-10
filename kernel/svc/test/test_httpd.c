@@ -1667,7 +1667,7 @@ static void test_wifi_forget_and_status(void)
     CK(strstr(r.body, "\"rssi\":-47") != NULL, "status: the rssi is reported when there is one");
     CK(strstr(r.body, "\"ip\":\"192.168.0.51\"") != NULL, "status: the station address");
     CK(strstr(r.body, "\"stored\":true") != NULL, "status: credentials are stored");
-    CK(strstr(r.body, "\"ssid_hex\":\"5761767679576f726c64\"") != NULL, "status: the ssid in hex");
+    CK(strstr(r.body, "\"ssid_hex\":\"4578616d706c654e6574\"") != NULL, "status: the ssid in hex");
 
     // Every join outcome must name itself and say what to do about it.
     {
