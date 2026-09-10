@@ -16,10 +16,10 @@
     }
   },
   "render": {
-    "tier": 1,
-    "compositor": "lvgl",
-    "lvgl": true,
-    "palette_entries": 0,
+    "tier": 0,
+    "compositor": "indexed8",
+    "lvgl": false,
+    "palette_entries": 256,
     "full_framebuffer": false,
     "band_height": 40,
     "min_tile_w": 80,
@@ -27,7 +27,7 @@
     "double_buffer": false,
     "animations": false,
     "heap_budget_bytes": 361955,
-    "reason": "MEASURED, and DELIBERATELY CONSERVATIVE. The board reports internal free=361955, largest block=270336, plus 8386156 bytes of PSRAM; allocating TWO full 320x172 RGB565 frames (110,080 B each) in PSRAM SUCCEEDED. So this is the only board in the fleet that can physically run tier 2 with a double buffer and animations. It is nonetheless set to tier 1 because no board has ever run tier 2 and it is not established that the code path exists rather than merely being defined - and a first light that renders is worth more than a first light that is ambitious. Raise this to 2 only after the tier 2 path is confirmed implemented, and raise double_buffer, animations and full_framebuffer with it. heap_budget_bytes is the INTERNAL figure, not the 8.7MB total: PSRAM is not DMA-capable for every peripheral and the panel wants DMA-able buffers, so internal is the constrained resource and the honest budget."
+    "reason": "MEASURED, and DELIBERATELY CONSERVATIVE. The board reports internal free=361955, largest block=270336, plus 8386156 bytes of PSRAM; allocating TWO full 320x172 RGB565 frames (110,080 B each) in PSRAM SUCCEEDED. So this is the only board in the fleet that can physically run tier 2 with a double buffer and animations. It is nonetheless set to tier 1 because no board has ever run tier 2 and it is not established that the code path exists rather than merely being defined - and a first light that renders is worth more than a first light that is ambitious. Raise this to 2 only after the tier 2 path is confirmed implemented, and raise double_buffer, animations and full_framebuffer with it. heap_budget_bytes is the INTERNAL figure, not the 8.7MB total: PSRAM is not DMA-capable for every peripheral and the panel wants DMA-able buffers, so internal is the constrained resource and the honest budget. CORRECTED: this block used to say tier 1 / lvgl / palette 0. There is no LVGL anywhere in this tree - EOS_USE_LVGL and EOS_COMPOSITOR_LVGL are read by no translation unit, and eos_display_st7789.c, the only backend that exists, is the banded indexed-8 software compositor with a fixed uint16_t lut[EOS_PALETTE_MAX] of 256 entries. This board is VERIFIED WORKING, which is the proof: it has been running the indexed-8 compositor all along while its profile said otherwise. The claim was not harmless either - eos_settings_bind.c reports render.compositor and render.lvgl straight to the web app, so /api/board told anyone who asked that this board runs LVGL. band_height is UNCHANGED at 40: it was described as an LVGL draw-buffer height and is in fact the indexed-8 band height, which is the same number doing the same job under an accurate name."
   },
   "display": {
     "controller": "ST7789",

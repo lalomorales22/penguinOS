@@ -741,8 +741,18 @@ stamp_nvs() {
     #
     # On a board that already says it is this profile there is nothing to add,
     # so skip and keep the credentials. A blank or DIFFERENT stamp still gets
-    # written: a blank one has no credentials worth keeping, and a different one
-    # means the board is not what it claimed, where a clean nvs is correct.
+    # written: a different one means the board is not what it claimed, where a
+    # clean nvs is correct.
+    #
+    # THE BLANK CASE IS NOT AS SAFE AS IT LOOKS, and the note above used to say
+    # a blank stamp "has no credentials worth keeping". That is true of a board
+    # out of its box and FALSE of a board flashed by a penguinOS old enough to
+    # predate stamping - which is provisioned, on somebody's network, and blank
+    # here for a reason that has nothing to do with whether it holds
+    # credentials. Reflashing the first of the older boards put it straight back
+    # into setup mode. It is a one-time cost per board, because the stamp this
+    # writes makes every later reflash take the skip above, but it is a cost and
+    # it should be announced rather than discovered.
     local existing
     existing="$(read_nvs_stamp "$bdir" "$baud" 2>/dev/null || true)"
     if [ -n "$existing" ] && [ "$existing" = "$profile" ]; then
@@ -764,6 +774,14 @@ board_id,data,string,$profile
 board_mac,data,string,${EOS_MAC:-unknown}
 EOF
 
+    if [ -z "$existing" ]; then
+        say "  nvs       no stamp on this board - writing one"
+        warn "This erases the nvs partition, and Wi-Fi credentials live there. A board"
+        warn "flashed before stamping existed is provisioned but unstamped, so it will"
+        warn "come back up in SETUP mode and needs its network again. Once only: the"
+        warn "stamp written now makes every later reflash keep its credentials."
+        warn "Pass --no-nvs to keep the nvs partition exactly as it is."
+    fi
     say "  nvs       stamping $profile at $offset ($size bytes)"
     if ! run "$PY" "$gen" generate "$csv" "$bin" "$size" >/dev/null 2>&1; then
         say "  nvs       skipped: nvs_partition_gen.py could not build the image"

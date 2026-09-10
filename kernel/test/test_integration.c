@@ -343,13 +343,17 @@ typedef struct {
 
 static const regrow_t registry[] = {
     { &eos_board_waveshare_c6_lcd_13, "waveshare-c6-lcd-13",
-      EOS_SOC_ESP32_C6, 1, EOS_TIER_LEAN, 4194304u, 0u,
+      EOS_SOC_ESP32_C6, 1, EOS_TIER_SOFT, 4194304u, 0u,
       EOS_PANEL_ST7789, EOS_BUS_SPI, 240, 240, 0, 240, 240,
       16, 2, false, true, 40000000u, 0, 0,
       7, 6, -1, 15, 14, 21, 1,
       -1, -1, 0x00, false, true,
       22,
-      EOS_COMP_LVGL, true, 0, false, 40, 80, 40, 425648u,
+      /* Was EOS_COMP_LVGL / lvgl true / palette 0, on a board that has been VERIFIED
+         WORKING the whole time - which is the proof the claim was false, because the
+         only backend in the tree is the indexed-8 compositor. band 40 is unchanged:
+         it was called an LVGL draw-buffer height and is the indexed-8 band height. */
+      EOS_COMP_INDEXED8, false, 256, false, 40, 80, 40, 425648u,
       false, EOS_BUS_NONE, NULL, "int", "/int", 0u, false,
       EOS_LED_WS2812, -1, -1, -1, 8, 1, false,
       EOS_AUDIO_NONE, -1, -1, 0, -1,

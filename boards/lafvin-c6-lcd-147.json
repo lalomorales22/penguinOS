@@ -16,10 +16,10 @@
     }
   },
   "render": {
-    "tier": 1,
-    "compositor": "lvgl",
-    "lvgl": true,
-    "palette_entries": 0,
+    "tier": 0,
+    "compositor": "indexed8",
+    "lvgl": false,
+    "palette_entries": 256,
     "full_framebuffer": false,
     "band_height": 40,
     "min_tile_w": 80,
@@ -27,7 +27,7 @@
     "double_buffer": false,
     "animations": false,
     "heap_budget_bytes": 431112,
-    "reason": "MEASURED. With radios down the board reports free=431112, largest block=401408. A full 172x320 RGB565 frame is 110,080 bytes and allocating one SUCCEEDED, leaving 321,028 free. As roomy as the C6-LCD-1.3. full_framebuffer stays false and animations off because on the lvgl compositor LVGL owns its buffers and animations are a tier 2 budget; band_height 40 is the LVGL draw-buffer height, 13,760 bytes at this width."
+    "reason": "MEASURED. With radios down the board reports free=431112, largest block=401408. A full 172x320 RGB565 frame is 110,080 bytes and allocating one SUCCEEDED, leaving 321,028 free. As roomy as the C6-LCD-1.3. full_framebuffer stays false and animations off because on the lvgl compositor LVGL owns its buffers and animations are a tier 2 budget; band_height 40 is the LVGL draw-buffer height, 13,760 bytes at this width. CORRECTED: this block used to say tier 1 / lvgl / palette 0. There is no LVGL anywhere in this tree - EOS_USE_LVGL and EOS_COMPOSITOR_LVGL are read by no translation unit, and eos_display_st7789.c, the only backend that exists, is the banded indexed-8 software compositor with a fixed uint16_t lut[EOS_PALETTE_MAX] of 256 entries. This board is VERIFIED WORKING, which is the proof: it has been running the indexed-8 compositor all along while its profile said otherwise. The claim was not harmless either - eos_settings_bind.c reports render.compositor and render.lvgl straight to the web app, so /api/board told anyone who asked that this board runs LVGL. band_height is UNCHANGED at 40: it was described as an LVGL draw-buffer height and is in fact the indexed-8 band height, which is the same number doing the same job under an accurate name."
   },
   "display": {
     "controller": "ST7789",

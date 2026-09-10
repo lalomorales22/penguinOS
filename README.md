@@ -202,12 +202,24 @@ hold state is among them:
 
 | Region | Holds | Touched by a reflash? |
 |---|---|---|
-| `nvs` | Wi-Fi credentials, BLE keyboard bonds, which profile this board is | **no** |
+| `nvs` | Wi-Fi credentials, BLE keyboard bonds, which profile this board is | almost never — see below |
 | `int` | themes, buddies, `settings.json`, anything uploaded from the web app | **no** |
 
-So an older board picks up every new app and fix, rejoins your network on its
-own, and still has its buddy and its theme. Use `--erase` only when you
-deliberately want a board back to nothing; it is never implied.
+So a board picks up every new app and fix, rejoins your network on its own, and
+still has its buddy and its theme. Use `--erase` only when you deliberately want
+a board back to nothing; it is never implied.
+
+**The one exception, and it happens once per board.** The flasher writes a small
+stamp into `nvs` saying which profile a board is. It skips that write when the
+stamp is already right — which is why a reflash normally keeps your network. But
+a board flashed by a penguinOS old enough to predate stamping has no stamp at
+all, and writing one rewrites the whole `nvs` partition, credentials included.
+Such a board comes back up in **setup mode** and needs its network again.
+
+It is a one-time cost: the stamp written on that first reflash makes every later
+one take the skip. The flasher says so before it does it. `--no-nvs` avoids it
+entirely, at the price of leaving the board unstamped — so it pays the same cost
+next time instead.
 
 ---
 

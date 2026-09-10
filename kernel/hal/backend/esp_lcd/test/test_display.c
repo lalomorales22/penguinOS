@@ -92,7 +92,12 @@ static void t_info(void)
     const eos_display_info_t *i = eos_display_info();
     eq(i->w, W, "info.w");
     eq(i->h, H, "info.h");
-    eq(i->tier, EOS_TIER_LEAN, "info.tier");
+    // SOFT, not LEAN. This file compiles against waveshare-c6-lcd-13.h, whose
+    // profile claimed tier 1 / lvgl until it was corrected - while this same
+    // test asserted two lines below that the palette is 255 entries long, which
+    // only the indexed-8 compositor produces. The suite was proving the profile
+    // wrong and reporting a pass.
+    eq(i->tier, EOS_TIER_SOFT, "info.tier");
     eq(i->fmt, EOS_PIXFMT_RGB565, "info.fmt");
     eq(i->palette_len, 255, "info.palette_len excludes the sentinel");
     eq(i->band_h, 40, "info.band_h from render.band_h");
