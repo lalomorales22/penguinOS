@@ -809,6 +809,154 @@ static void render_ascii(void)
     putchar('\n');
 }
 
+// ------------------------------------------------------------- ECC levels
+//
+// ISO/IEC 18004 Table C.1 for all four levels. The L row is the same eight
+// strings as FORMAT_L above, duplicated deliberately: if a refactor ever makes
+// these two disagree, one of them is wrong and the duplication is what says so.
+//
+// Provenance, because "I generated the table I am testing against" is the way
+// this kind of check quietly becomes worthless: these were computed from the
+// BCH(15,5) generator 0x537 and the 0x5412 mask, and that computation was
+// FIRST checked to reproduce the committed L row above - which came from the
+// standard - before its M, Q and H rows were used here.
+
+static const char *FORMAT_ALL[EOS_QR_ECLS][8] = {
+    /* L */ { "111011111000100","111001011110011","111110110101010","111100010011101",
+              "110011000101111","110001100011000","110110001000001","110100101110110" },
+    /* M */ { "101010000010010","101000100100101","101111001111100","101101101001011",
+              "100010111111001","100000011001110","100111110010111","100101010100000" },
+    /* Q */ { "011010101011111","011000001101000","011111100110001","011101000000110",
+              "010010010110100","010000110000011","010111011011010","010101111101101" },
+    /* H */ { "001011010001001","001001110111110","001110011100111","001100111010000",
+              "000011101100010","000001001010101","000110100001100","000100000111011" },
+};
+
+// ISO/IEC 18004 tables 7 and 9. Byte-mode capacity, then the block shape.
+static const struct { int cap, data_cw, ecc_cw, blocks; }
+EXPECT[EOS_QR_ECLS][EOS_QR_MAX_VERSION + 1] = {
+    /* L */ {{0,0,0,0},{17,19, 7,1},{32,34,10,1},{53,55,15,1},{78,80,20,1}},
+    /* M */ {{0,0,0,0},{14,16,10,1},{26,28,16,1},{42,44,26,1},{62,64,36,2}},
+    /* Q */ {{0,0,0,0},{11,13,13,1},{20,22,22,1},{32,34,36,2},{46,48,52,2}},
+    /* H */ {{0,0,0,0},{ 7, 9,17,1},{14,16,28,1},{24,26,44,2},{34,36,64,4}},
+};
+
+static const char *ECL_NAME[EOS_QR_ECLS] = { "L", "M", "Q", "H" };
+
+static void test_ecc_levels(void)
+{
+    static uint8_t buf[128];
+    char msg[128];
+    int e, v, m, i, n;
+
+    printf("\n  ECC levels\n");
+
+    for (e = 0; e < EOS_QR_ECLS; e++) {
+        for (v = EOS_QR_MIN_VERSION; v <= EOS_QR_MAX_VERSION; v++) {
+            int cap = eos_qr_capacity_ecl(v, (eos_qr_ecl_t)e);
+            snprintf(msg, sizeof msg, "%s v%d capacity is %d", ECL_NAME[e], v,
+                     EXPECT[e][v].cap);
+            CK(cap == EXPECT[e][v].cap, msg);
+
+            // A payload of exactly the capacity must encode; one more must not.
+            memset(buf, 'A', (size_t)cap);
+            snprintf(msg, sizeof msg, "%s v%d encodes its full %d bytes",
+                     ECL_NAME[e], v, cap);
+            CK(eos_qr_encode_version_ecl(&qr, buf, (size_t)cap, v,
+                                         (eos_qr_ecl_t)e) == EOS_QR_OK, msg);
+
+            snprintf(msg, sizeof msg, "%s v%d data_cw %d", ECL_NAME[e], v,
+                     EXPECT[e][v].data_cw);
+            CK(qr.data_cw == EXPECT[e][v].data_cw, msg);
+            snprintf(msg, sizeof msg, "%s v%d ecc_cw %d", ECL_NAME[e], v,
+                     EXPECT[e][v].ecc_cw);
+            CK(qr.ecc_cw == EXPECT[e][v].ecc_cw, msg);
+            snprintf(msg, sizeof msg, "%s v%d blocks %d", ECL_NAME[e], v,
+                     EXPECT[e][v].blocks);
+            CK(qr.blocks == EXPECT[e][v].blocks, msg);
+
+            // The symbol holds what it holds; only the split changes.
+            snprintf(msg, sizeof msg, "%s v%d data+ecc == total", ECL_NAME[e], v);
+            CK(qr.data_cw + qr.ecc_cw == qr.total_cw, msg);
+
+            // Every ECC block must be the same length, or the interleaving
+            // walk in append_ecc() reads past a block.
+            snprintf(msg, sizeof msg, "%s v%d ecc splits evenly across blocks",
+                     ECL_NAME[e], v);
+            CK(qr.blocks > 0 && qr.ecc_cw % qr.blocks == 0, msg);
+
+            // The per-block generator must fit the scratch it is built into.
+            snprintf(msg, sizeof msg, "%s v%d per-block ecc <= EOS_QR_MAX_ECC",
+                     ECL_NAME[e], v);
+            CK(qr.ecc_cw / qr.blocks <= EOS_QR_MAX_ECC, msg);
+
+            snprintf(msg, sizeof msg, "%s v%d refuses capacity+1", ECL_NAME[e], v);
+            CK(eos_qr_encode_version_ecl(&qr, buf, (size_t)cap + 1, v,
+                                         (eos_qr_ecl_t)e) == EOS_QR_ERR_TOO_LONG, msg);
+        }
+    }
+
+    // Format information, read back out of a finished symbol at every level and
+    // every mask. This is the check that would catch a wrong FMT_ECL lookup,
+    // which is otherwise invisible: the symbol looks perfect and no scanner
+    // will read it, because the level it announces is not the level it used.
+    // The mask is not selectable from outside - it is whichever of the eight
+    // scores lowest - so the table's rows are reached by SWEEPING payloads
+    // until each mask turns up naturally, rather than by forcing one. Every
+    // symbol that appears is checked against the row for the level and mask it
+    // actually announces, and the sweep records which rows were reached so a
+    // future change that stops reaching them shows up as a coverage number and
+    // not as silence.
+    {
+        int seen[EOS_QR_ECLS][EOS_QR_MASKS];
+        int reached = 0;
+        memset(seen, 0, sizeof seen);
+
+        for (e = 0; e < EOS_QR_ECLS; e++) {
+            int len;
+            for (len = 1; len <= 24; len++) {
+                int seed;
+                for (seed = 0; seed < 24; seed++) {
+                    const char *want;
+                    for (i = 0; i < len; i++)
+                        buf[i] = (uint8_t)('0' + ((i * 7 + seed * 13) % 64));
+                    if (eos_qr_encode_bytes_ecl(&qr, buf, (size_t)len,
+                                                (eos_qr_ecl_t)e) != EOS_QR_OK)
+                        continue;
+                    m = qr.mask;
+                    want = FORMAT_ALL[e][m];
+                    n = eos_qr_size(&qr);
+                    if (!seen[e][m]) { seen[e][m] = 1; reached++; }
+                    for (i = 0; i <= 5; i++) {
+                        snprintf(msg, sizeof msg, "%s mask %d format bit %d",
+                                 ECL_NAME[e], m, i);
+                        CK(eos_qr_module(&qr, 8, i) == (want[14 - i] == '1'), msg);
+                    }
+                    snprintf(msg, sizeof msg, "%s mask %d format bit 6", ECL_NAME[e], m);
+                    CK(eos_qr_module(&qr, 8, 7) == (want[14 - 6] == '1'), msg);
+                    snprintf(msg, sizeof msg, "%s mask %d second copy bit 0",
+                             ECL_NAME[e], m);
+                    CK(eos_qr_module(&qr, n - 1, 8) == (want[14 - 0] == '1'), msg);
+                }
+            }
+        }
+        printf("    format rows reached: %d of %d\n", reached, EOS_QR_ECLS * EOS_QR_MASKS);
+        CK(reached >= EOS_QR_ECLS * 4,
+           "the sweep reaches at least half the format table");
+    }
+
+    // The setup screen's own payload at H: this is the case the penguin needs.
+    CK(eos_qr_encode_ecl(&qr, "http://192.168.4.1", EOS_QR_ECL_H) == EOS_QR_OK,
+       "the setup URL encodes at H");
+    CK(qr.version == 3, "and lands on version 3");
+    CK(qr.blocks == 2, "with two ECC blocks");
+    CK(qr.ecl == EOS_QR_ECL_H, "and remembers the level it was built at");
+
+    // L must be untouched by all of this.
+    CK(eos_qr_encode(&qr, "ESP-OS") == EOS_QR_OK, "plain encode still works");
+    CK(qr.ecl == EOS_QR_ECL_L, "and is still level L");
+}
+
 int main(void)
 {
     printf("test_qr\n");
@@ -822,6 +970,7 @@ int main(void)
     test_determinism();
     test_all_lengths();
     test_render();
+    test_ecc_levels();
 
     if (eos_qr_encode(&qr, WIFI_STR) == EOS_QR_OK) {
         render_ansi("point a phone at this. It should offer to join \"esp-os-f048\".");

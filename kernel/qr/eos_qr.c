@@ -39,6 +39,41 @@ static const eos_qr_ver_t VER[EOS_QR_MAX_VERSION + 1] = {
     { 33, 100, 80, 20, 1, 78, 7, 26 },
 };
 
+// The four fields above that DEPEND ON THE ECC LEVEL, for all four levels.
+// Everything else in VER - the module count, the total codewords, the
+// remainder bits, the alignment centre - is a property of the version alone
+// and is read from VER whatever the level. This table is the "data change and
+// not a code change" the note above promised: nothing below it knows how many
+// levels there are, only how many blocks and codewords this one has.
+//
+// ISO/IEC 18004 tables 7 (capacity) and 9 (block structure). Byte-mode
+// capacity is data_cw - 2 for every entry: four bits of mode indicator plus an
+// eight-bit character count is twelve bits, and the terminator plus the pad to
+// a codeword boundary consumes the rest of the second codeword.
+//
+// blocks > 1 starts here. Every version at L is a single block, which is why
+// append_ecc()'s interleaving walk was written and then never exercised until
+// this table arrived. All the multi-block entries below split EVENLY - v3 Q and
+// H into two, v4 M and Q into two, v4 H into four - so the short/long block
+// split in append_ecc() is exercised at its degenerate end. A version 5 row
+// would be the first with genuinely ragged blocks.
+
+typedef struct {
+    uint8_t data_cw;
+    uint8_t ecc_cw;
+    uint8_t blocks;
+    uint8_t capacity;
+} eos_qr_ecc_t;
+
+static const eos_qr_ecc_t ECC[EOS_QR_ECLS][EOS_QR_MAX_VERSION + 1] = {
+    /* L */ { { 0, 0, 0,  0 }, {19,  7, 1, 17}, {34, 10, 1, 32}, {55, 15, 1, 53}, {80, 20, 1, 78} },
+    /* M */ { { 0, 0, 0,  0 }, {16, 10, 1, 14}, {28, 16, 1, 26}, {44, 26, 1, 42}, {64, 36, 2, 62} },
+    /* Q */ { { 0, 0, 0,  0 }, {13, 13, 1, 11}, {22, 22, 1, 20}, {34, 36, 2, 32}, {48, 52, 2, 46} },
+    /* H */ { { 0, 0, 0,  0 }, { 9, 17, 1,  7}, {16, 28, 1, 14}, {26, 44, 2, 24}, {36, 64, 4, 34} },
+};
+
+static bool ecl_ok(int ecl) { return ecl >= 0 && ecl < EOS_QR_ECLS; }
+
 // Penalty weights, ISO/IEC 18004 table 11.
 #define PEN_N1 3
 #define PEN_N2 3
@@ -54,6 +89,11 @@ static const eos_qr_ver_t VER[EOS_QR_MAX_VERSION + 1] = {
 
 // Format information: 5 data bits, BCH(15,5) with generator 0x537, then the
 // mandatory 0x5412 mask so an all-zero format is never all-light.
+// The two format bits per level, in eos_qr_ecl_t order. NOT the enum's own
+// values: the ISO bit patterns are L=01, M=00, Q=11, H=10, which is neither
+// ascending nor the order anyone would guess, so this is a lookup and a cast
+// would be silently wrong for three of the four.
+static const uint8_t FMT_ECL[EOS_QR_ECLS] = { 0x1, 0x0, 0x3, 0x2 };
 #define FMT_ECL_L      0x1
 #define FMT_GEN        0x537
 #define FMT_MASK       0x5412
@@ -68,6 +108,13 @@ const char *eos_qr_strerror(eos_qr_err_t e)
     case EOS_QR_ERR_VERSION:  return "version outside 1..4";
     }
     return "unknown error";
+}
+
+int eos_qr_capacity_ecl(int version, eos_qr_ecl_t ecl)
+{
+    if (version < EOS_QR_MIN_VERSION || version > EOS_QR_MAX_VERSION) return 0;
+    if (!ecl_ok((int)ecl)) return 0;
+    return ECC[ecl][version].capacity;
 }
 
 int eos_qr_capacity(int version)
@@ -336,7 +383,7 @@ static void draw_function_patterns(eos_qr_t *qr)
 static void draw_format(eos_qr_t *qr, int mask)
 {
     const int n = qr->size;
-    uint32_t data = (uint32_t)((FMT_ECL_L << 3) | mask);
+    uint32_t data = (uint32_t)((FMT_ECL[qr->ecl] << 3) | mask);
     uint32_t rem = data;
     uint32_t bits;
     int i;
@@ -546,8 +593,8 @@ static uint32_t penalty(const eos_qr_t *qr)
 
 // ------------------------------------------------------------------- encode
 
-eos_qr_err_t eos_qr_encode_version(eos_qr_t *qr, const uint8_t *data,
-                                   size_t len, int version)
+eos_qr_err_t eos_qr_encode_version_ecl(eos_qr_t *qr, const uint8_t *data,
+                                       size_t len, int version, eos_qr_ecl_t ecl)
 {
     int m, best = 0;
     uint32_t best_pen = 0;
@@ -557,15 +604,20 @@ eos_qr_err_t eos_qr_encode_version(eos_qr_t *qr, const uint8_t *data,
     if (len == 0) return EOS_QR_ERR_EMPTY;
     if (version < EOS_QR_MIN_VERSION || version > EOS_QR_MAX_VERSION)
         return EOS_QR_ERR_VERSION;
-    if (len > (size_t)VER[version].capacity) return EOS_QR_ERR_TOO_LONG;
+    if (!ecl_ok((int)ecl)) return EOS_QR_ERR_VERSION;
+    if (len > (size_t)ECC[ecl][version].capacity) return EOS_QR_ERR_TOO_LONG;
 
     memset(qr, 0, sizeof *qr);
     qr->version  = (uint8_t)version;
+    qr->ecl      = (uint8_t)ecl;
     qr->size     = VER[version].size;
-    qr->data_cw  = VER[version].data_cw;
-    qr->ecc_cw   = VER[version].ecc_cw;
+    // Geometry from VER, ECC shape from ECC[level]. total_cw is the same at
+    // every level - the symbol holds what it holds; the levels only argue about
+    // how much of it is payload.
+    qr->data_cw  = ECC[ecl][version].data_cw;
+    qr->ecc_cw   = ECC[ecl][version].ecc_cw;
     qr->total_cw = VER[version].total_cw;
-    qr->blocks   = VER[version].blocks;
+    qr->blocks   = ECC[ecl][version].blocks;
     qr->data_len = (uint8_t)len;
 
     encode_payload(qr, data, (int)len);
@@ -594,23 +646,45 @@ eos_qr_err_t eos_qr_encode_version(eos_qr_t *qr, const uint8_t *data,
     return EOS_QR_OK;
 }
 
-eos_qr_err_t eos_qr_encode_bytes(eos_qr_t *qr, const uint8_t *data, size_t len)
+eos_qr_err_t eos_qr_encode_version(eos_qr_t *qr, const uint8_t *data,
+                                   size_t len, int version)
+{
+    return eos_qr_encode_version_ecl(qr, data, len, version, EOS_QR_ECL_L);
+}
+
+eos_qr_err_t eos_qr_encode_bytes_ecl(eos_qr_t *qr, const uint8_t *data, size_t len,
+                                     eos_qr_ecl_t ecl)
 {
     int v;
 
     if (!qr) return EOS_QR_ERR_NULL;
     if (!data && len) return EOS_QR_ERR_NULL;
     if (len == 0) return EOS_QR_ERR_EMPTY;
+    if (!ecl_ok((int)ecl)) return EOS_QR_ERR_VERSION;
 
-    v = eos_qr_version_for(len);
-    if (v == 0) return EOS_QR_ERR_TOO_LONG;
-    return eos_qr_encode_version(qr, data, len, v);
+    // The smallest version that holds this payload AT THIS LEVEL. Asking
+    // eos_qr_version_for() would answer for L and hand back a version too small
+    // to encode into, which fails late and confusingly instead of here.
+    for (v = EOS_QR_MIN_VERSION; v <= EOS_QR_MAX_VERSION; v++)
+        if (len <= (size_t)ECC[ecl][v].capacity)
+            return eos_qr_encode_version_ecl(qr, data, len, v, ecl);
+    return EOS_QR_ERR_TOO_LONG;
+}
+
+eos_qr_err_t eos_qr_encode_bytes(eos_qr_t *qr, const uint8_t *data, size_t len)
+{
+    return eos_qr_encode_bytes_ecl(qr, data, len, EOS_QR_ECL_L);
+}
+
+eos_qr_err_t eos_qr_encode_ecl(eos_qr_t *qr, const char *text, eos_qr_ecl_t ecl)
+{
+    if (!qr || !text) return EOS_QR_ERR_NULL;
+    return eos_qr_encode_bytes_ecl(qr, (const uint8_t *)text, strlen(text), ecl);
 }
 
 eos_qr_err_t eos_qr_encode(eos_qr_t *qr, const char *text)
 {
-    if (!qr || !text) return EOS_QR_ERR_NULL;
-    return eos_qr_encode_bytes(qr, (const uint8_t *)text, strlen(text));
+    return eos_qr_encode_ecl(qr, text, EOS_QR_ECL_L);
 }
 
 // ------------------------------------------------------------------- render

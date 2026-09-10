@@ -48,6 +48,19 @@ void eos_setup_screen_draw(const eos_setup_view_t *v);
 // by standing in front of the board with a phone.
 bool eos_setup_screen_had_qr(void);
 
+// What the last eos_setup_screen_draw() actually did with the symbol, for a
+// test that has to reproduce it. The ECC level is chosen per payload - the
+// strongest that holds it - so a caller comparing against its own reference
+// encode has to ask rather than assume, and the badge is only drawn at the
+// levels that can survive it.
+//
+// eos_qr_ecl_t as an int, so this header does not drag eos_qr.h in behind it.
+int eos_setup_screen_qr_ecl(void);
+
+// Modules across the penguin badge, INCLUDING its paper margin, or 0 when no
+// badge was drawn. Centred on the symbol.
+int eos_setup_screen_qr_badge_modules(void);
+
 // The pairing screen. The passkey is drawn with integer-scaled glyphs — as
 // large as the panel will take — because it is read across a desk and typed on
 // a keyboard that cannot show it. `peer` and `warning` may be NULL.

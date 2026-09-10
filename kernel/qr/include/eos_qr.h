@@ -43,7 +43,11 @@
 #define EOS_QR_STRIDE         5                   // bytes per module row, ALWAYS
 #define EOS_QR_BUF_BYTES      (EOS_QR_STRIDE * EOS_QR_MAX_SIZE)   // 165
 #define EOS_QR_MAX_CODEWORDS  100                 // version 4: 80 data + 20 ECC
-#define EOS_QR_MAX_ECC        20                  // ECC codewords, version 4 at L
+// ECC codewords in the LARGEST SINGLE BLOCK, which is what rs_generator() and
+// rs_remainder() size their scratch from - not the symbol's ECC total. The
+// worst case is version 2 at H: 28 ECC codewords in one block. Version 4 at H
+// has more ECC overall (64) but splits it four ways, so 16 each.
+#define EOS_QR_MAX_ECC        28
 #define EOS_QR_MAX_BYTES      78                  // byte-mode payload, version 4 at L
 #define EOS_QR_MASKS          8
 #define EOS_QR_QUIET          4                   // minimum quiet zone, in modules
@@ -63,6 +67,26 @@ typedef enum {
 
 const char *eos_qr_strerror(eos_qr_err_t e);
 
+// --------------------------------------------------------------- ECC levels
+//
+// How much of a damaged symbol still decodes. These are an ORDER, not the ISO
+// format bit patterns - L is 0 here and 0b01 on the wire, which is why FMT_ECL
+// in the .c file is a lookup and not a cast.
+//
+// The reason this exists at all is the setup screen's penguin: a badge sitting
+// over the middle of a symbol IS damage, and at L (7%) it is more damage than
+// the symbol can survive. H spends 30% of the symbol on recovery and does not
+// notice a small logo in the middle.
+
+typedef enum {
+    EOS_QR_ECL_L = 0,   // ~7%  recovery. The default, and the most payload.
+    EOS_QR_ECL_M,       // ~15%
+    EOS_QR_ECL_Q,       // ~25%
+    EOS_QR_ECL_H        // ~30% recovery. What a centre logo needs.
+} eos_qr_ecl_t;
+
+#define EOS_QR_ECLS 4
+
 // -------------------------------------------------------------------- state
 //
 // One symbol, everything it took to build it, and the scratch. ~300 bytes.
@@ -80,7 +104,8 @@ typedef struct {
     uint8_t  data_cw;                     // data codewords for this version
     uint8_t  ecc_cw;                      // ECC codewords for this version
     uint8_t  total_cw;                    // data_cw + ecc_cw
-    uint8_t  blocks;                      // ECC blocks; 1 for every supported version
+    uint8_t  blocks;                      // ECC blocks; >1 only at the higher levels
+    uint8_t  ecl;                         // eos_qr_ecl_t the symbol was built at
 } eos_qr_t;
 
 // -------------------------------------------------------------------- table
@@ -89,6 +114,10 @@ typedef struct {
 // 1..4, so a caller can loop without bounds-checking first.
 
 int eos_qr_capacity(int version);
+
+// The same, at a chosen level. eos_qr_capacity(v) is exactly
+// eos_qr_capacity_ecl(v, EOS_QR_ECL_L).
+int eos_qr_capacity_ecl(int version, eos_qr_ecl_t ecl);
 
 // The smallest version that holds len payload bytes, or 0 if none does. This
 // is the function to ask before building a string you intend to encode.
@@ -103,11 +132,20 @@ int eos_qr_version_for(size_t len);
 eos_qr_err_t eos_qr_encode(eos_qr_t *qr, const char *text);
 eos_qr_err_t eos_qr_encode_bytes(eos_qr_t *qr, const uint8_t *data, size_t len);
 
+// The same, at a chosen ECC level. The plain forms above are these with
+// EOS_QR_ECL_L and are kept identical in behaviour: every symbol this encoder
+// produced before levels existed, it still produces.
+eos_qr_err_t eos_qr_encode_ecl(eos_qr_t *qr, const char *text, eos_qr_ecl_t ecl);
+eos_qr_err_t eos_qr_encode_bytes_ecl(eos_qr_t *qr, const uint8_t *data, size_t len,
+                                     eos_qr_ecl_t ecl);
+
 // Forces a version instead of picking the smallest that fits. The provisioning
 // path does not want this; the test suite does, to exercise all four versions
 // against reference matrices.
 eos_qr_err_t eos_qr_encode_version(eos_qr_t *qr, const uint8_t *data,
                                    size_t len, int version);
+eos_qr_err_t eos_qr_encode_version_ecl(eos_qr_t *qr, const uint8_t *data,
+                                       size_t len, int version, eos_qr_ecl_t ecl);
 
 // -------------------------------------------------------------------- reads
 

@@ -253,13 +253,22 @@ static void test_setup(const char *ssid, const char *psk, bool expect_qr)
     while (qy > 0 && fb[qy - 1][qx] == paper) qy--;
     qh = 0; while (qy + qh < H && fb[qy + qh][qx] == paper) qh++;
 
-    if (eos_qr_encode(&ref, payload) != EOS_QR_OK) { CK(0, "reference encode"); return; }
+    // At the level the SCREEN chose, not at L. qr_prepare() walks H->Q->M->L
+    // and takes the strongest that holds the payload, so a reference built at
+    // L is a different version of a different symbol and every pixel disagrees.
+    if (eos_qr_encode_ecl(&ref, payload,
+                          (eos_qr_ecl_t)eos_setup_screen_qr_ecl()) != EOS_QR_OK) {
+        CK(0, "reference encode"); return;
+    }
 
     {
         int total = ref.size + 2 * EOS_QR_QUIET;
         int scale = qw / (total ? total : 1);
         int quiet_px = EOS_QR_QUIET * scale;
         int mx, my, bad = 0;
+        const int badge_mod = eos_setup_screen_qr_badge_modules();
+        const int badge_lo  = (ref.size - badge_mod) / 2;
+        const int badge_hi  = badge_lo + badge_mod - 1;
 
         printf("    version %d, %d modules, %d px/module, %dx%d at (%d,%d), quiet %d px\n",
                ref.version, ref.size, scale, qw, qh, qx, qy, quiet_px);
@@ -282,11 +291,37 @@ static void test_setup(const char *ssid, const char *psk, bool expect_qr)
                 eos_color_t want = eos_qr_module(&ref, mx, my) ? ink : paper;
                 int px0 = qx + quiet_px + mx * scale, py0 = qy + quiet_px + my * scale;
                 int i, j;
+                // The penguin badge is painted OVER the middle on purpose, so
+                // those modules are expected to disagree. Everything outside it
+                // still has to be the symbol, module for module - which is what
+                // stops a badge-sizing mistake from quietly eating live data.
+                if (badge_mod > 0 && mx >= badge_lo && mx <= badge_hi &&
+                    my >= badge_lo && my <= badge_hi)
+                    continue;
                 for (j = 0; j < scale; j++)
                     for (i = 0; i < scale; i++)
                         if (fb[py0 + j][px0 + i] != want) bad++;
             }
-        CK(bad == 0, "every module, every pixel of it, matches eos_qr_module()");
+        CK(bad == 0, "every module outside the badge matches eos_qr_module()");
+
+        // And the badge itself, when there is one: the centre module must be
+        // the penguin's white face and not a live module, which is the cheapest
+        // proof that it was drawn at all and in the right place.
+        if (badge_mod > 0) {
+            int cm = ref.size / 2;
+            int cpx = qx + quiet_px + cm * scale + scale / 2;
+            int cpy = qy + quiet_px + cm * scale + scale / 2;
+            CK(fb[cpy][cpx] == paper, "the badge centre is the penguin, not a module");
+            CK(badge_mod * 2 < ref.size, "the badge covers well under half the symbol");
+            // The damage the symbol is being asked to absorb, stated as a
+            // number so a future badge that grows has to argue with it.
+            printf("    badge %d x %d modules = %.1f%% of the symbol, at ECC %s\n",
+                   badge_mod, badge_mod,
+                   100.0 * badge_mod * badge_mod / (ref.size * ref.size),
+                   eos_setup_screen_qr_ecl() == 3 ? "H" :
+                   eos_setup_screen_qr_ecl() == 2 ? "Q" :
+                   eos_setup_screen_qr_ecl() == 1 ? "M" : "L");
+        }
         if (!bad) printf("    %d modules x %d px verified\n", ref.size * ref.size, scale * scale);
     }
 

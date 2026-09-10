@@ -34,6 +34,7 @@ static eos_qr_t s_qr;
 static uint8_t  s_qr_px[EOS_QR_SCALED_BYTES(EOS_QR_MAX_SIZE, QR_SCALE_MAX, EOS_QR_QUIET)];
 static char     s_qr_text[EOS_QR_MAX_BYTES + 1];
 static int      s_qr_w, s_qr_h;
+static int      s_qr_scale;   // pixels per module, for sizing the badge
 static bool     s_qr_ready;
 static bool     s_qr_drawn;
 
@@ -182,7 +183,37 @@ static void qr_prepare(const char *payload, int16_t box_w, int16_t box_h)
 
     if (strcmp(payload, s_qr_text) != 0) {
         s_qr_text[0] = '\0';
-        if (eos_qr_encode(&s_qr, payload) != EOS_QR_OK) return;
+        // The STRONGEST level this payload fits in, not a fixed one, because
+        // the penguin badge below is damage the symbol has to survive and the
+        // payload is not a fixed length.
+        //
+        // What goes through here is eos_net_ap_qr()'s join string -
+        // "WIFI:S:<ssid>;T:WPA;P:<psk>;;" - which is 44 bytes for a stock
+        // board, because the SSID is always "penguinos-" plus four hex digits
+        // and the password is always twelve characters. 44 fits Q, which holds
+        // 46 at version 4. It does NOT fit H, which holds 34: the first
+        // attempt at this pinned H and silently dropped every board back to
+        // the text-only screen, which is a worse outcome than having no
+        // penguin at all.
+        //
+        // net.host is settable, so a long custom name pushes the payload past
+        // Q - the test suite carries a 63-byte case for exactly that. Such a
+        // board lands on M or L and gets NO BADGE, which is the honest
+        // outcome: at L the symbol can lose 7% of itself and the badge alone
+        // is twice that. A code that scans on a good phone in good light and
+        // fails on a bad one is the worst thing this could ship.
+        static const eos_qr_ecl_t LADDER[] = {
+            EOS_QR_ECL_H, EOS_QR_ECL_Q, EOS_QR_ECL_M, EOS_QR_ECL_L
+        };
+        size_t li;
+        bool got = false;
+        for (li = 0; li < sizeof LADDER / sizeof LADDER[0]; li++) {
+            if (eos_qr_encode_ecl(&s_qr, payload, LADDER[li]) == EOS_QR_OK) {
+                got = true;
+                break;
+            }
+        }
+        if (!got) return;
         snprintf(s_qr_text, sizeof s_qr_text, "%s", payload);
     }
     if (!s_qr_text[0]) return;
@@ -192,6 +223,7 @@ static void qr_prepare(const char *payload, int16_t box_w, int16_t box_h)
         if (px <= (int)box_w && px <= (int)box_h) break;
     }
     if (scale < QR_SCALE_MIN) return;
+    s_qr_scale = scale;
 
     if (!eos_qr_render(&s_qr, scale, EOS_QR_QUIET, s_qr_px, sizeof s_qr_px,
                        &s_qr_w, &s_qr_h))
@@ -213,6 +245,77 @@ static void qr_blit(int16_t x, int16_t y, const skin_t *s)
     bm.tint   = s->ink;      // set bit = dark module
     bm.bg     = s->paper;    // clear bit = the quiet zone and the light modules
     eos_display_blit(x, y, &bm);
+}
+
+// ------------------------------------------------------------- the penguin
+//
+// A badge over the middle of the symbol. This is only safe because qr_prepare()
+// encodes at EOS_QR_ECL_H: the 11x11 modules it covers are 121 of the 841 in a
+// version-3 symbol, a shade over 14%, against the 30% that level H can lose and
+// still decode. At the default level L it would be roughly twice the damage the
+// symbol could survive, and the code would scan on a good phone in good light
+// and fail on a bad one - the worst possible way for this to be wrong.
+//
+// The outer ring of the 11x11 is left as paper, so the penguin never touches a
+// live module: a scanner recovering the covered region wants a clean boundary,
+// and a badge that bleeds into the quiet modules around it reads as noise.
+//
+// 9x9 of penguin inside that margin. '#' is ink, 'o' is the white face, '*' is
+// the beak in the theme's accent, '.' is the paper margin.
+#define PENGUIN_MOD  9    // modules of penguin
+#define BADGE_MOD   11    // modules of badge, including the paper margin
+
+static const char *const PENGUIN[PENGUIN_MOD] = {
+    "..#####..",
+    ".#######.",
+    "##ooooo##",
+    "#o#ooo#o#",
+    "#ooooooo#",
+    "#ooo*ooo#",
+    "#ooooooo#",
+    ".#######.",
+    "..#####..",
+};
+
+// Drawn straight into the frame after the symbol, not composited into the
+// rendered 1bpp buffer: the beak wants the theme's accent and that buffer has
+// exactly two colours. Pure in its arguments, because this runs once per band.
+// Q and H only. At M (15%) an 11x11 badge over a version-4 symbol is 11% of
+// the modules, which is inside the budget on paper and leaves nothing for the
+// glare, the angle and the cheap camera that a setup screen actually meets.
+static bool badge_safe_at(uint8_t ecl)
+{
+    return ecl == EOS_QR_ECL_Q || ecl == EOS_QR_ECL_H;
+}
+
+static void qr_badge(int16_t qx, int16_t qy, const skin_t *s)
+{
+    const int sc = s_qr_scale > 0 ? s_qr_scale : 1;
+    int16_t bw = (int16_t)(BADGE_MOD * sc);
+    int16_t bx = (int16_t)(qx + (s_qr_w - bw) / 2);
+    int16_t by = (int16_t)(qy + (s_qr_h - bw) / 2);
+    int16_t px = (int16_t)(bx + sc), py = (int16_t)(by + sc);
+    int r, c;
+
+    if (s_qr_scale <= 0) return;
+    if (!badge_safe_at(s_qr.ecl)) return;
+
+    // The margin first, as one fill, then the penguin over it.
+    eos_display_fill(eos_rect(bx, by, bw, bw), s->paper);
+
+    for (r = 0; r < PENGUIN_MOD; r++) {
+        for (c = 0; c < PENGUIN_MOD; c++) {
+            eos_color_t col;
+            switch (PENGUIN[r][c]) {
+            case '#': col = s->ink;    break;
+            case 'o': col = s->paper;  break;
+            case '*': col = s->accent; break;
+            default:  continue;                 // paper already there
+            }
+            eos_display_fill(eos_rect((int16_t)(px + c * sc), (int16_t)(py + r * sc),
+                                      (int16_t)sc, (int16_t)sc), col);
+        }
+    }
 }
 
 // --------------------------------------------------------------- the header
@@ -270,6 +373,7 @@ static void setup_scene(const eos_setup_view_t *v, const skin_t *s,
     }
 
     qr_blit(qr_x, qr_y, s);
+    qr_badge(qr_x, qr_y, s);
 
     centre(y, s->med, s->accent, v->ap_ssid ? v->ap_ssid : "");
     y = (int16_t)(y + line_h(s->med) + 3);
@@ -314,6 +418,13 @@ void eos_setup_screen_draw(const eos_setup_view_t *v)
 }
 
 bool eos_setup_screen_had_qr(void) { return s_qr_drawn; }
+
+int eos_setup_screen_qr_ecl(void) { return (int)s_qr.ecl; }
+
+int eos_setup_screen_qr_badge_modules(void)
+{
+    return (s_qr_drawn && badge_safe_at(s_qr.ecl)) ? BADGE_MOD : 0;
+}
 
 // ==================================================== the pairing screen
 
