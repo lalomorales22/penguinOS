@@ -336,7 +336,8 @@ static void clamp_pos(eos_buddy_t *b)
 // computed together and why cfg.roam_q8 belongs to the buddy rather than to
 // the walker: whoever decides how big he is has already decided how far he
 // can go.
-static int32_t plan_stage(eos_buddy_t *b, uint16_t w, uint16_t h)
+static int32_t plan_stage(eos_buddy_t *b, uint16_t w, uint16_t h,
+                          uint16_t sw, uint16_t sh)
 {
     const eos_vox_model_t *m = b->model;
     uint32_t rad, uh;
@@ -354,7 +355,12 @@ static int32_t plan_stage(eos_buddy_t *b, uint16_t w, uint16_t h)
         }
         S = b->fit_scale_q8;
     }
-    if (b->cfg.roam_q8) S = mq8(S, 256 - (int32_t)b->cfg.roam_q8);
+    // roam_q8 buys walking room by making him smaller, and that is only worth
+    // paying when the stage IS the buffer. A caller that staged him across a
+    // whole tile has already found the room somewhere else, so shrinking him
+    // there would cost size for nothing.
+    if (b->cfg.roam_q8 && sw == w && sh == h)
+        S = mq8(S, 256 - (int32_t)b->cfg.roam_q8);
     if (S < 1) S = 1;
 
     footprint(m, &rad, &uh);
@@ -364,8 +370,8 @@ static int32_t plan_stage(eos_buddy_t *b, uint16_t w, uint16_t h)
     // Everything the box has left over, minus an eighth of his own size on
     // each axis. That eighth is the bob-and-lean margin: without it a hop at
     // the top of the stage would put his head through the edge of the tile.
-    sx = ((int32_t)w * 256 - fx) / 2 - fx / 8;
-    sy = ((int32_t)h * 256 - fy) / 2 - fy / 8;
+    sx = ((int32_t)sw * 256 - fx) / 2 - fx / 8;
+    sy = ((int32_t)sh * 256 - fy) / 2 - fy / 8;
     b->stage_x_q8 = sx > 0 ? sx : 0;
     b->stage_y_q8 = sy > 0 ? sy : 0;
     clamp_pos(b);
@@ -375,7 +381,7 @@ static int32_t plan_stage(eos_buddy_t *b, uint16_t w, uint16_t h)
 void eos_buddy_fit(eos_buddy_t *b, uint16_t w, uint16_t h)
 {
     if (!b || !b->model || w == 0 || h == 0) return;
-    (void)plan_stage(b, w, h);
+    (void)plan_stage(b, w, h, w, h);
 }
 
 void eos_buddy_stage(const eos_buddy_t *b, int32_t *hx_q8, int32_t *hy_q8)
@@ -596,7 +602,11 @@ int eos_buddy_render(eos_buddy_t *b, eos_buddy_target_t *t)
     // Scale and stage together, and in that order: the space he does not fill
     // is the space he gets to walk in, so the clamp cannot be decided until
     // the fit is.
-    int32_t S = plan_stage(b, t->w, t->h);
+    // The stage may be larger than the buffer: see eos_buddy_target_t.
+    uint16_t sw = t->stage_w ? t->stage_w : t->w;
+    uint16_t sh = t->stage_h ? t->stage_h : t->h;
+    bool     caller_places = (t->stage_w != 0 && t->stage_h != 0);
+    int32_t S = plan_stage(b, t->w, t->h, sw, sh);
 
     int yi = (int)(((b->yaw_q8 + 128) >> 8) & (EOS_BUDDY_YAW_STEPS - 1));
     int32_t sn = SIN_Q12[yi];
@@ -633,10 +643,16 @@ int eos_buddy_render(eos_buddy_t *b, eos_buddy_target_t *t)
     int32_t cz8 = ((int32_t)m->sz * 256) / 2;
     int32_t bob = (int32_t)(((int64_t)lift * S) / 256);
 
+    // Where he stands only moves the PIXELS when the stage is the buffer.
+    // When the caller staged him across something bigger it is moving the
+    // sprite instead, and adding the offset here as well would double it.
+    int32_t wx = caller_places ? 0 : b->walk_x_q8;
+    int32_t wy = caller_places ? 0 : b->walk_y_q8;
+
     int32_t ox = (int32_t)t->w * 128 - mq8(cx8, ex_x) - mq8(cy8, ey_x) - mq8(cz8, ez_x)
-                 + b->walk_x_q8;
+                 + wx;
     int32_t oy = (int32_t)t->h * 128 - mq8(cx8, ex_y) - mq8(cy8, ey_y) - mq8(cz8, ez_y)
-                 - bob + b->walk_y_q8;
+                 - bob + wy;
 
     int32_t cofx[8], cofy[8];
     for (int k = 0; k < 8; k++) {

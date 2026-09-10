@@ -75,6 +75,21 @@ typedef struct {
     uint8_t  bg_i8;
     uint16_t bg_565;
 
+    // The stage, when it is BIGGER than the pixel buffer.
+    //
+    // Normally scale and stage are the same division of the target: he is
+    // fitted to the buffer and walks in whatever room is left over, which on
+    // an 80x80 sprite is a stage a few pixels across. Setting these splits the
+    // two - he is still SCALED to fit w x h, but he is STAGED across stage_w x
+    // stage_h - so a small sprite can roam a whole tile. The render then draws
+    // him centred in the buffer and does NOT apply his walk offset, because
+    // the caller is positioning the sprite itself: ask eos_buddy_pos() where
+    // he is and blit there.
+    //
+    // 0 means "the same as w and h", which is exactly what this file did
+    // before they existed.
+    uint16_t stage_w, stage_h;
+
     // Painter audit. Leave audit_depth NULL on hardware; it costs 4 bytes a
     // pixel and exists so the host test can prove that no pixel is ever
     // overwritten by something further away.

@@ -248,17 +248,31 @@ static void buddy_prepare(const eos_shell_view_t *v, const skin_t *s)
     h = body.h < EOS_SHELL_BUDDY_PX ? body.h : (int16_t)EOS_SHELL_BUDDY_PX;
     if (w < 8 || h < 8) return;         // too small to read as anything
 
-    // clear to the surface colour rather than to a keyed sentinel: the tile
-    // under it is already that colour, so an opaque blit and a keyed one put
-    // the same pixels on the glass and the opaque one cannot pick a key that
-    // some shade of the model also resolves to.
+    // Cleared to EOS_COLOR_NONE, which is the one index that is PROVABLY not
+    // the model: eos_theme.h gives slot 255 up as the transparency sentinel,
+    // so neither eos_theme_cube_index() nor eos_theme_index() can return it
+    // and no shade of the buddy can collide with it. That was the objection to
+    // keying when this box was always centred on a tile of one flat colour -
+    // "the opaque one cannot pick a key that some shade of the model also
+    // resolves to" - and 255 answers it. eos_display_blit() skips the sentinel
+    // whatever bm.key says, so the sprite needs no key of its own.
+    //
+    // It matters now because the box MOVES. An opaque blit was invisible while
+    // it sat centred on surface colour; sliding it across a tile would drag a
+    // rectangle of background with it.
     memset(&t, 0, sizeof t);
     t.pixels = buddy_px;
     t.w      = (uint16_t)w;
     t.h      = (uint16_t)h;
     t.fmt    = EOS_BUDDY_PIX_I8;
     t.clear  = true;
-    t.bg_i8  = s->surface;
+    t.bg_i8  = EOS_COLOR_NONE;
+
+    // He is SCALED to the sprite and STAGED across the whole tile body. Those
+    // used to be one division of one box, which is why he had a few pixels to
+    // walk in and looked like an ornament in a case.
+    t.stage_w = (uint16_t)body.w;
+    t.stage_h = (uint16_t)body.h;
     if (eos_buddy_render(v->buddy, &t) < 0) return;
 
     memset(&buddy_bm, 0, sizeof buddy_bm);
@@ -267,9 +281,20 @@ static void buddy_prepare(const eos_shell_view_t *v, const skin_t *s)
     buddy_bm.h      = h;
     buddy_bm.stride = w;
     buddy_bm.fmt    = EOS_PIXFMT_I8;
-    buddy_bm.key    = EOS_COLOR_NONE;   // no keying: the box is opaque
-    buddy_at_x = (int16_t)(body.x + (body.w - w) / 2);
-    buddy_at_y = (int16_t)(body.y + (body.h - h) / 2);
+    buddy_bm.key    = EOS_COLOR_NONE;   // the sentinel is skipped regardless
+    {
+        // Where he stands, from the walker, in Q8 pixels off the middle of the
+        // stage. The vertical is squashed by the sine of the camera elevation
+        // so that walking up-screen reads as walking AWAY rather than as
+        // taking off; eos_buddy.h exports the constant for exactly this and
+        // warns that a second copy of it is a second thing to keep in step.
+        int32_t wx_q8 = 0, wy_q8 = 0;
+        eos_buddy_pos(v->buddy, &wx_q8, &wy_q8);
+        wy_q8 = (int32_t)(((int64_t)wy_q8 * EOS_BUDDY_SIN_PHI) / 4096);
+
+        buddy_at_x = (int16_t)(body.x + (body.w - w) / 2 + (wx_q8 >> 8));
+        buddy_at_y = (int16_t)(body.y + (body.h - h) / 2 + (wy_q8 >> 8));
+    }
     buddy_ready = true;
 }
 
