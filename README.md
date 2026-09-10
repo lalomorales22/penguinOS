@@ -42,8 +42,14 @@ one. The web app has a small command console (`help`, `status`, `heap`,
 `reboot`, `theme`, `wifi`, `brain`) and a live log, which is where that job
 belongs on a board with no keyboard of its own.
 
-**A status bar and themes.** Seven themes ship, switchable from the board with
-`super+t` or from the web app.
+**A status bar and themes.** A bar across the top carries the workspace pips,
+the focused window's title, free heap, the model's state, the clock — and **the
+board's IP address**, which is the one thing you cannot work out by looking at
+the screen. It fits itself to the panel: every segment has a short, medium and
+long form and a priority, so a 240-pixel board drops down to `35k` and `b!`
+while still showing the address in full, and nothing ever overflows the edge.
+Seven themes ship, switchable from the board with `super+t` or from the web
+app.
 
 **A voxel buddy.** A little penguin called Pip lives on the desktop and wanders
 the whole window — picking a spot, turning, waddling over, looking about and
@@ -68,7 +74,7 @@ network. See [Connecting your own AI](#connecting-your-own-ai).
 
 ## Supported boards
 
-Five boards are **verified on real hardware** — every pin, the colour format,
+Six boards are **verified on real hardware** — every pin, the colour format,
 the orientation and the memory budget measured rather than read off a datasheet:
 
 | Board | Chip | Screen | Notes |
@@ -78,10 +84,11 @@ the orientation and the memory budget measured rather than read off a datasheet:
 | **Waveshare ESP32-C6-LCD-1.3** | ESP32-C6 | 1.3" 240×240 | Square panel, native USB. |
 | **LAFVIN ESP32-C6 1.47"** | ESP32-C6 | 1.47" 320×172 | Same pinout as the Waveshare C6; only the panel differs. |
 | **Waveshare ESP32-S3-Touch-LCD-1.47** | ESP32-S3 | 1.47" 320×172 | 16 MB flash, 8 MB PSRAM, capacitive touch, working microSD. The roomiest. |
+| **Waveshare ESP32-C5-LCD-1.47** | ESP32-C5 | 1.47" 320×172 | Wi-Fi 6, dual-band 2.4/5 GHz. No touch. microSD shares the panel's SPI bus. The tightest heap in the fleet after boot. |
 
-Four more profiles exist in `boards/` — a Waveshare C5, two ILI9488 panels and
-an OLED — written from documentation but **never run on hardware**. Treat those
-as a starting point for bring-up, not as working targets.
+Three more profiles exist in `boards/` — two ILI9488 panels and an OLED —
+written from documentation but **never run on hardware**. Treat those as a
+starting point for bring-up, not as working targets.
 
 Touch hardware is fitted to three of these and its wiring is recorded, but
 **there is no touch driver yet** — the injection path is complete and nothing
@@ -90,7 +97,10 @@ calls it. Input today is a Bluetooth keyboard, a BLE trackpad, or the web app.
 **A camera node.** A second, much smaller program in `firmware-cam/` turns a
 Seeed XIAO ESP32-S3 Sense into a camera that serves frames over HTTP, which the
 `camera` window points at. It has no board profile on purpose: it is a different
-program rather than a board with the display switched off.
+program rather than a board with the display switched off. Flash it with
+`tools/flash.sh --camera`; `boards/xiao-esp32s3-sense/README.md` has the
+measured facts about the unit and the one diagnostic that matters when frames
+come back black.
 
 **Your board isn't listed?** See [Adding a board](#adding-a-board). The registry
 is designed for exactly that, and bringing up a new one takes minutes when the
@@ -132,10 +142,24 @@ tools/flash.sh --list        # what's attached, and the whole registry
 tools/flash.sh --identify    # identify only, write nothing
 tools/flash.sh --dry-run     # print every command instead of running it
 tools/flash.sh --monitor     # open a serial monitor afterwards
+tools/flash.sh --erase       # erase the whole flash first (never implied)
 ```
 
 Nothing is written without a confirmation, and `--yes` authorises *writing*, not
 *guessing* — if two profiles still match it stops and asks anyway.
+
+**The camera node is flashed by the same script**, with `--camera`:
+
+```bash
+tools/flash.sh --camera
+```
+
+It has no board profile on purpose — the registry is built around a panel and
+every profile must carry a display controller, pins, a render tier and a band
+height, all of which a screenless device would have to invent. So `--camera`
+identifies nothing, generates no board header and stamps no profile into NVS; it
+just builds `firmware-cam/` and writes it. Plug the node in without that flag and
+the script now says so rather than telling you to go and write a profile.
 
 ### 3. First boot
 

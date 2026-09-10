@@ -23,7 +23,7 @@
 // launcher's second column and the web app's picker show.
 
 static const eos_app_t APPS[EOS_APP_COUNT] = {
-    { "clock", "clock", "uptime, in the large face",
+    { "clock", "clock", "the time of day, with the date and uptime under it",
       0, eos_app_draw_clock,    NULL },
 
     { "board", "board", "what this board is, or its address once it has joined",
