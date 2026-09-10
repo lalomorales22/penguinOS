@@ -74,7 +74,7 @@ network. See [Connecting your own AI](#connecting-your-own-ai).
 
 ## Supported boards
 
-Seven boards are **verified on real hardware** — every pin, the colour format,
+All seven are **verified on real hardware** — every pin, the colour format,
 the orientation and the memory budget measured rather than read off a datasheet:
 
 | Board | Chip | Screen | Notes |
@@ -87,9 +87,31 @@ the orientation and the memory budget measured rather than read off a datasheet:
 | **Waveshare ESP32-C5-LCD-1.47** | ESP32-C5 | 1.47" 320×172 | Wi-Fi 6, dual-band 2.4/5 GHz. No touch. microSD shares the panel's SPI bus. The tightest heap in the fleet after boot. |
 | **LILYGO T-Display C5** | ESP32-C5 | 1.9" 320×170 | 16 MB flash and a 12 MB filesystem — the roomiest storage in the fleet. Battery management and a Qwiic port, neither used yet. |
 
+### Photos
+
+Two per board. Drop a file into `docs/photos/` with the name below and it
+appears here — nothing else needs editing. See `docs/photos/README.md`.
+
+| Board | Running it | Detail |
+|---|---|---|
+| **ESP32-2432S024N (Cheap Yellow Display, 2.4in, N variant)**<br>ESP32-D0WD-V3, 240×320 | <img src="docs/photos/cyd-2432s024n-1.jpg" alt="ESP32-2432S024N (Cheap Yellow Display, 2.4in, N variant) running penguinOS" width="260"> | <img src="docs/photos/cyd-2432s024n-2.jpg" alt="ESP32-2432S024N (Cheap Yellow Display, 2.4in, N variant), detail" width="260"> |
+| **ESP32-4832S040 (Cheap Yellow Display, 4.0in, resistive touch)**<br>ESP32-WROOM-32E, 480×320 | <img src="docs/photos/cyd-4832s040-1.jpg" alt="ESP32-4832S040 (Cheap Yellow Display, 4.0in, resistive touch) running penguinOS" width="260"> | <img src="docs/photos/cyd-4832s040-2.jpg" alt="ESP32-4832S040 (Cheap Yellow Display, 4.0in, resistive touch), detail" width="260"> |
+| **Waveshare ESP32-C6-LCD-1.3**<br>ESP32-C6FH4 (QFN32) rev v0.2, 240×240 | <img src="docs/photos/waveshare-c6-lcd-13-1.jpg" alt="Waveshare ESP32-C6-LCD-1.3 running penguinOS" width="260"> | <img src="docs/photos/waveshare-c6-lcd-13-2.jpg" alt="Waveshare ESP32-C6-LCD-1.3, detail" width="260"> |
+| **LAFVIN ESP32-C6 1.47inch LCD**<br>ESP32-C6FH4 (QFN32) rev v0.2, 320×172 | <img src="docs/photos/lafvin-c6-lcd-147-1.jpg" alt="LAFVIN ESP32-C6 1.47inch LCD running penguinOS" width="260"> | <img src="docs/photos/lafvin-c6-lcd-147-2.jpg" alt="LAFVIN ESP32-C6 1.47inch LCD, detail" width="260"> |
+| **Waveshare ESP32-S3-Touch-LCD-1.47**<br>ESP32-S3 (QFN56) rev v0.2, 320×172 | <img src="docs/photos/waveshare-s3-touch-lcd-147-1.jpg" alt="Waveshare ESP32-S3-Touch-LCD-1.47 running penguinOS" width="260"> | <img src="docs/photos/waveshare-s3-touch-lcd-147-2.jpg" alt="Waveshare ESP32-S3-Touch-LCD-1.47, detail" width="260"> |
+| **Waveshare ESP32-C5-LCD-1.47**<br>ESP32-C5, 320×172 | <img src="docs/photos/waveshare-c5-lcd-147-1.jpg" alt="Waveshare ESP32-C5-LCD-1.47 running penguinOS" width="260"> | <img src="docs/photos/waveshare-c5-lcd-147-2.jpg" alt="Waveshare ESP32-C5-LCD-1.47, detail" width="260"> |
+| **LILYGO T-Display C5**<br>ESP32-C5, 320×170 | <img src="docs/photos/lilygo-t-display-c5-1.jpg" alt="LILYGO T-Display C5 running penguinOS" width="260"> | <img src="docs/photos/lilygo-t-display-c5-2.jpg" alt="LILYGO T-Display C5, detail" width="260"> |
+| **penguinOS camera node**<br>XIAO ESP32-S3 Sense, no screen | <img src="docs/photos/xiao-esp32s3-sense-1.jpg" alt="the camera node" width="260"> | <img src="docs/photos/xiao-esp32s3-sense-2.jpg" alt="the camera node, detail" width="260"> |
 Three more profiles exist in `boards/` — two ILI9488 panels and an OLED —
 written from documentation but **never run on hardware**. Treat those as a
 starting point for bring-up, not as working targets.
+
+Every verified row above means a board that was held, flashed, booted and
+looked at: the colour format confirmed by drawing red and checking it came out
+red, the orientation confirmed by reading text off the glass, the memory budget
+read out of the boot log rather than estimated. Where two boards carry the same
+panel and disagree — and two pairs of them do — both answers are recorded with
+what was measured, because the panel does not decide it; the wiring does.
 
 Touch hardware is fitted to three of these and its wiring is recorded, but
 **there is no touch driver yet** — the injection path is complete and nothing
@@ -102,6 +124,34 @@ program rather than a board with the display switched off. Flash it with
 `tools/flash.sh --camera`; `boards/xiao-esp32s3-sense/README.md` has the
 measured facts about the unit and the one diagnostic that matters when frames
 come back black.
+
+**It is already penguinOS.** The node provisions through the same captive
+portal, answers on the same `penguinos-xxxx.local` pattern and serves the same
+`/api/*` namespace as every board with a screen — it just serves frames instead
+of a desktop. There is nothing separate to install.
+
+**Pointing a board at it.** Every board has its own `cam.host` setting, in the
+web app's Settings tab. Put the camera node's address in it — its `.local` name
+or its IP — and that board's `camera` window starts drawing. A board with
+`cam.host` empty says `set cam.host` on the glass rather than failing quietly.
+The setting is per board, so each one is aimed independently and several can
+watch the same camera.
+
+**How many at once.** The node runs the same HTTP server as everything else,
+with **four worker sockets**, and a viewing board asks for one horizontal strip
+roughly every 120 ms — eight strips to a picture. One or two viewers are
+comfortable; four is the ceiling the sockets impose, and past that the
+least-recently-used connection is dropped to make room, so viewers start
+stealing frames from each other. It is a camera for a couple of screens at a
+time, not a broadcast.
+
+**Why strips and not pictures.** The node has 8 MB of PSRAM and the boards
+watching it have about 30 KB of largest free block. A 240×320 RGB565 frame is
+153,600 bytes, so no board with a screen can hold one. The node therefore
+decodes the JPEG, scales and rotates it to exactly the size asked for, and
+serves **raw RGB565** — and the viewer blits it 40 rows at a time without ever
+holding a whole picture. All eight strips come out of one captured frame, so
+the image does not tear across strip boundaries.
 
 **Your board isn't listed?** See [Adding a board](#adding-a-board). The registry
 is designed for exactly that, and bringing up a new one takes minutes when the
