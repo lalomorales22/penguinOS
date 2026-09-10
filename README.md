@@ -74,7 +74,7 @@ network. See [Connecting your own AI](#connecting-your-own-ai).
 
 ## Supported boards
 
-Six boards are **verified on real hardware** — every pin, the colour format,
+Seven boards are **verified on real hardware** — every pin, the colour format,
 the orientation and the memory budget measured rather than read off a datasheet:
 
 | Board | Chip | Screen | Notes |
@@ -85,6 +85,7 @@ the orientation and the memory budget measured rather than read off a datasheet:
 | **LAFVIN ESP32-C6 1.47"** | ESP32-C6 | 1.47" 320×172 | Same pinout as the Waveshare C6; only the panel differs. |
 | **Waveshare ESP32-S3-Touch-LCD-1.47** | ESP32-S3 | 1.47" 320×172 | 16 MB flash, 8 MB PSRAM, capacitive touch, working microSD. The roomiest. |
 | **Waveshare ESP32-C5-LCD-1.47** | ESP32-C5 | 1.47" 320×172 | Wi-Fi 6, dual-band 2.4/5 GHz. No touch. microSD shares the panel's SPI bus. The tightest heap in the fleet after boot. |
+| **LILYGO T-Display C5** | ESP32-C5 | 1.9" 320×170 | 16 MB flash and a 12 MB filesystem — the roomiest storage in the fleet. Battery management and a Qwiic port, neither used yet. |
 
 Three more profiles exist in `boards/` — two ILI9488 panels and an OLED —
 written from documentation but **never run on hardware**. Treat those as a

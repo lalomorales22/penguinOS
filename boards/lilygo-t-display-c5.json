@@ -1,0 +1,236 @@
+{
+  "$schema": "./schema.json",
+  "schema_version": 1,
+  "id": "lilygo-t-display-c5",
+  "name": "LILYGO T-Display C5",
+  "summary": "The roomiest C5: 16MB of flash and a 1.9in 170x320 ST7789, plus a battery management unit and a Qwiic port that penguinOS does not use yet.",
+  "chip": {
+    "target": "esp32c5",
+    "variant": "ESP32-C5",
+    "cores": 1,
+    "flash_size_mb": 16,
+    "psram": {
+      "present": false,
+      "type": "none",
+      "size_mb": 0
+    }
+  },
+  "render": {
+    "tier": 0,
+    "compositor": "indexed8",
+    "lvgl": false,
+    "palette_entries": 256,
+    "full_framebuffer": false,
+    "band_height": 8,
+    "min_tile_w": 80,
+    "min_tile_h": 40,
+    "double_buffer": false,
+    "animations": false,
+    "heap_budget_bytes": 143708,
+    "reason": "MEASURED ON HARDWARE, first boot. penguinOS reports 143708 free / 114688 largest at app_main and 35788 free / 19456 largest once the whole boot sequence has run, in SETUP mode - the worst case, with the SoftAP and the station interface both up. Tier 0 because the banded indexed-8 compositor in eos_display_st7789.c is the only one that exists; there is no LVGL in the tree. band_height 8, carried from the Waveshare C5 and correct for the same reason: the strips cost 2 x band x WIDTH x 2 and WIDTH is 320 on both. The number worth noticing is that app_main free is within 32 bytes of BOTH Waveshare C5 units despite this board having four times the flash and 8MB of PSRAM it does not use. Flash and PSRAM are not SRAM; the C5 die has what it has. Everything the Waveshare C5 learned about the radio applies here unchanged, and does apply - the cut-down Wi-Fi pools in sdkconfig.defaults.esp32c5 are inherited, and without them this board would land at the same ~19KB that could not complete a DHCP handshake."
+  },
+  "display": {
+    "controller": "ST7789",
+    "driver_source": "esp_lcd",
+    "bsp_component": null,
+    "bsp_version": null,
+    "native_width": 170,
+    "native_height": 320,
+    "rotation": 1,
+    "color_depth": 16,
+    "bytes_per_pixel": 2,
+    "color_order": "rgb",
+    "supports_16bit_pixels": true,
+    "pixel_format_reason": "RGB565 straight down the wire, two bytes per pixel.",
+    "bus": "spi",
+    "spi_host": "SPI2",
+    "clock_hz": 40000000,
+    "clock_reason": "40MHz, the rate the Waveshare C5 runs the same controller at and the rate LILYGO ships in their own examples. Not measured on this unit.",
+    "pins": {
+      "sck": 7,
+      "mosi": 9,
+      "miso": -1,
+      "dc": 8,
+      "cs": 26,
+      "rst": 23,
+      "sda": -1,
+      "scl": -1
+    },
+    "i2c_address": null,
+    "backlight": {
+      "pin": 25,
+      "active_low": false,
+      "pwm": true
+    },
+    "col_offset": 35,
+    "row_offset": 0,
+    "invert": true,
+    "byte_swap": true,
+    "byte_swap_reason": "MEASURED. The setup screen renders amber-on-dark with the QR scanning cleanly, which tests byte_swap and invert together: a wrong byte_swap turns the theme amber into blue-green, a wrong invert turns the dark ground light, and both wrong gives yellow.",
+    "mirror_x": false,
+    "mirror_y": false,
+    "mirror_reason": "MEASURED. Both false. Text reads left-to-right and the QR scans, which a mirrored one cannot - a QR is not symmetric and a reflected one fails its own format check."
+  },
+  "inputs": {
+    "bluetooth_keyboard": {
+      "present": true,
+      "stack": "nimble",
+      "reason": "No touch and no exposed user button, so a BLE keyboard is the only direct input. NimBLE, like every board here."
+    },
+    "web_input": true,
+    "touch": {
+      "present": false,
+      "controller": null,
+      "bus": null,
+      "shares_display_bus": false,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1,
+        "irq": -1,
+        "sda": -1,
+        "scl": -1
+      },
+      "i2c_address": null,
+      "absent_reason": "No touch layer on the T-Display C5. The vendor pinmap accounts for every GPIO and none of them is a touch controller."
+    },
+    "buttons": []
+  },
+  "peripherals": {
+    "rgb_led": {
+      "present": false,
+      "kind": "none",
+      "pins": {
+        "r": -1,
+        "g": -1,
+        "b": -1
+      },
+      "data_pin": -1,
+      "count": 0,
+      "active_low": false
+    },
+    "speaker": {
+      "present": false,
+      "kind": "none",
+      "pin": -1
+    },
+    "light_sensor": {
+      "present": false,
+      "pin": -1,
+      "adc_unit": 0,
+      "adc_channel": -1
+    },
+    "sdcard": {
+      "present": false,
+      "bus": null,
+      "spi_host": null,
+      "pins": {
+        "sck": -1,
+        "mosi": -1,
+        "miso": -1,
+        "cs": -1
+      },
+      "max_clock_hz": 0,
+      "shares_display_bus": false,
+      "mount_point": null
+    },
+    "internal_fs": {
+      "present": true,
+      "kind": "littlefs",
+      "partition_label": "int",
+      "mount_point": "/int"
+    }
+  },
+  "flashing": {
+    "port_hint": null,
+    "usb_bridge": "usb_serial_jtag",
+    "upload_baud": 460800,
+    "monitor_baud": 115200,
+    "bad_baud_rates": [],
+    "flash_mode": "dio",
+    "flash_freq_mhz": 80,
+    "partition_scheme": "huge_app",
+    "app_partition_kb": 4096,
+    "ota_slots": 0,
+    "auto_reset": true
+  },
+  "identification": {
+    "auto_detectable": false,
+    "esptool_reports": {
+      "chip": "ESP32-C5",
+      "flash_size_mb": 16,
+      "psram": false
+    },
+    "panel_id_register": {
+      "supported": false,
+      "register": null,
+      "reads_back": null,
+      "note": "Not attempted, and pointless here anyway: MISO is not wired to the panel, so nothing can be read back from the controller at all."
+    },
+    "usb_serial": null,
+    "mac_allowlist": [
+      "10:bd:a3:e3:5a:80"
+    ],
+    "distinguishing_notes": [
+      "The ONLY 16MB C5 in the registry - the other two C5 profiles are 4MB, so esptool alone tells them apart.",
+      "Long 1.9 inch strip, 320x170 in landscape, with a battery connector and a Qwiic port on the short edge.",
+      "Silicon revision v1.2; the Waveshare C5 units are v1.0."
+    ],
+    "confirm_prompt": "Is this the LILYGO T-Display C5 - 16MB, battery connector, Qwiic port - rather than a 4MB Waveshare C5?"
+  },
+  "unverified": [
+    "render.min_tile_w",
+    "render.min_tile_h"
+  ],
+  "gotchas": [
+    {
+      "id": "factory-firmware-backed-up",
+      "severity": "high",
+      "field": "identification.mac_allowlist",
+      "text": "THIS BOARD ARRIVED WITH SOMEBODY'S PROGRAM ON IT and its owner wants it back. backup/factory-16MB.bin is a complete 16MB image of the part taken before penguinOS touched it, with the sha256 beside it committed so a restored copy can be proved identical. The original layout is an Arduino-style app0/app1 OTA pair with a 10MB ffat volume, so anything the program stored is in that FAT partition and is inside the dump. Restore it whole, to offset 0x0 - it carries its own bootloader and partition table, and penguinOS's offsets do not agree with them. See this board's README."
+    },
+    {
+      "id": "sixteen-mb-c5-needs-its-own-sdkconfig",
+      "severity": "high",
+      "field": "chip.flash_size_mb",
+      "text": "The first board in the fleet whose flash size does not match its TARGET's assumptions. sdkconfig.defaults says 4MB and names partitions.csv, and sdkconfig.defaults.esp32c5 is shared with the 4MB Waveshare C5, so neither file can carry this. firmware/CMakeLists.txt grew a third layer for it - sdkconfig.board.<id>, applied last - and this board's is firmware/sdkconfig.board.lilygo-t-display-c5. Without it the board boots fine and silently strands 12 of its 16MB, which is the kind of wrong that never announces itself."
+    },
+    {
+      "id": "psram-present-but-declared-absent",
+      "severity": "high",
+      "field": "chip.psram.present",
+      "text": "THIS MODULE PHYSICALLY HAS 8MB OF PSRAM and this profile says it has none. That is deliberate and it is not a lie about the silicon, it is a statement about this build: CONFIG_SPIRAM is off, so esp_psram reports nothing and the runtime probe in eos_board_check() agrees with the descriptor. It has to be this way today because esptool cannot see external PSRAM on the C5 - it is absent from the Features line - while the registry requires chip.psram.present and identification.esptool_reports.psram to AGREE, and detect.py rules a profile out when they disagree with the silicon. Declaring it present would break identification to claim memory that render tier 0 never spends. Enabling it properly means CONFIG_SPIRAM in the board sdkconfig, chip.psram here, and teaching detect.py that the C5 hides external PSRAM."
+    },
+    {
+      "id": "st7789-offset-is-35-not-34",
+      "severity": "high",
+      "field": "display.col_offset",
+      "text": "170 columns of a 240-column ST7789 frame memory, centred, so the gap is (240-170)/2 = 35 - NOT the 34 the Waveshare C5's 172-wide panel uses. The two boards are otherwise near-identical and copying that 34 across shifts the whole picture one pixel sideways, which is small enough to look like a rendering quirk rather than a wrong constant. UNVERIFIED: derived from the panel geometry, not measured on the glass."
+    },
+    {
+      "id": "battery-management-unit-unused",
+      "severity": "note",
+      "field": "peripherals",
+      "text": "An AXP2602 BMU sits on I2C with its interrupt on GPIO10, and a JST battery connector. No other board in the fleet has one and penguinOS does not talk to it at all - no charge state, no battery percentage, no low-power behaviour. The board runs from USB regardless, so this is a missing feature and not a hazard. GPIO10 is left undeclared rather than bound to something else."
+    },
+    {
+      "id": "qwiic-port-unused",
+      "severity": "note",
+      "field": "inputs",
+      "text": "A Qwiic/STEMMA JST-SH port on GPIO2 (SDA) and GPIO3 (SCL). penguinOS drives nothing on it. Recorded so that whoever wants an I2C sensor here does not have to find the pinmap again, and so nothing else claims those two pins."
+    },
+    {
+      "id": "no-panel-miso",
+      "severity": "note",
+      "field": "display.pins.miso",
+      "text": "MISO is not wired to the panel, so no register read can ever identify the controller."
+    },
+    {
+      "id": "inherited-from-the-waveshare-c5-and-right-this-time",
+      "severity": "note",
+      "field": "display.invert",
+      "text": "invert, byte_swap and both mirrors were copied from waveshare-c5-lcd-147 rather than derived, and all four turned out correct on the glass. That is worth recording PRECISELY BECAUSE IT DOES NOT GENERALISE: the S3 and the C5 carry an identical 172x320 ST7789 and disagree about invert and mirror_x, so a matching controller predicts far less than it appears to. This copy happened to be between two boards from a similar generation with similar wiring and it paid off. The next one may not. Check first light every time; it costs one look at the screen."
+    }
+  ]
+}

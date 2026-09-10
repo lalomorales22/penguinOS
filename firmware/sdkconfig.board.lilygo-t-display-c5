@@ -1,0 +1,27 @@
+# LILYGO T-Display C5 overrides. Applied AFTER sdkconfig.defaults and
+# sdkconfig.defaults.esp32c5, so this file wins where they disagree.
+#
+# It exists because this is the second ESP32-C5 in the fleet and the first that
+# does not fit the C5 file's assumptions. Everything the Waveshare C5 needs -
+# the USB-Serial-JTAG console, 240 MHz, the cut-down Wi-Fi buffer pools, IPv6
+# off - is inherited from sdkconfig.defaults.esp32c5 and deliberately NOT
+# repeated here. Only the differences belong in this file.
+
+# 16 MB of flash, and its own partition table. sdkconfig.defaults names
+# partitions.csv, which is the 4 MB layout: a 4 MB table on this part boots
+# fine and quietly strands 12 MB, which is the kind of wrong that never
+# announces itself. partitions-16mb.csv is the same table the 16 MB S3 uses -
+# a 4 MB app slot and the rest as LittleFS.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-16mb.csv"
+
+# PSRAM is NOT enabled, and the 8 MB on this module is real. See the
+# psram-present-but-unused gotcha in the board profile: esptool cannot see
+# external PSRAM on the C5, the registry requires chip.psram.present and
+# identification.esptool_reports.psram to agree, and detect.py rules a profile
+# out when they disagree with the silicon. Declaring it present would therefore
+# break identification for the sake of memory that render tier 0 does not
+# spend. Turning it on is a real option for whoever wants it - it needs
+# CONFIG_SPIRAM here, chip.psram in the profile, and detect.py taught that the
+# C5 hides external PSRAM. None of that is on the path to first light.
