@@ -53,14 +53,34 @@
 #define EOS_HTTPD_URI_MAX 160    // request target, query string included
 #endif
 #ifndef EOS_HTTPD_BODY_MAX
-#define EOS_HTTPD_BODY_MAX 512   // a POST body larger than this is 413, never read
+#define EOS_HTTPD_BODY_MAX 4096  // a POST body larger than this is 413, never read
 #endif
-// That number is spent out of the HTTP worker's task stack, byte for byte: the
-// body buffer lives in on_request()'s frame. Measured on riscv32 at -Os, the
-// deepest request path costs 1,248 bytes of penguinOS frames of which 513 are this
-// buffer, against the 5,376-byte stack eos_httpd_start() asks for and the 4,096
-// esp_http_server assumes for a bare handler. Raising BODY_MAX without raising
-// cfg.stack_size in eos_httpd_start() by the same amount spends the margin.
+// That number is spent out of the HTTP task's stack, byte for byte: the body
+// buffer lives in on_request()'s frame. Measured on riscv32 at -Os, the deepest
+// request path costs 1,248 bytes of penguinOS frames of which 513 were this
+// buffer when it was 512, against the stack eos_httpd_start() asks for and the
+// 4,096 esp_http_server assumes for a bare handler. Raising BODY_MAX without
+// raising cfg.stack_size in eos_httpd_start() by the same amount spends the
+// margin - the two moved together and must keep doing so.
+//
+// IT WAS 512, AND THAT IS ALSO THE UPLOAD CHUNK. EOS_APPS_CHUNK_MAX is defined
+// as this, deliberately, because a chunk larger than the buffer is not a slow
+// upload - it is a request the transport refuses before any handler sees it. So
+// every file the web app sends went up 512 bytes at a time: a 240x240 RGB565
+// picture is 115,208 bytes, which is 226 round trips and MEASURED AT 13.4
+// SECONDS on a C6 over a local network. Sending a folder of pictures at that
+// rate is not a feature anyone would use twice.
+//
+// 4096 makes the same picture 29 requests. The cost is 3,584 bytes of ONE task
+// stack - esp_http_server runs a single task selecting over max_open_sockets,
+// so this is not multiplied by the four workers - and it is heap, taken at
+// httpd_start and held while the server is up.
+//
+// That is affordable on every board MEASURED so far and it is not free. The
+// 2.4in CYD is the tightest thing in the fleet and the board whose DHCP server
+// failed to answer at 7,168 bytes free; if a board ever cannot start its web
+// server after this, this is the first number to put back, per board, with a
+// -DEOS_HTTPD_BODY_MAX on that board's build.
 #ifndef EOS_HTTPD_RESP_MAX
 #define EOS_HTTPD_RESP_MAX 4096  // the whole JSON document, built in one pass
 #endif

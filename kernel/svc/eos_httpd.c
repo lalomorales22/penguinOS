@@ -2835,7 +2835,11 @@ int eos_httpd_start(eos_httpd_t *h)
     cfg.max_open_sockets  = h->cfg.workers;
     cfg.max_uri_handlers  = 2;
     cfg.max_resp_headers  = EOS_HTTPD_HDR_MAX;
-    cfg.stack_size        = 5376;   // the request body is on this stack
+    // Moves with EOS_HTTPD_BODY_MAX, which lives in on_request()'s frame. The
+    // 1,280 is what the deepest request path costs AROUND the body buffer, plus
+    // the margin esp_http_server wants for its own frames; the body is added on
+    // top rather than assumed to fit inside it.
+    cfg.stack_size        = 5376 - 512 + EOS_HTTPD_BODY_MAX;
     cfg.recv_wait_timeout = 6;
     cfg.send_wait_timeout = 6;
     cfg.lru_purge_enable  = true;    // a phone that walks away must not hold a worker

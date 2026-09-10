@@ -28,6 +28,101 @@
 
 #include "eos_font.h"
 #include "eos_storage.h"
+#include "eos_display.h"
+
+// ------------------------------------------------------------- the viewer
+//
+// Opening a .565 shows it. The format is what tools/mkimg.py writes: an
+// eight-byte header then raw little-endian RGB565, which is EOS_PIXFMT_RGB565
+// and therefore something eos_display_blit() takes without conversion.
+//
+// The board decodes NOTHING. There is no JPEG decoder in this image - the one
+// in the tree belongs to firmware-cam, which has 8MB of PSRAM to decode into,
+// against the 30KB largest free block on the tightest board here. So the
+// decoding happened once on a desktop and what arrives is bytes for the panel.
+//
+// AND IT NEVER HOLDS A PICTURE. A 240x240 image is 115,200 bytes; the buffer
+// below is 3,840. eos_app_camera.c reached the same conclusion about the same
+// arithmetic and answered it by drawing one horizontal strip at a time, which
+// is what happens here - except that the rows come from a seek instead of a
+// socket, so the 65ms-per-request that makes the camera window feel heavy is
+// not paid at all.
+//
+// The strips are chosen by eos_display_clip(): the draw runs once per display
+// band, and each pass reads ONLY the rows that fall inside the band it was
+// called for. That is what keeps this a pure function of position - the same
+// band always produces the same pixels - and it means a full picture costs one
+// pass over the file per frame rather than one per band.
+
+#define IMG_MAGIC0 'E'
+#define IMG_MAGIC1 '5'
+#define IMG_HDR    8      // magic(2) version(1) flags(1) w(2) h(2)
+
+// Rows held at once. 4 rows of the widest panel in the fleet (480) is 3,840
+// bytes of BSS - the whole cost of this feature in RAM. More rows would mean
+// fewer reads and a bigger floor on every board including the ones that cannot
+// spare it; flash reads are cheap here in a way sockets were not.
+#define IMG_ROWS   4
+
+#ifndef EOS_LCD_W
+#define EOS_LCD_W 480
+#endif
+
+static struct {
+    char     path[96];
+    uint16_t w, h;
+    bool     open;          // a .565 is being viewed
+    bool     bad;           // it was opened and is not one
+} V;
+
+static uint8_t s_rowbuf[EOS_LCD_W * 2 * IMG_ROWS];
+
+// Case-insensitive, because a file that came off a desktop may well be .565 or
+// .565 with whatever case a file manager felt like.
+static bool is_image(const char *name)
+{
+    size_t n = name ? strlen(name) : 0;
+    if (n < 5) return false;
+    return name[n - 4] == '.' && name[n - 3] == '5' &&
+           name[n - 2] == '6' && name[n - 1] == '5';
+}
+
+// Reads the header only. The pixels are never all in memory at once, so
+// "opening" an image is eight bytes and a size check.
+static void view_open(const char *dir, const char *name)
+{
+    eos_file_t *f;
+    uint8_t hdr[IMG_HDR];
+    size_t base = strlen(dir);
+
+    memset(&V, 0, sizeof V);
+    if (base + 1u + strlen(name) >= sizeof V.path) return;
+    if (base == 1u && dir[0] == '/') base = 0u;
+    memcpy(V.path, dir, base);
+    V.path[base] = '/';
+    memcpy(V.path + base + 1u, name, strlen(name) + 1u);
+
+    f = eos_storage_open(V.path, EOS_O_READ);
+    if (!f) { V.open = true; V.bad = true; return; }
+    if (eos_storage_read(f, hdr, IMG_HDR) != IMG_HDR ||
+        hdr[0] != IMG_MAGIC0 || hdr[1] != IMG_MAGIC1) {
+        eos_storage_close(f);
+        V.open = true; V.bad = true;
+        return;
+    }
+    V.w = (uint16_t)(hdr[4] | (hdr[5] << 8));
+    V.h = (uint16_t)(hdr[6] | (hdr[7] << 8));
+    // A header that claims more than the file holds is a truncated upload, and
+    // drawing it would read past the end row after row.
+    if (V.w == 0 || V.h == 0 ||
+        eos_storage_size(f) < (int64_t)IMG_HDR + (int64_t)V.w * V.h * 2) {
+        V.bad = true;
+    }
+    eos_storage_close(f);
+    V.open = true;
+}
+
+static void view_close(void) { memset(&V, 0, sizeof V); }
 
 // Twenty entries at forty-eight bytes each. A LittleFS partition on this board
 // holds the web app, a theme or two and a buddy; twenty is more than any
@@ -193,6 +288,23 @@ bool eos_app_files_key(const eos_event_t *e)
     if (!e) return false;
     if (e->type != EOS_EV_KEY_DOWN && e->type != EOS_EV_KEY_REPEAT) return false;
 
+    // While a picture is up the window is a viewer, not a browser: anything
+    // that means "back" closes it and everything else is swallowed, so an
+    // arrow key cannot quietly move the selection behind the image.
+    if (V.open) {
+        switch (e->key) {
+        case EOS_KEY_ESC:
+        case EOS_KEY_LEFT:
+        case EOS_KEY_BKSP:
+        case EOS_KEY_ENTER:
+            view_close();
+            F.dirty = true;
+            return true;
+        default:
+            return true;
+        }
+    }
+
     switch (e->key) {
     case EOS_KEY_UP:
         if (F.sel > 0) F.sel--;
@@ -204,7 +316,15 @@ bool eos_app_files_key(const eos_event_t *e)
         return true;
     case EOS_KEY_ENTER:
     case EOS_KEY_RIGHT:
-        if (F.sel >= 0 && F.sel < (int16_t)F.n) go_into(&F.e[F.sel]);
+        if (F.sel >= 0 && F.sel < (int16_t)F.n) {
+            const entry_t *sel = &F.e[F.sel];
+            if (!sel->is_dir && is_image(sel->name)) {
+                view_open(F.path, sel->name);
+                F.dirty = true;
+            } else {
+                go_into(sel);
+            }
+        }
         return true;
     case EOS_KEY_LEFT:
     case EOS_KEY_BKSP:
@@ -244,6 +364,62 @@ static const char *path_tail(const char *p, int cols)
     return (i < len) ? p + i : p + len - cols;
 }
 
+// Draws only the rows of the picture that land inside the band this call was
+// made for. eos_display_clip() is that band (intersected with the window), so
+// the loop below is a seek and a read of at most IMG_ROWS rows at a time and
+// the whole picture never exists anywhere at once.
+static void draw_image(const eos_app_ctx_t *c, eos_rect_t r)
+{
+    eos_rect_t clip = eos_display_clip();
+    eos_file_t *f;
+    int16_t ox, oy;
+    int y0, y1, y;
+
+    if (V.bad) {
+        eos_app_text(r.x, r.y, c->ui, c->muted, "not a .565 image", r.w);
+        return;
+    }
+
+    // Centred, and clipped by the blit when the picture is larger than the
+    // window - which is the common case on a tile, and is a crop rather than a
+    // scale because scaling would mean holding rows to resample them.
+    ox = (int16_t)(r.x + (r.w - (int16_t)V.w) / 2);
+    oy = (int16_t)(r.y + (r.h - (int16_t)V.h) / 2);
+
+    // Which picture rows this band wants. Everything outside is another band's
+    // problem and reading it here would multiply the file traffic by the number
+    // of bands.
+    y0 = clip.y - oy;
+    y1 = (clip.y + clip.h) - oy;
+    if (y0 < 0) y0 = 0;
+    if (y1 > (int)V.h) y1 = (int)V.h;
+    if (y0 >= y1) return;
+
+    f = eos_storage_open(V.path, EOS_O_READ);
+    if (!f) return;
+
+    for (y = y0; y < y1; y += IMG_ROWS) {
+        int n = (y + IMG_ROWS <= y1) ? IMG_ROWS : (y1 - y);
+        int want = n * (int)V.w * 2;
+        eos_bitmap_t b;
+
+        if (want > (int)sizeof s_rowbuf) break;
+        if (eos_storage_seek(f, (int64_t)IMG_HDR + (int64_t)y * V.w * 2,
+                             EOS_SEEK_SET) < 0) break;
+        if (eos_storage_read(f, s_rowbuf, want) != want) break;
+
+        memset(&b, 0, sizeof b);
+        b.pixels = s_rowbuf;
+        b.w      = (int16_t)V.w;
+        b.h      = (int16_t)n;
+        b.stride = (int16_t)(V.w * 2);
+        b.fmt    = EOS_PIXFMT_RGB565;
+        b.key    = EOS_COLOR_NONE;
+        eos_display_blit(ox, (int16_t)(oy + y), &b);
+    }
+    eos_storage_close(f);
+}
+
 void eos_app_draw_files(const eos_app_ctx_t *c, eos_rect_t r)
 {
     int16_t line_h, y, cw;
@@ -251,6 +427,7 @@ void eos_app_draw_files(const eos_app_ctx_t *c, eos_rect_t r)
     char sbuf[12];
 
     if (!c->ui || eos_rect_empty(r)) return;
+    if (V.open) { draw_image(c, r); return; }
     line_h = (int16_t)(c->ui->h + 1);
     cw     = (int16_t)c->ui->cell_w;
     if (cw <= 0) cw = 6;
