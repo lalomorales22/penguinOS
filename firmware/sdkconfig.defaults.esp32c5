@@ -54,3 +54,20 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=8
 # speaks it. The setup portal, the web app, mDNS and the model bridge are all
 # IPv4, and lwIP's v6 caches are in the image purely because lwIP is.
 CONFIG_LWIP_IPV6=n
+
+# ---------------------------------------------------------------- partitions
+# ONE app slot, overriding the two-slot partitions.csv that 4 MB boards get by
+# default. MEASURED: this target's image is 1,855,280 bytes (C6) / 1,888,512
+# (C5) against a 1,703,936-byte OTA slot - it does not fit, and the ~275 KB it
+# exceeds the ESP32's image by is libnet80211, libpp and libbt, which is the
+# radio itself. See partitions-1slot.csv for why shrinking the filesystem
+# instead is not a trade worth making.
+#
+# So these boards are updated over USB and say so: /api/ota/* answers "this
+# board cannot update itself over the web", which is true and better than
+# offering a button that fails at the end of a minute-long upload.
+#
+# A 16 MB board on this target overrides this again in its own
+# sdkconfig.board.<id> - the LILYGO T-Display C5 does exactly that and DOES get
+# two slots, because at 16 MB a slot is 4 MB and the image uses a third of it.
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-1slot.csv"

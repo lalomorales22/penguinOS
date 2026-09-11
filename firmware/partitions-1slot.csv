@@ -1,0 +1,32 @@
+# penguinOS, 4 MB, ONE app slot. No over-the-air updates on this board.
+#
+# partitions.csv is the two-slot layout and is what a 4 MB board gets by
+# default. This file is for the 4 MB boards whose IMAGE DOES NOT FIT IN TWO
+# SLOTS, which turns out to be every 4 MB board that is not an ESP32.
+#
+# THE ARITHMETIC, measured rather than assumed:
+#
+#   ESP32   (the CYDs)        1,579,760 bytes    fits 1,703,936 with 7% spare
+#   ESP32-C6                  1,855,280 bytes    does NOT fit
+#   ESP32-C5                  1,888,512 bytes    does NOT fit
+#
+# The C6 and C5 images are ~275 KB larger than the ESP32's and none of it is
+# removable: libnet80211 is 196 KB, libpp 112 KB and libbt 111 KB, which is the
+# radio these boards exist to use. Nothing else is close.
+#
+# Two slots big enough for a C5 leave either 12 KB of headroom - one commit from
+# a link failure - or a 128 KB filesystem, which is smaller than the 242 KB
+# already sitting on the C6. Neither is a trade worth making for a feature that
+# saves plugging in a cable, so these boards keep one slot and 960 KB of
+# filesystem, and are updated over USB.
+#
+# The 16 MB boards have no such problem: see partitions-16mb.csv, where a slot
+# is 4 MB and the image uses a third of it.
+#
+# If a future image shrinks by 200 KB, or a board arrives with 8 MB, revisit
+# this. The check is `idf.py size` against 0x1A0000.
+# Name,     Type, SubType,  Offset,   Size,
+nvs,        data, nvs,      0x9000,   0x6000,
+phy_init,   data, phy,      0xF000,   0x1000,
+factory,    app,  factory,  0x10000,  0x300000,
+int,        data, littlefs, 0x310000, 0xF0000,
