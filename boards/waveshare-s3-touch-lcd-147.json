@@ -171,9 +171,7 @@
       "note": "MISO is not wired to the panel, so the controller cannot be read back. Identity came from the vendor pin definition and was confirmed by the panel initialising and rendering correctly under esp_lcd_new_panel_st7789."
     },
     "usb_serial": "28:84:85:55:37:38",
-    "mac_allowlist": [
-      "28:84:85:55:37:38"
-    ],
+    "mac_allowlist": [],
     "distinguishing_notes": [
       "auto_detectable is false like every other profile, and that is a rule about esptool rather than about this board: esptool reports chip, flash size, PSRAM and MAC and nothing else, so it can never confirm the PANEL. What is true here is that those four fields alone are enough to pick this board out of the fleet, which is not true of any other - the C6 pair is indistinguishable to esptool.",
       "The ONLY board in the fleet esptool can identify unambiguously on its own: it is the only ESP32-S3, the only one reporting 16MB of flash, and the only one reporting PSRAM. Contrast the C6 pair, which esptool cannot tell apart at all.",

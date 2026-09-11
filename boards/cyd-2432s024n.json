@@ -183,10 +183,7 @@
       "note": "Not attempted. The ILI9488 boards proved that a controller ID read is not something to build on, so nothing in penguinOS reads one."
     },
     "usb_serial": "E0:8C:FE:2E:D6:2C, E0:8C:FE:2F:90:5C",
-    "mac_allowlist": [
-      "e0:8c:fe:2e:d6:2c",
-      "e0:8c:fe:2f:90:5c"
-    ],
+    "mac_allowlist": [],
     "distinguishing_notes": [
       "2.4 inch panel in a yellow PCB with a microSD slot on the left edge.",
       "Silkscreened ESP32-2432S024N, sometimes HW-950. The trailing N is the variant letter and the only thing separating it from the R variant, which does have an XPT2046 touch chip.",

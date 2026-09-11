@@ -169,9 +169,7 @@
       "note": "Not attempted, and pointless here anyway: MISO is not wired to the panel, so nothing can be read back from the controller at all."
     },
     "usb_serial": null,
-    "mac_allowlist": [
-      "10:bd:a3:e3:5a:80"
-    ],
+    "mac_allowlist": [],
     "distinguishing_notes": [
       "The ONLY 16MB C5 in the registry - the other two C5 profiles are 4MB, so esptool alone tells them apart.",
       "Long 1.9 inch strip, 320x170 in landscape, with a battery connector and a Qwiic port on the short edge.",

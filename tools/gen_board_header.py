@@ -1379,6 +1379,13 @@ def load(path):
     if os.path.basename(path) == "schema.json":
         raise BadProfile("%s: that is the JSON Schema, not a board profile. Pass one of the "
                          "board files next to it." % path)
+    # The operator's own MAC list, which lives in this directory, is gitignored,
+    # and is merged into profiles by tools/detect.py at load time. Validating it
+    # as a board reports 130 missing fields, every one of them correct and none
+    # of them useful.
+    if os.path.basename(path) == "local-macs.json":
+        raise BadProfile("%s: that is the local MAC list, not a board profile. It is "
+                         "gitignored and read by tools/detect.py, not by this tool." % path)
     if not isinstance(data, dict):
         raise BadProfile("%s: expected a JSON object at the top level, got %s"
                          % (path, type(data).__name__))
@@ -1453,7 +1460,8 @@ def main(argv=None):
                 print("no such boards directory: %s" % boards_dir, file=sys.stderr)
                 return 1
             profiles = sorted(f for f in os.listdir(boards_dir)
-                              if f.endswith(".json") and f != "schema.json")
+                              if f.endswith(".json")
+                              and f not in ("schema.json", "local-macs.json"))
             if not profiles:
                 print("no board profiles in %s" % boards_dir, file=sys.stderr)
                 return 1

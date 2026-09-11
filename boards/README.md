@@ -232,6 +232,37 @@ TOTAL is not what constrains you, the largest BLOCK is.
 conservative defaults rather than bench measurements. Everything *not* in that
 list was proven on hardware. When a board misbehaves, check `unverified` first.
 
+## Which boards you own
+
+`identification.mac_allowlist` is empty in every profile here, and that is not
+an oversight. The MACs of the actual hardware live in **`boards/local-macs.json`,
+which is gitignored**, and `tools/detect.py` merges them into the matching
+profile at load time. So `tools/flash.sh --yes` still recognises a board with no
+flags, and a clone of this repository does not carry anybody's hardware
+identifiers.
+
+```json
+{ "boards": { "cyd-4832s040": ["8c:94:df:4e:3a:cc"] } }
+```
+
+**Why bother, when a MAC cannot be reached from the internet at all?** It is
+link-local and rewritten at every router hop, so no remote party ever sees one.
+The reason is narrower: penguinOS runs a SoftAP during setup whose BSSID is the
+base MAC **plus one**, and access-point BSSIDs are exactly what Wi-Fi
+geolocation databases index. Publishing a base MAC publishes a computable AP
+BSSID, and if that AP was ever logged by a passing phone it can be looked up for
+an approximate location. Small, and it is the one path that exists from "a MAC
+in a public repo" to "something about the owner".
+
+Losing the file is not serious. Every profile simply has no allowlist, the
+flasher asks which board it is looking at, and the answer goes into
+`~/.penguinos/board-cache.json` — one question per board, once. A malformed or
+unreadable file is treated the same way rather than stopping a flash, because a
+file that only saves typing should never be able to prevent one.
+
+A profile that ships an allowlist of its own keeps it; the local file only ever
+adds.
+
 ## Adding a board
 
 1. Copy the closest existing profile to `boards/<new-id>.json`. The id must be a

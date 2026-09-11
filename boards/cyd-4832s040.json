@@ -188,10 +188,7 @@
       "psram": false
     },
     "usb_bridge": "CH340",
-    "mac_allowlist": [
-      "8c:94:df:50:02:94",
-      "8c:94:df:4e:3a:cc"
-    ],
+    "mac_allowlist": [],
     "distinguishing_notes": [
       "Do NOT confuse with wavvy-ili9488-40. That entry is a bare 4.0in panel hand-wired to a devkit - no touch, no microSD, no RGB LED, no speaker - and it drives the panel on 18/23/5, which on THIS board is the SPI header and the microSD. Flashing it here drives the SD lines and leaves the glass dark.",
       "Separable from cyd-2432s024n by MAC, and by the glass: 4.0in against 2.4in."

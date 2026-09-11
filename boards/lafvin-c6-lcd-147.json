@@ -173,9 +173,7 @@
       "note": "MISO is not wired to the panel, so the controller can never be read back. Identity came from the GPIO matrix instead - see the jtag-pin-discovery gotcha."
     },
     "usb_serial": "58:E6:C5:11:F4:78",
-    "mac_allowlist": [
-      "58:e6:c5:11:f4:78"
-    ],
+    "mac_allowlist": [],
     "distinguishing_notes": [
       "Tall thin 1.47 inch IPS panel, 172x320 portrait, on a narrow board with a TF slot.",
       "Native USB, so it enumerates as an Espressif usb_serial_jtag device (VID 0x303A, PID 0x1001).",

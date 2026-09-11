@@ -114,5 +114,56 @@ MAC: ac:27:6e:a7:a6:dc
 ck(detect.parse_esptool(S3_OUTPUT).get("mac") == "ac:27:6e:a7:a6:dc",
    "a repeated MAC line parses to that MAC")
 
+# ------------------------------------------------- the local MAC file
+# Which boards the operator owns is gitignored, so the merge that puts those
+# MACs back into a profile at load time is the only thing making
+# `flash.sh --yes` recognise a board with no flags. It has to work, and it has
+# to be harmless when the file is not there - which is the state of every fresh
+# clone.
+import json as _json, os as _os, tempfile as _tmp
+
+_d = _tmp.mkdtemp()
+with open(_os.path.join(_d, "b.json"), "w") as fh:
+    _json.dump({"id": "b", "chip": {"target": "esp32"},
+                "identification": {"mac_allowlist": []}}, fh)
+
+# No local file at all: loads, no allowlist, NO exception.
+_p = detect.load_profiles(_d)
+ck(len(_p) == 1, "a profile loads with no local MAC file present")
+ck((_p[0]["identification"]["mac_allowlist"] or []) == [],
+   "and its allowlist stays empty rather than erroring")
+
+# With one: merged, and lowercased on the way in.
+with open(_os.path.join(_d, "local-macs.json"), "w") as fh:
+    _json.dump({"boards": {"b": ["AA:BB:CC:DD:EE:FF"]}}, fh)
+_p = detect.load_profiles(_d)
+ck(_p[0]["identification"]["mac_allowlist"] == ["aa:bb:cc:dd:ee:ff"],
+   "a local MAC is merged in and lowercased")
+
+# Rubbish in the file is dropped, not matched and not fatal.
+with open(_os.path.join(_d, "local-macs.json"), "w") as fh:
+    _json.dump({"boards": {"b": ["not-a-mac", "11:22:33:44:55:66"]}}, fh)
+_p = detect.load_profiles(_d)
+ck(_p[0]["identification"]["mac_allowlist"] == ["11:22:33:44:55:66"],
+   "a malformed entry is dropped and the valid one survives")
+
+# Malformed JSON must not stop a flash over a file that only saves typing.
+with open(_os.path.join(_d, "local-macs.json"), "w") as fh:
+    fh.write("{ this is not json")
+_p = detect.load_profiles(_d)
+ck(len(_p) == 1 and (_p[0]["identification"]["mac_allowlist"] or []) == [],
+   "a corrupt local MAC file is ignored rather than fatal")
+
+# A profile that ships its own allowlist keeps it; the local file only adds.
+with open(_os.path.join(_d, "b.json"), "w") as fh:
+    _json.dump({"id": "b", "chip": {"target": "esp32"},
+                "identification": {"mac_allowlist": ["00:00:00:00:00:01"]}}, fh)
+with open(_os.path.join(_d, "local-macs.json"), "w") as fh:
+    _json.dump({"boards": {"b": ["00:00:00:00:00:02"]}}, fh)
+_p = detect.load_profiles(_d)
+ck(_p[0]["identification"]["mac_allowlist"] ==
+   ["00:00:00:00:00:01", "00:00:00:00:00:02"],
+   "a shipped allowlist is added to, never replaced")
+
 print("\n=== %d checks, %d failed ===" % (checks, fails))
 sys.exit(1 if fails else 0)

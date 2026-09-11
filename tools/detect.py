@@ -133,12 +133,54 @@ class Fail(Exception):
 # --------------------------------------------------------------- the registry
 
 
+# Which physical boards the operator owns, by MAC. Kept OUT of the profiles and
+# out of git: see boards/local-macs.json's own comment for why a base MAC is
+# worth not publishing even though a MAC cannot be reached from the internet.
+#
+# Absent, empty or malformed, this returns nothing and every profile simply has
+# no allowlist - which is not an error. The flasher then asks which board it is
+# looking at, the answer goes in ~/.penguinos/board-cache.json, and the next run
+# is silent again. A missing file costs one question per board, once.
+LOCAL_MACS = "local-macs.json"
+
+
+def load_local_macs(boards_dir):
+    """profile id -> [mac, ...], lowercased. {} when there is no such file."""
+    path = os.path.join(boards_dir, LOCAL_MACS)
+    try:
+        with open(path, "r") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        # Deliberately quiet about BOTH. Not having one is the normal state for
+        # anyone who just cloned this, and a syntax error in a file that only
+        # saves typing should not stop a flash.
+        return {}
+    boards = raw.get("boards") if isinstance(raw, dict) else None
+    if not isinstance(boards, dict):
+        return {}
+    out = {}
+    for pid, macs in boards.items():
+        if isinstance(macs, list):
+            out[pid] = [str(m).lower() for m in macs if MAC_RE_PLAIN.match(str(m))]
+    return out
+
+
+# The same shape gen_board_header.py validates, so a typo in the local file is
+# dropped rather than quietly matching nothing.
+MAC_RE_PLAIN = re.compile(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$")
+
+
 def load_profiles(boards_dir):
     if not os.path.isdir(boards_dir):
         raise Fail("no board registry at %s - pass --boards" % boards_dir, 2)
+    local = load_local_macs(boards_dir)
     out = []
     for path in sorted(glob.glob(os.path.join(boards_dir, "*.json"))):
-        if os.path.basename(path) == "schema.json":
+        # Neither of these is a board. schema.json never was; local-macs.json is
+        # the operator's own file and is handled by load_local_macs() above -
+        # letting it reach the parse below made a typo in a file that only saves
+        # typing into a hard failure of the whole flasher.
+        if os.path.basename(path) in ("schema.json", LOCAL_MACS):
             continue
         try:
             with open(path, "r") as fh:
@@ -152,6 +194,17 @@ def load_profiles(boards_dir):
             # things one day.
             continue
         raw["_path"] = path
+
+        # Merge the operator's own MACs in. Appended rather than replacing, so a
+        # profile that ships an allowlist of its own - a shared board, a
+        # development kit everyone has - still works and the local file only
+        # ever adds.
+        mine = local.get(raw["id"])
+        if mine:
+            ident = raw.setdefault("identification", {})
+            have = [m.lower() for m in (ident.get("mac_allowlist") or [])]
+            ident["mac_allowlist"] = have + [m for m in mine if m not in have]
+
         out.append(raw)
     if not out:
         raise Fail("no board profiles found in %s" % boards_dir, 1)

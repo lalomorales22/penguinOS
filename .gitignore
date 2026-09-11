@@ -48,3 +48,4 @@ boards/*/probe/dependencies.lock
 # verifiable without the blob being in git. Local copies also live in
 # ../factory-backups/.
 boards/*/backup/*.bin
+boards/local-macs.json

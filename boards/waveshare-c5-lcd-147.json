@@ -169,10 +169,7 @@
       "note": "Not attempted, and pointless here anyway: MISO is not wired to the panel, so nothing can be read back from the controller at all."
     },
     "usb_serial": null,
-    "mac_allowlist": [
-      "38:44:be:0e:9c:18",
-      "38:44:be:0e:9c:38"
-    ],
+    "mac_allowlist": [],
     "distinguishing_notes": [
       "Long thin 1.47 inch IPS strip, 320x172 in landscape, on a narrow board.",
       "Native USB, so it enumerates as a usb_serial_jtag device rather than a CH340 or CP2102 bridge.",
