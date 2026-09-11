@@ -288,6 +288,34 @@ static void test_json_shapes(void)
     eos_json_arr_close(&j);
     CKS(f.b, "[0,-1,2147483647,-2147483648,-128]", "integer edges");
 
+    // The 64-bit path, which exists because `long` is 32 bits on both targets
+    // and a card is not. 15617949696 is the 15.6 GB microSD that made this
+    // necessary; it is the value the boot log prints and the value
+    // /api/fs/usage must print with it. Driven directly rather than through
+    // eos_json_kv_int() on purpose: `long` is 64 bits on THIS host, so a test
+    // that went through the int helper would pass on the host and still ship a
+    // board that answers 2147483647.
+    frame_init(&f);
+    eos_json_init(&j, f.b, 256);
+    eos_json_arr_open(&j);
+    eos_json_u64(&j, 0);
+    eos_json_u64(&j, 2147483647ULL);          // INT32_MAX, the old clamp
+    eos_json_u64(&j, 2147483648ULL);          // one past it, where a long wrapped
+    eos_json_u64(&j, 4294967295ULL);          // UINT32_MAX, a full-size FAT file
+    eos_json_u64(&j, 15617949696ULL);         // the card
+    eos_json_u64(&j, 18446744073709551615ULL);// UINT64_MAX, all 20 digits
+    eos_json_arr_close(&j);
+    CKS(f.b, "[0,2147483647,2147483648,4294967295,15617949696,18446744073709551615]",
+        "unsigned 64-bit edges, no sign and no wrap");
+
+    frame_init(&f);
+    eos_json_init(&j, f.b, 256);
+    eos_json_obj_open(&j);
+    eos_json_kv_u64(&j, "total", 15617949696ULL);
+    eos_json_kv_u64(&j, "used",  262144ULL);
+    eos_json_obj_close(&j);
+    CKS(f.b, "{\"total\":15617949696,\"used\":262144}", "and as a key/value pair");
+
     frame_init(&f);
     eos_json_init(&j, f.b, 256);
     {

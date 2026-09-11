@@ -29,12 +29,16 @@ idf_component_register(
         "eos_led.c"
         "eos_shell_input.c"
         "eos_setup_screen.c"
+        "eos_ota.c"
         "eos_web_embed.c"
         "eos_seed_buddy.c"
         "eos_settings_bind.c"
     REQUIRES
         eos_kernel
         esp_timer
+        # esp_ota_ops, for updating penguinOS from the web app. The partition
+        # table carries two app slots so there is somewhere to write.
+        app_update
         # The WS2812 on GPIO8, which the Media and Party windows drive. It is
         # the RMT transmit driver and nothing else; the LED is one part and its
         # whole frame is 24 bits, so no strip library is pulled in for it.
@@ -71,3 +75,21 @@ idf_component_register(
 # Same promise the kernel makes. These files are kernel code that happens to
 # live next to app_main, and they compile clean for riscv32 and xtensa.
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)
+
+# A TEST HOOK for the OTA rollback, off unless asked for:
+#
+#   idf.py -D EOS_OTA_NEVER_CONFIRM=1 build
+#
+# builds an image that works completely and never tells the bootloader so. That
+# is what a genuinely broken update looks like from the bootloader's side, and
+# it is the only way to prove the rollback catches anything without building
+# something actually broken and risking not getting the board back.
+#
+# -D on the idf.py line is a CMAKE variable and reaches no C file on its own,
+# which is exactly how an earlier attempt at this produced two identical images
+# and a test that proved nothing. This is the line that bridges it.
+if(EOS_OTA_NEVER_CONFIRM)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE EOS_OTA_NEVER_CONFIRM=1)
+    message(WARNING "EOS_OTA_NEVER_CONFIRM: this image will NOT confirm itself "
+                    "and the bootloader will roll it back. Test builds only.")
+endif()

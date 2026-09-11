@@ -7,6 +7,20 @@
 # These are DEFAULTS. `idf.py menuconfig` writes firmware/sdkconfig, which is
 # gitignored and wins. Delete sdkconfig to get back to this file.
 
+# ------------------------------------------------------------------ updates
+# Two app slots, so penguinOS can be updated from the web app instead of a
+# cable. See partitions.csv for the arithmetic; on a 4 MB board it is tight.
+#
+# ROLLBACK IS THE POINT OF THIS BLOCK. Without it a bad image is a board that
+# needs the USB cable you were trying to stop using - which on a board glued
+# into a case, or handed to someone else, means it is simply broken. With it
+# the new image boots PENDING_VERIFY, and if it does not call
+# esp_ota_mark_app_valid_cancel_rollback() before the next reboot the bootloader
+# goes back to the slot that worked. main.c makes that call once the display,
+# the filesystem and the web server are all up - which is the honest definition
+# of "this image works" for something whose whole job is to be reachable.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # ---------------------------------------------------------------- partitions
 # partitions.csv, not a preset: the presets have no "int" partition and the
 # LittleFS label is load-bearing. See the arithmetic in that file.

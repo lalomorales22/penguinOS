@@ -7,6 +7,7 @@
 
 #include "eos_httpd.h"
 
+#include <stdlib.h>   // strtol, for the /api/ota/* query numbers
 #include <string.h>
 #include <stdio.h>
 
@@ -225,6 +226,20 @@ void eos_json_int(eos_json_t *j, long v)
     while (n > 0) jput(j, tmp[--n]);
 }
 
+// The same digits, without the sign and without `long`. Kept separate rather
+// than making eos_json_int() 64-bit everywhere: on riscv32 and xtensa a 64-bit
+// divide is a libgcc call, and every rssi, channel and pixel count in this file
+// would start paying for it to widen four byte counts.
+void eos_json_u64(eos_json_t *j, uint64_t v)
+{
+    char tmp[24];                    // 20 digits is UINT64_MAX
+    int n = 0;
+
+    jval_pre(j);
+    do { tmp[n++] = (char)('0' + (int)(v % 10ULL)); v /= 10ULL; } while (v && n < (int)sizeof tmp);
+    while (n > 0) jput(j, tmp[--n]);
+}
+
 void eos_json_bool(eos_json_t *j, bool v) { jval_pre(j); jputs(j, v ? "true" : "false"); }
 void eos_json_null(eos_json_t *j)         { jval_pre(j); jputs(j, "null"); }
 
@@ -243,6 +258,8 @@ void eos_json_kv_str(eos_json_t *j, const char *k, const char *s)
 { eos_json_key(j, k); eos_json_str(j, s); }
 void eos_json_kv_int(eos_json_t *j, const char *k, long v)
 { eos_json_key(j, k); eos_json_int(j, v); }
+void eos_json_kv_u64(eos_json_t *j, const char *k, uint64_t v)
+{ eos_json_key(j, k); eos_json_u64(j, v); }
 void eos_json_kv_bool(eos_json_t *j, const char *k, bool v)
 { eos_json_key(j, k); eos_json_bool(j, v); }
 void eos_json_kv_null(eos_json_t *j, const char *k)
@@ -674,6 +691,13 @@ static const struct {
     { "/api/fs/stat",         "GET",  EOS_ROUTE_FS_STAT      },
     { "/api/fs/read",         "GET",  EOS_ROUTE_FS_READ      },
     { "/api/fs/usage",        "GET",  EOS_ROUTE_FS_USAGE     },
+    // Updating the firmware. Deliberately shaped like /api/fs/write above: the
+    // web app already knows how to send a large thing in chunks bounded by
+    // limits.chunk_max, and a second upload mechanism would be a second set of
+    // failure modes to get right.
+    { "/api/ota/begin",       "POST", EOS_ROUTE_OTA_BEGIN    },
+    { "/api/ota/write",       "POST", EOS_ROUTE_OTA_WRITE    },
+    { "/api/ota/end",         "POST", EOS_ROUTE_OTA_END      },
     { "/api/fs/write",        "POST", EOS_ROUTE_FS_WRITE     },
     { "/api/fs/upload/abort", "POST", EOS_ROUTE_FS_ABORT     },
     { "/api/fs/mkdir",        "POST", EOS_ROUTE_FS_MKDIR     },
@@ -1991,12 +2015,13 @@ static void sys_fs_array(eos_httpd_t *h, eos_json_t *j)
         eos_json_kv_bool(j, "mounted",   m.mounted);
         eos_json_kv_bool(j, "writable",  m.writable);
         eos_json_kv_bool(j, "removable", m.removable);
-        // Sizes are bytes and a card is gigabytes, so they are emitted through
-        // the same 32-bit-safe path as everything else by clamping: a listing
-        // that says 4 GB on an 8 GB card is wrong in a way nobody acts on, and
-        // a 64-bit printf in this writer would be a second number formatter.
-        eos_json_kv_int (j, "total", (long)(m.total > 0x7FFFFFFFULL ? 0x7FFFFFFFULL : m.total));
-        eos_json_kv_int (j, "used",  (long)(m.used  > 0x7FFFFFFFULL ? 0x7FFFFFFFULL : m.used));
+        // Sizes are bytes and a card is gigabytes, so they go out whole through
+        // the writer's 64-bit path. They used to be clamped to INT32_MAX here
+        // on the theory that a wrong size is harmless — it is not: it made the
+        // Settings tab read "256 K of 2.0 G used" on a 15.6 GB card, and the
+        // same clamp on /api/fs/usage made `free` a lie by 13 GB.
+        eos_json_kv_u64 (j, "total", m.total);
+        eos_json_kv_u64 (j, "used",  m.used);
         eos_json_obj_close(j);
     }
     eos_json_arr_close(j);
@@ -2090,11 +2115,15 @@ static int h_system(eos_httpd_t *h, eos_httpd_resp_t *r)
     sys_fs_array(h, &j);
     sys_net_group(h, &j);
 
-    eos_json_kv_int(&j, "uptime_ms", (long)s.uptime_ms);
+    // Both of these are uint32_t and both cross 2^31 while the board is still
+    // running: uptime after 24.8 days, epoch in 2038. Through `long` on a
+    // 32-bit target that is a NEGATIVE number in the document, so they take the
+    // unsigned path even though neither will ever need all 64 bits.
+    eos_json_kv_u64(&j, "uptime_ms", s.uptime_ms);
 
     eos_json_key(&j, "time");
     eos_json_obj_open(&j);
-    eos_json_kv_int (&j, "epoch",  (long)s.epoch);
+    eos_json_kv_u64 (&j, "epoch",  s.epoch);
     eos_json_kv_str (&j, "tz",     s.tz);
     eos_json_kv_bool(&j, "synced", s.time_synced);
     eos_json_obj_close(&j);
@@ -2139,7 +2168,7 @@ static int h_system_health(eos_httpd_t *h, eos_httpd_resp_t *r)
     eos_json_init(&j, h->resp, (int)sizeof h->resp);
     eos_json_obj_open(&j);
     eos_json_kv_bool(&j, "ok",        true);
-    eos_json_kv_int (&j, "uptime_ms", (long)s.uptime_ms);
+    eos_json_kv_u64 (&j, "uptime_ms", s.uptime_ms);   // negative past 24.8 days as a long
     eos_json_kv_int (&j, "heap_free", (long)s.heap_free);
     eos_json_obj_close(&j);
     return reply_json(h, r, 200, &j);
@@ -2169,6 +2198,127 @@ static int h_system_reboot(eos_httpd_t *h, eos_httpd_resp_t *r)
     eos_json_obj_open(&j);
     eos_json_kv_bool(&j, "ok",    true);
     eos_json_kv_int (&j, "in_ms", REBOOT_DELAY_MS);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+// ------------------------------------------------------- POST /api/ota/*
+//
+// Three calls: begin, write many times, end. The same shape as an upload to the
+// filesystem, and for the same reason - the client already has that loop.
+//
+// Nothing here restarts the board. end() points the bootloader at the new slot
+// and returns; the client then calls /api/system/reboot, having seen a 200 and
+// therefore knowing the image landed. A handler that rebooted itself would drop
+// the connection before the response and look exactly like a crash.
+
+// eos_httpd_query_get() hands back a string; these three want numbers. Kept
+// local rather than added to the public header because nothing else needs it
+// and a second integer-parsing helper in this file would be one too many.
+static long ota_query_num(const char *uri, const char *name, long dflt)
+{
+    char buf[16];
+    char *end;
+    long v;
+
+    if (eos_httpd_query_get(uri, name, buf, (int)sizeof buf) <= 0) return dflt;
+    v = strtol(buf, &end, 10);
+    // A value with trailing rubbish is a client bug, and taking the prefix
+    // would turn "4096x" into a silently different offset.
+    if (end == buf || *end) return dflt;
+    return v;
+}
+
+static int h_ota_begin(eos_httpd_t *h, const eos_httpd_req_t *req,
+                       eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    long total = 0;
+    int rc;
+
+    if (!h->ports.ota_begin)
+        return fail_err(h, r, -7, "this board cannot update itself over the web");
+
+    // Optional: a client that knows the size lets the board refuse an image
+    // that cannot fit its slot BEFORE spending a minute sending it.
+    total = ota_query_num(req->uri, "total", 0);
+    if (total < 0) total = 0;
+
+    rc = h->ports.ota_begin(h->ctx, (uint32_t)total);
+    if (rc < 0) return fail_err(h, r, rc, "could not open the update slot");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "ok", true);
+    // EOS_HTTPD_BODY_MAX, not eos_apps_chunk_max() - they are the same number
+    // (EOS_APPS_CHUNK_MAX is defined as this one) and reaching for the other
+    // would make this file depend on eos_apps.h for a constant it already has.
+    eos_json_kv_int (&j, "chunk_max", (long)EOS_HTTPD_BODY_MAX);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+static int h_ota_write(eos_httpd_t *h, const eos_httpd_req_t *req,
+                       eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    long offset = -1;
+    int rc;
+
+    if (!h->ports.ota_write)
+        return fail_err(h, r, -7, "this board cannot update itself over the web");
+    offset = ota_query_num(req->uri, "offset", -1);
+    if (offset < 0)
+        return fail_err(h, r, -1, "offset is required and must not be negative");
+
+    rc = h->ports.ota_write(h->ctx, (uint32_t)offset, req->body, req->body_len);
+    if (rc < 0)
+        // Three different things go wrong here and they need three different
+        // sentences. -1 is the wrong FILE, which the board knows after one
+        // chunk because the image header is checked immediately; -11 is a
+        // chunk arriving out of order, which a client can recover from by
+        // starting again; anything else is the flash. Raw numbers rather than
+        // the eos_err_t names because this file does not include eos_board.h -
+        // fail_err() above is called the same way throughout.
+        return fail_err(h, r, rc,
+                        rc == -1  ? "that is not a penguinOS image" :
+                        rc == -11 ? "chunks must arrive in order; "
+                                              "start again at offset 0"
+                                            : "the chunk could not be written");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "ok", true);
+    eos_json_kv_int (&j, "offset", (long)offset + req->body_len);
+    eos_json_obj_close(&j);
+    return reply_json(h, r, 200, &j);
+}
+
+static int h_ota_end(eos_httpd_t *h, const eos_httpd_req_t *req,
+                     eos_httpd_resp_t *r)
+{
+    eos_json_t j;
+    long commit = 1;
+    int rc;
+
+    if (!h->ports.ota_end)
+        return fail_err(h, r, -7, "this board cannot update itself over the web");
+    commit = ota_query_num(req->uri, "commit", 1);
+
+    rc = h->ports.ota_end(h->ctx, commit != 0);
+    if (rc < 0)
+        return fail_err(h, r, rc,
+                        rc == -11 ? "no update is open; call /api/ota/begin first" :
+                        rc == -1  ? "the image is incomplete or does not validate"
+                                            : "the image could not be committed");
+
+    eos_json_init(&j, h->resp, (int)sizeof h->resp);
+    eos_json_obj_open(&j);
+    eos_json_kv_bool(&j, "ok", true);
+    eos_json_kv_bool(&j, "committed", commit != 0);
+    // The client reboots, not this handler: the response has to reach the
+    // browser first or the update looks like a crash.
+    eos_json_kv_str (&j, "next", commit ? "POST /api/system/reboot" : "nothing");
     eos_json_obj_close(&j);
     return reply_json(h, r, 200, &j);
 }
@@ -2529,6 +2679,9 @@ int eos_httpd_dispatch(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_res
     case EOS_ROUTE_SYSTEM:         h->req_api++; return h_system(h, r);
     case EOS_ROUTE_SYSTEM_HEALTH:  h->req_api++; return h_system_health(h, r);
     case EOS_ROUTE_SYSTEM_REBOOT:  h->req_api++; return h_system_reboot(h, r);
+    case EOS_ROUTE_OTA_BEGIN:      h->req_api++; return h_ota_begin(h, req, r);
+    case EOS_ROUTE_OTA_WRITE:      h->req_api++; return h_ota_write(h, req, r);
+    case EOS_ROUTE_OTA_END:        h->req_api++; return h_ota_end(h, req, r);
     case EOS_ROUTE_THEMES:         h->req_api++; return h_themes(h, r);
 
     case EOS_ROUTE_CAPTIVE:

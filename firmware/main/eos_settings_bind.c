@@ -2,6 +2,7 @@
 // See eos_settings_bind.h for why this lives beside app_main.
 
 #include "eos_settings_bind.h"
+#include "eos_ota.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -610,6 +611,15 @@ void eos_settings_bind(eos_httpd_t *h, eos_settings_store_t *st,
     h->ports.reboot          = b_reboot;
     h->ports.theme_active    = theme ? b_theme_active : NULL;
     h->ports.theme_list      = b_theme_list;
+
+    // Updating penguinOS from the web app. Bound unconditionally: eos_ota's own
+    // functions answer EOS_ERR_NODEV on an image whose partition table has one
+    // app slot, which is a better message than a 501 from an unbound port -
+    // "this board cannot update itself" is true either way, but only one of
+    // them says why in the log.
+    h->ports.ota_begin       = eos_ota_begin;
+    h->ports.ota_write       = eos_ota_write;
+    h->ports.ota_end         = eos_ota_end;
 }
 
 bool eos_settings_bind_take_redraw(void)

@@ -897,14 +897,24 @@ static bool ep_sys(void *ctx, eos_httpd_sys_t *o)
     return true;
 }
 
+// The card the size bug was found on: 15,617,949,696 bytes, which is six times
+// what a 32-bit signed byte count can hold. Off by default so the fs array
+// keeps reporting an absent card, which is the state most of these tests want.
+static bool ep_fs_big_card = false;
+
 static bool ep_fs(void *ctx, int i, eos_httpd_fs_t *o)
 {
     (void)ctx;
     memset(o, 0, sizeof *o);
     if (i == 0) {
         snprintf(o->point, sizeof o->point, "/sd");
-        snprintf(o->fs, sizeof o->fs, "none");
+        snprintf(o->fs, sizeof o->fs, ep_fs_big_card ? "fat" : "none");
         o->removable = true;
+        if (ep_fs_big_card) {
+            o->mounted = o->writable = true;
+            o->total = 15617949696ULL;
+            o->used  = 262144ULL;
+        }
         return true;
     }
     if (i == 1) {
@@ -1156,6 +1166,29 @@ static void t_system_endpoint(void)
     CKI(hit("POST", "/api/system/reboot", NULL, &r), 501, "and a board that cannot restart says so");
 }
 
+// A 15.6 GB card in the fs array. The port hands sizes over as uint64_t and
+// always did; what was lost was the last step, where the writer clamped them to
+// INT32_MAX so they would fit a `long`. This asserts the whole number reaches
+// the document, and asserts the clamp's own value is NOT in it — because that
+// is exactly what a board with this card answered, and a test that only looked
+// for a plausible-looking number would have passed on it.
+static void t_system_big_card(void)
+{
+    eos_httpd_resp_t r;
+
+    printf("  GET /api/system with a card larger than a 32-bit byte count\n");
+
+    ep_fs_big_card = true;
+    ep_open(true);
+    CKI(hit("GET", "/api/system", NULL, &r), 200, "answers 200 with the card in");
+    HAS(r.body, "\"point\":\"/sd\"",        "the card is listed");
+    HAS(r.body, "\"total\":15617949696",   "  at its true size, all eleven digits");
+    HAS(r.body, "\"used\":262144",         "  with the used figure beside it");
+    HASNT(r.body, "2147483647",            "and INT32_MAX appears nowhere");
+    HASNT(r.body, "\"total\":-",           "nor a wrapped, negative total");
+    ep_fs_big_card = false;
+}
+
 static void t_themes_endpoint(void)
 {
     eos_httpd_resp_t r;
@@ -1262,6 +1295,7 @@ int main(void)
     t_routes();
     t_settings_endpoint();
     t_system_endpoint();
+    t_system_big_card();
     t_themes_endpoint();
     t_themes_flood();
 

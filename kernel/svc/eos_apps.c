@@ -139,15 +139,6 @@ static eos_err_t q_uint(const char *uri, const char *name, long def, long max, l
     return EOS_OK;
 }
 
-// A 64-bit filesystem size, as the JSON writer's long. `long` is 32 bits on
-// riscv32, so a card past 2 GB would wrap; it is clamped rather than wrapped
-// because a negative free-space figure in the Files tab is worse than a
-// truncated one. /int is 960 KB and never reaches this.
-static long clamp_size(uint64_t v)
-{
-    return v > 0x7FFFFFFFu ? 0x7FFFFFFFL : (long)v;
-}
-
 #ifndef ESP_PLATFORM
 // Host-only hook, and the reason it exists is the whole point of the rules
 // above. path_check() is INVISIBLE from outside: eos_storage refuses the same
@@ -893,11 +884,15 @@ static int h_fs_list(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp_
         if (eos_path_join(s_scr.full, EOS_PATH_MAX, s_scr.path, de.name) >= 0)
             (void)eos_storage_stat(s_scr.full, &st);
 
+        // size and mtime are uint32_t and `long` is 32 bits on the targets, so
+        // both go out unsigned: a 3 GB file on the card would otherwise list a
+        // NEGATIVE size, and every mtime does the same from 2038. Still at most
+        // ten digits either way, which is what the 64 above budgets for.
         eos_json_obj_open(&j);
         eos_json_kv_strn(&j, "name", de.name, nlen);
-        eos_json_kv_int (&j, "size", (long)de.size);
+        eos_json_kv_u64 (&j, "size", de.size);
         eos_json_kv_bool(&j, "is_dir", de.is_dir);
-        eos_json_kv_int (&j, "mtime", (long)st.mtime);
+        eos_json_kv_u64 (&j, "mtime", st.mtime);
         eos_json_obj_close(&j);
         shown++;
     }
@@ -925,8 +920,8 @@ static int h_fs_stat(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp_
 
     eos_json_init(&j, h->resp, (int)sizeof h->resp);
     eos_json_obj_open(&j);
-    eos_json_kv_int (&j, "size",   (long)st.size);
-    eos_json_kv_int (&j, "mtime",  (long)st.mtime);
+    eos_json_kv_u64 (&j, "size",   st.size);      // unsigned, as in /api/fs/list
+    eos_json_kv_u64 (&j, "mtime",  st.mtime);
     eos_json_kv_bool(&j, "is_dir", st.is_dir);
     eos_json_obj_close(&j);
     return eos_httpd_reply_json(h, r, 200, &j);
@@ -985,9 +980,14 @@ static int h_fs_usage(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp
     eos_json_init(&j, h->resp, (int)sizeof h->resp);
     eos_json_obj_open(&j);
     eos_json_kv_str(&j, "point", s_scr.path);
-    eos_json_kv_int(&j, "total", clamp_size(total));
-    eos_json_kv_int(&j, "used",  clamp_size(used));
-    eos_json_kv_int(&j, "free",  clamp_size(total > used ? total - used : 0));
+    // Whole 64-bit bytes, never clamped. eos_storage hands these over as
+    // uint64_t because a card IS bigger than a long, and the clamp that used to
+    // sit here reported a 15.6 GB card as 2147483647 with 2147483647 free —
+    // both wrong, and `free` wrong by 13 GB in the direction that makes the
+    // Files tab offer an upload the card cannot take.
+    eos_json_kv_u64(&j, "total", total);
+    eos_json_kv_u64(&j, "used",  used);
+    eos_json_kv_u64(&j, "free",  total > used ? total - used : 0);
     eos_json_obj_close(&j);
     return eos_httpd_reply_json(h, r, 200, &j);
 }
@@ -1093,8 +1093,8 @@ static int h_fs_write(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp
         eos_json_init(&j, h->resp, (int)sizeof h->resp);
         eos_json_obj_open(&j);
         eos_json_kv_str (&j, "path", s_scr.path);
-        eos_json_kv_int (&j, "offset", (long)size);
-        eos_json_kv_int (&j, "size",   (long)size);
+        eos_json_kv_u64 (&j, "offset", size);        // a byte count; see /api/fs/list
+        eos_json_kv_u64 (&j, "size",   size);
         eos_json_kv_bool(&j, "final",  true);
         eos_json_obj_close(&j);
         return eos_httpd_reply_json(h, r, 200, &j);
@@ -1103,8 +1103,8 @@ static int h_fs_write(eos_httpd_t *h, const eos_httpd_req_t *req, eos_httpd_resp
     eos_json_init(&j, h->resp, (int)sizeof h->resp);
     eos_json_obj_open(&j);
     eos_json_kv_str (&j, "path", s_scr.path);
-    eos_json_kv_int (&j, "offset", (long)s_up.off);
-    eos_json_kv_int (&j, "size",   (long)s_up.off);
+    eos_json_kv_u64 (&j, "offset", s_up.off);
+    eos_json_kv_u64 (&j, "size",   s_up.off);
     eos_json_kv_bool(&j, "final",  false);
     eos_json_obj_close(&j);
     return eos_httpd_reply_json(h, r, 200, &j);
@@ -1299,9 +1299,12 @@ static void say_fs(void)
     for (i = 0; i < n && i < EOS_MOUNT_MAX; i++) {
         uint64_t total = 0, used = 0;
         if (mnt[i].mounted) eos_storage_usage(mnt[i].point, &total, &used);
-        eos_apps_logf('I', "fs %s %s %lu of %lu bytes used", mnt[i].point,
+        // %llu, matching the boot log: the console is the place someone looks
+        // to check what /api/fs/usage just told them, so it must not clamp
+        // where the endpoint does not.
+        eos_apps_logf('I', "fs %s %s %llu of %llu bytes used", mnt[i].point,
                       mnt[i].mounted ? "mounted" : "not present",
-                      (unsigned long)clamp_size(used), (unsigned long)clamp_size(total));
+                      (unsigned long long)used, (unsigned long long)total);
     }
 }
 

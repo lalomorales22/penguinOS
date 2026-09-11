@@ -194,6 +194,14 @@ void eos_json_strn(eos_json_t *j, const char *s, int n);
 void eos_json_str(eos_json_t *j, const char *s);
 void eos_json_hexn(eos_json_t *j, const void *bytes, int n);   // as a lowercase hex string
 void eos_json_int(eos_json_t *j, long v);
+// Anything counted in bytes goes through this one and never through the long.
+// `long` is 32 bits on both targets, so a 15.6 GB card emitted as a long wraps
+// — and a wrapped size is a NEGATIVE free figure in the Files tab, which is
+// worse than a wrong one. A JSON number has no width, and every client that
+// reads these is JavaScript, where integers are exact to 2^53, so the widening
+// costs nothing on the wire and nothing at the far end. Same for uptime, which
+// crosses 2^31 milliseconds after 24.8 days.
+void eos_json_u64(eos_json_t *j, uint64_t v);
 void eos_json_bool(eos_json_t *j, bool v);
 void eos_json_null(eos_json_t *j);
 
@@ -201,6 +209,7 @@ void eos_json_null(eos_json_t *j);
 void eos_json_kv_strn(eos_json_t *j, const char *key, const char *s, int n);
 void eos_json_kv_str(eos_json_t *j, const char *key, const char *s);
 void eos_json_kv_int(eos_json_t *j, const char *key, long v);
+void eos_json_kv_u64(eos_json_t *j, const char *key, uint64_t v);
 void eos_json_kv_bool(eos_json_t *j, const char *key, bool v);
 void eos_json_kv_null(eos_json_t *j, const char *key);
 
@@ -278,6 +287,9 @@ typedef enum {
     EOS_ROUTE_FS_STAT,
     EOS_ROUTE_FS_READ,
     EOS_ROUTE_FS_USAGE,
+    EOS_ROUTE_OTA_BEGIN,
+    EOS_ROUTE_OTA_WRITE,
+    EOS_ROUTE_OTA_END,
     EOS_ROUTE_FS_WRITE,
     EOS_ROUTE_FS_ABORT,
     EOS_ROUTE_FS_MKDIR,
@@ -709,6 +721,32 @@ typedef struct {
     // which is the "never empty" rule from web/README.md.
     bool (*theme_active)(void *ctx, eos_httpd_theme_t *out);
     bool (*theme_list)(void *ctx, int i, eos_httpd_theme_t *out);
+
+    // --- updating the firmware over the web -------------------------------
+    //
+    // All three NULL and /api/ota/* answers 501, which is the honest answer on
+    // a board whose partition table has one app slot: there is nowhere to write
+    // a new image that is not the image running.
+    //
+    // The shape mirrors /api/fs/write deliberately, because the web app already
+    // knows how to send a large thing in chunks bounded by limits.chunk_max and
+    // there is no reason for a second upload mechanism with its own failures.
+    //
+    // ota_begin opens the slot that is NOT running and erases what it needs.
+    // total is the whole image length when the client knows it and 0 when it
+    // does not; a board that wants to check the image fits its slot needs it.
+    int (*ota_begin)(void *ctx, uint32_t total);
+
+    // One chunk, at the offset the client says. Offsets must arrive in order -
+    // esp_ota_write appends and cannot seek - so an out-of-order offset is
+    // EOS_ERR_STATE and not a silently wrong image.
+    int (*ota_write)(void *ctx, uint32_t offset, const void *data, int len);
+
+    // Finishes and, if the image is valid, points the bootloader at it. Does
+    // NOT restart: the response has not been written yet, same reason reboot
+    // above does not. commit false abandons the slot and leaves the running
+    // image untouched, which is what an aborted upload must do.
+    int (*ota_end)(void *ctx, bool commit);
 } eos_httpd_ports_t;
 
 // ============================================================== the server

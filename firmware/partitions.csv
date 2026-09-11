@@ -1,35 +1,43 @@
-# penguinOS partition table. Every board in this fleet has 4 MB of flash and
-# ota_slots 0, so the whole 4 MB is spent once and there is no second app slot
-# to fall back on. The one non-obvious constraint: the data partition MUST stay
-# labelled "int", because that string is peripherals.internal_fs.partition_label
-# in all six boards/*.json and eos_board_storage_t.int_label carries it into the
-# firmware at compile time. Rename it here and eos_storage_mount() fails at boot
-# with no compile error anywhere.
+# penguinOS, 4 MB, TWO APP SLOTS.
 #
-# The arithmetic, 4 MB = 4,194,304 bytes = 0x400000:
+# This replaced a single 3 MB "factory" slot when updating over the web became
+# a feature. OTA needs somewhere to write the new image that is not the image
+# currently running, plus an otadata region recording which of the two the
+# bootloader should pick - so a 4 MB part has to carry the app twice and there
+# is no arrangement in which that is roomy.
 #
-#   0x000000  bootloader                          reserved up to 0x8000
-#   0x008000  partition table                      0x001000       4 KB
-#   0x009000  nvs                                  0x006000      24 KB
-#   0x00F000  phy_init                             0x001000       4 KB
-#   0x010000  factory                              0x300000   3,072 KB
-#   0x310000  int (littlefs)                       0x0F0000     960 KB
-#   0x400000  end of flash                        ------------------------
-#                                                 total        4,096 KB
+# THE ARITHMETIC, because every field here is the consequence of another:
 #
-# factory is 3 MB: that is flashing.app_partition_kb 3072 in every profile, the
-# brief's 2 MB floor with a megabyte of headroom for LVGL, and it is the same
-# app size as IDF's stock huge_app.csv, which is what the profiles name in
-# flashing.partition_scheme. What huge_app leaves as 960 KB of dead flash is
-# exactly what "int" claims here, so the table is huge_app plus a filesystem
-# and costs the app nothing.
+#   bootloader              0x0000 .. 0x9000    the first free offset is 0x9000
+#   nvs        24 KB        Wi-Fi credentials, BLE bonds, the flasher's board id
+#   phy_init    4 KB        radio calibration
+#   otadata     8 KB        which slot boots. TWO 4 KB sectors, not one: the
+#                           bootloader writes them alternately so a power cut
+#                           during a switch leaves the other one intact.
+#   ota_0    1,664 KB       app slot A, at 0x20000
+#   ota_1    1,664 KB       app slot B
+#   int        640 KB       LittleFS: themes, buddies, settings.json
+#                           ------
+#                           4,096 KB exactly. There is no slack.
 #
-# App offsets must be 64 KB aligned and data offsets 4 KB aligned; 0x010000 and
-# 0x310000 are both 64 KB aligned, so this table survives growing factory by any
-# whole number of 64 KB blocks as long as "int" shrinks to match.
+# App partitions must start on a 64 KB boundary, which is why ota_0 begins at
+# 0x20000 and not immediately after otadata, and why the slot size is a multiple
+# of 0x10000.
 #
-# Name,     Type, SubType,  Offset,   Size,     Flags
-nvs,        data, nvs,      0x9000,   0x6000,
-phy_init,   data, phy,      0xF000,   0x1000,
-factory,    app,  factory,  0x10000,  0x300000,
-int,        data, littlefs, 0x310000, 0xF0000,
+# 1,664 KB against an image of about 1,490 KB leaves roughly 174 KB - a little
+# over 10%. That is the number to watch: the app grew by more than that in a
+# single afternoon once. `idf.py size` reports it, and a build that overflows a
+# slot says so at link time rather than at update time.
+#
+# int WENT FROM 960 KB TO 640 KB and MOVED from 0x310000 to 0x360000. Moving it
+# is why installing this table costs one USB flash per board and loses whatever
+# was on the filesystem: the data is still in the flash, at an offset nothing
+# looks at any more. Boards keep their nvs - the flasher does not rewrite a
+# stamp that is already correct - so Wi-Fi credentials and names survive.
+# Name,     Type, SubType,  Offset,    Size,
+nvs,        data, nvs,      0x9000,    0x6000,
+phy_init,   data, phy,      0xF000,    0x1000,
+otadata,    data, ota,      0x10000,   0x2000,
+ota_0,      app,  ota_0,    0x20000,   0x1A0000,
+ota_1,      app,  ota_1,    0x1C0000,  0x1A0000,
+int,        data, littlefs, 0x360000,  0xA0000,

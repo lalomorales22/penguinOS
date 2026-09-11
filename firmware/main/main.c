@@ -84,6 +84,7 @@
 #include "eos_shell_input.h"
 #include "eos_app_registry.h"
 #include "eos_led.h"
+#include "eos_ota.h"
 #include "eos_setup_screen.h"
 
 // Steps the boot screen reports. One per eos_setup_screen_boot() call below,
@@ -1162,6 +1163,20 @@ void app_main(void)
     }
     heap_step("httpd");
     eos_setup_screen_boot(&theme, "web app serving", 5, BOOT_STEPS);
+
+    // THE ROLLBACK IS CANCELLED HERE AND NOWHERE EARLIER. With
+    // CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE a freshly written image boots
+    // PENDING_VERIFY, and if it does not say it works before the next restart
+    // the bootloader goes back to the slot that did. Reaching this line means
+    // the panel came up, the filesystem mounted and the web server is
+    // listening - which is the property worth confirming, because it is the
+    // one that lets the board be updated AGAIN. An image that boots and then
+    // cannot serve its own update page is a board that needs the USB cable,
+    // and the bootloader should take it back rather than keep it.
+    //
+    // A no-op on an image the bootloader is not holding on probation, which is
+    // every image written over USB.
+    eos_ota_mark_running_good();
 
     // 9. The scene the desktop draws when it is the one on screen.
     eos_bar_status_init(&bar);
