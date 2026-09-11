@@ -239,7 +239,7 @@ timeout, each verified with `GET /health` before a prompt is sent to it:
 
 1. the address cached in NVS (`brain` / `host`)
 2. mDNS `megabrain`
-3. the compiled-in `192.168.0.139`
+3. a compiled-in fallback address
 
 The address that answered 200 is written back to NVS, and only when it changed —
 one flash erase per prompt is not worth it. Duplicates across the three sources

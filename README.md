@@ -250,16 +250,36 @@ written to the wrong place, and the wrong file entirely — a picture, a buddy �
 is caught after the first kilobyte, because the image header is checked
 immediately.
 
-**This needs a board flashed with a two-slot partition table.** Boards flashed
-before that have one app slot and answer *"this board cannot update itself over
-the web"*; they need the cable once, and then never again. Installing the new
-table moves `/int`, so **the filesystem is wiped that once** — themes, buddies,
-`settings.json` including the board's name. Wi-Fi credentials survive, because
-`nvs` does not move.
+**Not every board can do this**, and which ones is decided by arithmetic rather
+than preference:
 
-On a 4 MB board the two slots leave about 7% spare over the current image. That
-is the number to watch before adding anything large; `idf.py size` reports it
-and a build that overflows a slot fails at link time rather than at update time.
+| Board | Over the air? | Why |
+|---|---|---|
+| The two CYDs (ESP32, 4 MB) | **yes** | image is 1,579,760 B; a slot holds 1,703,936 — 7% spare |
+| LILYGO T-Display C5 (16 MB) | **yes** | 4 MB slot against a 1.9 MB image — 55% spare |
+| Waveshare C6 / LAFVIN C6 (4 MB) | no — USB | image is 1,855,280 B and **does not fit a slot** |
+| Waveshare C5 (4 MB) | no — USB | image is 1,888,512 B, same problem |
+
+The C6 and C5 images are ~275 KB larger than the ESP32's and none of it is
+penguinOS: `libnet80211` is 196 KB, `libpp` 112 KB, `libbt` 111 KB — the radio
+those boards exist to use. Two slots big enough for them leave a choice between
+12 KB of headroom, which is one commit from a link failure, and a 128 KB
+filesystem, which is smaller than what is already on the C6. Neither is worth
+trading to avoid a cable, so those boards keep one 3 MB slot and 960 KB of
+filesystem and say so honestly: `/api/ota/*` answers *"this board cannot update
+itself over the web"* rather than offering a button that fails at the end of a
+minute-long upload.
+
+**A board that can do it needs the two-slot table installed over USB once.**
+That moves `/int`, so **the filesystem is wiped that once** — themes, buddies,
+and `settings.json` including the board's name. Wi-Fi credentials survive,
+because `nvs` does not move. A board that stays on one slot keeps everything,
+because nothing moves at all.
+
+Slot headroom is the number to watch before adding anything large. `idf.py size`
+reports it, and a build that outgrows a slot fails at **link time** rather than
+at update time — which is how the C6 reported that it could not have this
+feature at all.
 
 ### 5. Updating a board over USB
 
