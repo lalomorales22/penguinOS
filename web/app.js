@@ -1085,6 +1085,124 @@ function bindSettings() {
   // Both of these belong to setup.js, which owns every provisioning endpoint.
   $('s-setup').onclick = function () { if (SETUP) SETUP.open('manual'); };
   $('s-forget').onclick = function () { if (SETUP) SETUP.forget(); };
+
+  bindOta();
+}
+
+// ------------------------------------------------------- updating the OS
+//
+// begin, write many times, end, reboot. The same loop as a file upload and
+// deliberately so - the board bounds both by limits.chunk_max, and a second
+// upload mechanism would be a second set of failure modes to get right.
+//
+// What is NOT here is any cleverness about recovering a half-sent image. The
+// board refuses an out-of-order offset outright, so "resume" would mean
+// starting again anyway, and an abandoned upload already leaves the running
+// firmware untouched. Starting over is the whole recovery story.
+
+function otaSay(state, pct) {
+  $('s-otaprog').hidden = false;
+  $('s-otastate').textContent = state;
+  if (pct != null) {
+    $('s-otabar').style.width = pct + '%';
+    $('s-otapct').textContent = pct + '%';
+  }
+}
+
+function otaPost(path, body) {
+  return apiRaw(path, {
+    method: 'POST',
+    body: body || null,
+    headers: { 'Content-Type': 'application/octet-stream' },
+    timeout: 30000
+  }).then(function (r) {
+    return r.text().catch(function () { return ''; }).then(function (t) {
+      var j = null;
+      try { j = JSON.parse(t); } catch (e) { j = null; }
+      if (!r.ok) {
+        // The board says WHY in `detail`, and it is worth showing verbatim:
+        // "that is not a penguinOS image" is a different problem from
+        // "the chunk could not be written" and sends you somewhere else.
+        var e2 = new Error((j && j.detail) || t || ('http ' + r.status));
+        e2.status = r.status;
+        throw e2;
+      }
+      return j;
+    });
+  });
+}
+
+function otaSend(file) {
+  // 512 until the board has said otherwise, for the same reason the file
+  // uploader does: a body over the board's limit is not a slow request, it is
+  // a connection the board resets with nothing to explain it.
+  var chunk = Math.max(512, Math.min(S.limits.chunk_max || 512, 16384));
+  var total = file.size;
+  var offset = 0;
+
+  otaSay('opening the update slot', 0);
+
+  return otaPost('/api/ota/begin' + qp({ total: total })).then(function (j) {
+    // begin answers with the board's real chunk_max, so a page that loaded
+    // before /api/system landed still sends the right size.
+    if (j && j.chunk_max) chunk = Math.max(512, Math.min(j.chunk_max, 16384));
+
+    var step = function () {
+      if (offset >= total) return Promise.resolve();
+      var end = Math.min(total, offset + chunk);
+      var part = file.slice(offset, end);
+      return otaPost('/api/ota/write' + qp({ offset: offset }), part)
+        .then(function () {
+          offset = end;
+          otaSay('sending firmware', Math.floor(offset * 100 / total));
+          markUp();
+          return step();
+        });
+    };
+    return step();
+  }).then(function () {
+    otaSay('checking the image', 100);
+    return otaPost('/api/ota/end' + qp({ commit: 1 }));
+  }).then(function () {
+    otaSay('restarting into the new image', 100);
+    return api('/api/system/reboot', { method: 'POST', timeout: 4000 })
+      .catch(function () { /* the board may drop before answering */ });
+  }).then(function () {
+    markDown('board rebooting into the new firmware');
+    toast('update sent - the board is restarting', 'ok');
+    otaSay('restarting. Reload this page in a minute.', 100);
+  });
+}
+
+function bindOta() {
+  var pick = $('s-otapick'), input = $('s-otafile');
+  if (!pick || !input) return;
+
+  pick.onclick = function () { input.click(); };
+
+  input.onchange = function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    $('s-otaname').textContent = f.name + ' (' + bytes(f.size) + ')';
+
+    confirmBox('Update penguinOS',
+               'Send ' + f.name + ' (' + bytes(f.size) + ') and restart into it? ' +
+               'If it fails to come up the board puts the old firmware back by itself.')
+      .then(function (ok) {
+        if (!ok) { input.value = ''; return; }
+        pick.disabled = true;
+        return otaSend(f).catch(function (err) {
+          otaSay('failed: ' + err.message, 0);
+          toast(err.message || 'update failed', 'bad');
+          // Tell the board to let the slot go, so the next attempt is not
+          // refused for arriving at offset 0 with an upload already open.
+          return otaPost('/api/ota/end' + qp({ commit: 0 })).catch(function () {});
+        }).then(function () {
+          pick.disabled = false;
+          input.value = '';
+        });
+      });
+  };
 }
 
 // ================================================================== BUDDY

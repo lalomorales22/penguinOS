@@ -225,7 +225,43 @@ a browser and you have the web app. It also advertises itself over mDNS, so
 Credentials are saved, so it rejoins on its own after that — and reflashing
 won't wipe them.
 
-### 4. Updating a board you already flashed
+### 4. Updating over the air, from the web app
+
+Once a board is on your network you do not need the cable again. **Settings →
+Update penguinOS**, choose a `penguinos.bin`, and the board writes it to the app
+slot it is *not* running from and restarts into it. About a minute.
+
+```bash
+# the file to give it, built the usual way
+tools/flash.sh --profile <id> --no-build   # or just: idf.py -C firmware build
+ls build/<id>/penguinos.bin
+```
+
+**If the new image fails to come up, the bootloader puts the old one back by
+itself.** A freshly written image boots on probation, and penguinOS only tells
+the bootloader it works once the panel, the filesystem and the web server are
+all up — which is the honest test for something whose job is to be reachable.
+An image that boots but cannot serve its own update page is one you want taken
+back. So a bad update costs a reboot, not a cable.
+
+The board refuses what it should: an image too big for the slot is rejected
+before a byte is sent, chunks arriving out of order are refused rather than
+written to the wrong place, and the wrong file entirely — a picture, a buddy —
+is caught after the first kilobyte, because the image header is checked
+immediately.
+
+**This needs a board flashed with a two-slot partition table.** Boards flashed
+before that have one app slot and answer *"this board cannot update itself over
+the web"*; they need the cable once, and then never again. Installing the new
+table moves `/int`, so **the filesystem is wiped that once** — themes, buddies,
+`settings.json` including the board's name. Wi-Fi credentials survive, because
+`nvs` does not move.
+
+On a 4 MB board the two slots leave about 7% spare over the current image. That
+is the number to watch before adding anything large; `idf.py size` reports it
+and a build that overflows a slot fails at link time rather than at update time.
+
+### 5. Updating a board over USB
 
 Plug it in and run the same command. **You do not need to know which board it
 is.**

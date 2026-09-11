@@ -86,6 +86,29 @@
     </div>
   </div>
 
+  <!-- Updating penguinOS. Last card in the tab on purpose: it is the one
+       action here that replaces the thing you are talking to. -->
+  <div class="card" id="s-otacard">
+    <h2>Update penguinOS</h2>
+    <p class="hint">Send a new <code>penguinos.bin</code> and the board writes it to
+      the app slot it is <em>not</em> running from, then restarts into it. If the
+      new image fails to come up, the bootloader puts the old one back by
+      itself &mdash; so an update that goes wrong costs a reboot, not a cable.</p>
+    <p class="hint">Roughly a minute. Keep this page open; closing it mid-upload
+      leaves the running firmware untouched.</p>
+    <div class="toolbar">
+      <input type="file" id="s-otafile" accept=".bin" hidden>
+      <button type="button" id="s-otapick" class="primary">Choose firmware&hellip;</button>
+      <span class="mono" id="s-otaname">no file chosen</span>
+    </div>
+    <div class="up" id="s-otaprog" hidden>
+      <span class="nm" id="s-otastate">preparing&hellip;</span>
+      <span class="pb"><i id="s-otabar"></i></span>
+      <span id="s-otapct">0%</span>
+    </div>
+    <dl class="info" id="s-otainfo"></dl>
+  </div>
+
   <div class="card">
     <h2>Board</h2>
     <p class="hint">Read only. Panel identity comes from the board registry plus a

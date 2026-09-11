@@ -413,6 +413,13 @@ not find. Replacing a file must never be able to lose it.
 `/api/fs/stat` is part of the contract but the web app does not call it; the
 listing already carries size and type.
 
+Every `N` above that counts bytes is a **full 64-bit** number, not a 32-bit
+one: a 15.6 GB card is `15617949696`, which no `int` holds. It used to be
+clamped to `2147483647` on the way out, which made `/api/fs/usage` on that card
+report a full 13 GB less free than it had. Parse these with something that
+keeps integers exact to 2^53 — JavaScript's `Number` does, and that is what
+this app uses.
+
 **`/api/fs/list`** returns
 
 ```json
